@@ -78,7 +78,7 @@ if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWo
  const dateKey=d=>d.toISOString().slice(0,10).replaceAll('-','');
  const base='https://site.api.espn.com/apis/site/v2/sports/basketball/nba/';
  const val=(labels,stats,keys)=>{const i=labels.findIndex(x=>keys.includes(String(x).toUpperCase()));if(i<0)return null;const raw=stats[i];if(raw===undefined)return null;if(keys.includes('MIN')&&/^\d+:\d{1,2}$/.test(String(raw))){const [m,sec]=String(raw).split(':').map(Number);return m+sec/60}if(String(raw).includes('-'))return Number(String(raw).split('-')[0]);const n=Number(raw);return Number.isFinite(n)?n:null};
- function extract(j,name){for(const team of j.boxscore?.players||[])for(const group of team.statistics||[])for(const a of group.athletes||[]){if(normal(a.athlete?.displayName)!==normal(name))continue;const labels=group.labels||[],stats=a.stats||[];const values={PTS:val(labels,stats,['PTS']),REB:val(labels,stats,['REB','TRB']),AST:val(labels,stats,['AST']), '3PT':val(labels,stats,['3PT','3PM']),MIN:val(labels,stats,['MIN'])};for(const [key,parts] of Object.entries({PRA:['PTS','REB','AST'],PR:['PTS','REB'],PA:['PTS','AST'],RA:['REB','AST']}))values[key]=parts.every(part=>Number.isFinite(values[part]))?parts.reduce((sum,part)=>sum+values[part],0):null;values.athleteId=a.athlete?.id||null;return values;}return null}
+ function extract(j,name){for(const team of j.boxscore?.players||[])for(const group of team.statistics||[])for(const a of group.athletes||[]){if(normal(a.athlete?.displayName)!==normal(name))continue;const labels=group.labels||[],stats=a.stats||[];const values={PTS:val(labels,stats,['PTS']),REB:val(labels,stats,['REB','TRB']),AST:val(labels,stats,['AST']), '3PT':val(labels,stats,['3PT','3PM']),MIN:val(labels,stats,['MIN'])};for(const [key,parts] of Object.entries({PRA:['PTS','REB','AST'],PR:['PTS','REB'],PA:['PTS','AST'],RA:['REB','AST']}))values[key]=parts.every(part=>Number.isFinite(values[part]))?parts.reduce((sum,part)=>sum+values[part],0):null;values.athleteId=a.athlete?.id||null;values.position=a.athlete?.position?.abbreviation||a.athlete?.position?.name||null;return values;}return null}
  let running=false;
  $('analyzeProp').addEventListener('click',async()=>{
   if(running)return;
@@ -345,19 +345,7 @@ if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWo
       if(['C','CENTER','CENTRE'].includes(p))return 'Centers';
       return null;
      };
-     // Prefer position found in player box-score rows already cached from the season scan.
-     let playerGroup=null;
-     for(const event of [...allEvents.values()].sort((a,b)=>new Date(b.date)-new Date(a.date)).slice(0,15)){
-      const box=await json(base+'summary?event='+encodeURIComponent(event.id)).catch(()=>null);
-      for(const side of box?.boxscore?.players||[])for(const stat of side.statistics||[])for(const athlete of stat.athletes||[]){
-       if(normal(athlete.athlete?.displayName)===normal(player)){
-        playerGroup=groupOf(athlete.athlete?.position?.abbreviation||athlete.athlete?.position?.name);
-        break;
-       }
-      }
-      if(playerGroup)break;
-     }
-     // defenseGames is scoped to the defensive context try; retrieve the same upcoming opponent's recent events here.
+     const playerGroup=groupOf(rows.find(r=>r.stats?.position)?.stats.position);
      const found=new Map(),today=new Date();
      for(let offset=0;offset<35&&found.size<8;offset+=7){
       const dates=Array.from({length:7},(_,i)=>{const d=new Date(today);d.setUTCHours(12,0,0,0);d.setUTCDate(d.getUTCDate()-offset-i-1);return d});
