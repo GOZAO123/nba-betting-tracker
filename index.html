@@ -78,7 +78,7 @@ if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWo
  const dateKey=d=>d.toISOString().slice(0,10).replaceAll('-','');
  const base='https://site.api.espn.com/apis/site/v2/sports/basketball/nba/';
  const val=(labels,stats,keys)=>{const i=labels.findIndex(x=>keys.includes(String(x).toUpperCase()));if(i<0)return null;const raw=stats[i];if(raw===undefined)return null;if(String(raw).includes('-'))return Number(String(raw).split('-')[0]);const n=Number(raw);return Number.isFinite(n)?n:null};
- function extract(j,name){for(const team of j.boxscore?.players||[])for(const group of team.statistics||[])for(const a of group.athletes||[]){if(normal(a.athlete?.displayName)!==normal(name))continue;const labels=group.labels||[],stats=a.stats||[];return {PTS:val(labels,stats,['PTS']),REB:val(labels,stats,['REB','TRB']),AST:val(labels,stats,['AST']), '3PT':val(labels,stats,['3PT','3PM'])};}return null}
+ function extract(j,name){for(const team of j.boxscore?.players||[])for(const group of team.statistics||[])for(const a of group.athletes||[]){if(normal(a.athlete?.displayName)!==normal(name))continue;const labels=group.labels||[],stats=a.stats||[];return {PTS:val(labels,stats,['PTS']),REB:val(labels,stats,['REB','TRB']),AST:val(labels,stats,['AST']), '3PT':val(labels,stats,['3PT','3PM']),MIN:val(labels,stats,['MIN'])};}return null}
  let running=false;
  $('analyzeProp').addEventListener('click',async()=>{
   if(running)return;
@@ -98,7 +98,7 @@ if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWo
    if(!selected.length)throw Error('No recent completed games found for this team');
    const rows=[];
    for(const ev of selected){$('propMessage').textContent='Loading box scores… '+(rows.length+1)+' / '+selected.length;
-    try{const box=await json(base+'summary?event='+encodeURIComponent(ev.id));const values=extract(box,player);if(values&&values[market]!==null){const sides=ev.competitions?.[0]?.competitors||[],own=sides.find(x=>normal(x.team?.displayName)===normal(team));rows.push({date:ev.date,value:values[market],venue:own?.homeAway==='home'?'Home':own?.homeAway==='away'?'Away':'Unknown',opponent:sides.find(x=>normal(x.team?.displayName)!==normal(team))?.team?.abbreviation||'—'})}}catch(e){/* skip unavailable box scores */}
+    try{const box=await json(base+'summary?event='+encodeURIComponent(ev.id));const values=extract(box,player);if(values&&values[market]!==null){const sides=ev.competitions?.[0]?.competitors||[],own=sides.find(x=>normal(x.team?.displayName)===normal(team));rows.push({date:ev.date,value:values[market],stats:values,venue:own?.homeAway==='home'?'Home':own?.homeAway==='away'?'Away':'Unknown',opponent:sides.find(x=>normal(x.team?.displayName)!==normal(team))?.team?.abbreviation||'—',opponentName:sides.find(x=>normal(x.team?.displayName)!==normal(team))?.team?.displayName||'Unknown'})}}catch(e){/* skip unavailable box scores */}
    }
    if(!rows.length)throw Error('No box-score statistics found for '+player+'. Check that the roster name matches ESPN.');
    const avg=rows.reduce((n,r)=>n+r.value,0)/rows.length,over=hasLine?rows.filter(r=>r.value>line).length:0;
@@ -110,6 +110,31 @@ if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWo
    const venueTitle=document.createElement('h3');venueTitle.textContent='Home vs Away';wrap.append(venueTitle);
    const venueGrid=document.createElement('div');venueGrid.className='analyzer-grid';
    for(const venue of ['Home','Away']){const sample=rows.filter(r=>r.venue===venue),tile=document.createElement('div');tile.className='stat-tile';const title=document.createElement('span');title.className='muted';title.textContent=venue+' · '+sample.length+' game'+(sample.length===1?'':'s');const value=document.createElement('strong');value.textContent=sample.length?(sample.reduce((sum,r)=>sum+r.value,0)/sample.length).toFixed(1)+' avg':'No data';tile.append(title,value);if(hasLine&&sample.length){const hits=sample.filter(r=>r.value>line).length,rate=document.createElement('div');rate.className='muted';rate.textContent='Over '+line+': '+hits+'/'+sample.length+' ('+(100*hits/sample.length).toFixed(0)+'%)';tile.append(rate)}venueGrid.append(tile)}wrap.append(venueGrid);
+   
+   const opponentTitle=document.createElement('h3');opponentTitle.textContent='Against Opponent';wrap.append(opponentTitle);
+   const opponentSelect=document.createElement('select');opponentSelect.setAttribute('aria-label','Opponent for head-to-head analysis');
+   opponentSelect.add(new Option('Choose opponent',''));
+   const opponents=[...new Set(rows.map(r=>r.opponentName).filter(n=>n!=='Unknown'))].sort();
+   for(const name of opponents)opponentSelect.add(new Option(name,name));
+   const opponentStats=document.createElement('div');opponentStats.className='analyzer-grid';opponentStats.style.marginTop='10px';
+   const showOpponent=()=>{
+    opponentStats.replaceChildren();const sample=rows.filter(r=>r.opponentName===opponentSelect.value);
+    if(!sample.length){const note=document.createElement('p');note.className='muted';note.textContent='Select an opponent to see results from the analysed games.';opponentStats.append(note);return}
+    const average=sample.reduce((sum,r)=>sum+r.value,0)/sample.length;
+    const values=[['Games',sample.length],['Average '+market,average.toFixed(1)],['Range',Math.min(...sample.map(r=>r.value))+'–'+Math.max(...sample.map(r=>r.value))]];
+    if(hasLine){const hits=sample.filter(r=>r.value>line).length;values.push(['Over '+line,hits+'/'+sample.length+' ('+Math.round(100*hits/sample.length)+'%)'])}
+    for(const [label,value] of values){const tile=document.createElement('div');tile.className='stat-tile';const caption=document.createElement('span');caption.className='muted';caption.textContent=label;const strong=document.createElement('strong');strong.textContent=value;tile.append(caption,strong);opponentStats.append(tile)}
+   };
+   opponentSelect.addEventListener('change',showOpponent);wrap.append(opponentSelect,opponentStats);showOpponent();
+   const logTitle=document.createElement('h3');logTitle.textContent='Game log';wrap.append(logTitle);
+   const log=document.createElement('div');log.className='boxscore';
+   const table=document.createElement('table'),thead=document.createElement('thead'),headRow=document.createElement('tr');
+   for(const heading of ['Date','Opponent','H/A','MIN','PTS','REB','AST','3PM',...(hasLine?['Result']:[])]){const th=document.createElement('th');th.textContent=heading;headRow.append(th)}
+   thead.append(headRow);table.append(thead);const tbody=document.createElement('tbody');
+   for(const r of rows){const tr=document.createElement('tr');
+    const values=[new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Lisbon',day:'2-digit',month:'short'}).format(new Date(r.date)),r.opponent,r.venue==='Home'?'H':r.venue==='Away'?'A':'—',...['MIN','PTS','REB','AST','3PT'].map(k=>r.stats[k]??'—'),...(hasLine?[r.value>line?'OVER':r.value<line?'UNDER':'PUSH']:[])];
+    for(const v of values){const td=document.createElement('td');td.textContent=String(v);tr.append(td)}tbody.append(tr)}
+   table.append(tbody);log.append(table);wrap.append(log);
    const h=document.createElement('h3');h.textContent='Recent game results';wrap.append(h);
    for(const r of rows){const p=document.createElement('div');p.className='player';p.textContent=new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Lisbon',day:'2-digit',month:'short',year:'numeric'}).format(new Date(r.date))+' · '+(r.venue==='Home'?'vs ':r.venue==='Away'?'@ ':'vs ') +r.opponent+' · '+market+': '+r.value+(hasLine?(r.value>line?' · OVER':r.value<line?' · UNDER':' · PUSH'):'');if(hasLine)p.classList.add(r.value>line?'good':r.value<line?'muted':'warning');wrap.append(p)}
    $('propMessage').textContent='Results from available ESPN box scores. Missing games are excluded; sample size may be smaller than requested.';
