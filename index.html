@@ -78,7 +78,7 @@ if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWo
  const dateKey=d=>d.toISOString().slice(0,10).replaceAll('-','');
  const base='https://site.api.espn.com/apis/site/v2/sports/basketball/nba/';
  const val=(labels,stats,keys)=>{const i=labels.findIndex(x=>keys.includes(String(x).toUpperCase()));if(i<0)return null;const raw=stats[i];if(raw===undefined)return null;if(keys.includes('MIN')&&/^\d+:\d{1,2}$/.test(String(raw))){const [m,sec]=String(raw).split(':').map(Number);return m+sec/60}if(String(raw).includes('-'))return Number(String(raw).split('-')[0]);const n=Number(raw);return Number.isFinite(n)?n:null};
- function extract(j,name){for(const team of j.boxscore?.players||[])for(const group of team.statistics||[])for(const a of group.athletes||[]){if(normal(a.athlete?.displayName)!==normal(name))continue;const labels=group.labels||[],stats=a.stats||[];const values={PTS:val(labels,stats,['PTS']),REB:val(labels,stats,['REB','TRB']),AST:val(labels,stats,['AST']), '3PT':val(labels,stats,['3PT','3PM']),MIN:val(labels,stats,['MIN'])};for(const [key,parts] of Object.entries({PRA:['PTS','REB','AST'],PR:['PTS','REB'],PA:['PTS','AST'],RA:['REB','AST']}))values[key]=parts.every(part=>Number.isFinite(values[part]))?parts.reduce((sum,part)=>sum+values[part],0):null;return values;}return null}
+ function extract(j,name){for(const team of j.boxscore?.players||[])for(const group of team.statistics||[])for(const a of group.athletes||[]){if(normal(a.athlete?.displayName)!==normal(name))continue;const labels=group.labels||[],stats=a.stats||[];const values={PTS:val(labels,stats,['PTS']),REB:val(labels,stats,['REB','TRB']),AST:val(labels,stats,['AST']), '3PT':val(labels,stats,['3PT','3PM']),MIN:val(labels,stats,['MIN'])};for(const [key,parts] of Object.entries({PRA:['PTS','REB','AST'],PR:['PTS','REB'],PA:['PTS','AST'],RA:['REB','AST']}))values[key]=parts.every(part=>Number.isFinite(values[part]))?parts.reduce((sum,part)=>sum+values[part],0):null;values.athleteId=a.athlete?.id||null;return values;}return null}
  let running=false;
  $('analyzeProp').addEventListener('click',async()=>{
   if(running)return;
@@ -116,7 +116,7 @@ if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWo
       const box=await json(base+'summary?event='+encodeURIComponent(ev.id)),values=extract(box,player);
       if(!values||values[market]===null){missingAppearances++;continue}
       const sides=ev.competitions?.[0]?.competitors||[],own=sides.find(x=>normal(x.team?.displayName)===normal(team)),opponent=sides.find(x=>normal(x.team?.displayName)!==normal(team));
-      rows.push({date:ev.date,value:values[market],stats:values,venue:own?.homeAway==='home'?'Home':own?.homeAway==='away'?'Away':'Unknown',opponent:opponent?.team?.abbreviation||'—',opponentName:opponent?.team?.displayName||'Unknown'});
+      rows.push({date:ev.date,value:values[market],stats:values,athleteId:values.athleteId,venue:own?.homeAway==='home'?'Home':own?.homeAway==='away'?'Away':'Unknown',opponent:opponent?.team?.abbreviation||'—',opponentName:opponent?.team?.displayName||'Unknown'});
      }catch(e){missingBoxScores++}
     }
    }
@@ -129,6 +129,35 @@ if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWo
    const wrap=$('propResults');const grid=document.createElement('div');grid.className='analyzer-grid';
    for(const [label,value] of [['Games found',rows.length+' / '+count],['Average '+market,avg.toFixed(1)],['Median '+market,median.toFixed(1)],['Range '+market,sorted[0]+'–'+sorted[sorted.length-1]],['Over '+(hasLine?line:'—'),hasLine?over+' / '+rows.length+' ('+(100*over/rows.length).toFixed(0)+'%)':'Enter a line'],['Last '+lastFive.length+' over',hasLine?lastFiveOver+' / '+lastFive.length:'Enter a line']]){const tile=document.createElement('div');tile.className='stat-tile';const t=document.createElement('span');t.className='muted';t.textContent=label;const v=document.createElement('strong');v.textContent=value;tile.append(t,v);grid.append(tile)}wrap.append(grid);
 
+
+   const seasonTitle=document.createElement('h3');seasonTitle.textContent='Season Statistics';wrap.append(seasonTitle);
+   const seasonInfo=document.createElement('p');seasonInfo.className='muted';seasonInfo.textContent='Loading current regular-season averages…';wrap.append(seasonInfo);
+   const seasonGrid=document.createElement('div');seasonGrid.className='analyzer-grid';wrap.append(seasonGrid);
+   try{
+    const athleteId=rows.find(r=>r.athleteId)?.athleteId;
+    if(!athleteId)throw Error('ESPN player ID not found in available box scores');
+    const season=seasonYear+1;
+    const url='https://site.web.api.espn.com/apis/common/v3/sports/basketball/nba/athletes/'+encodeURIComponent(athleteId)+'/stats?season='+season+'&seasontype=2';
+    const seasonData=await json(url);
+    const categories=seasonData.categories||seasonData.statistics?.categories||[];
+    const seasonValues={};
+    for(const category of categories){
+     const labels=category.labels||category.names||[];
+     const data=category.totals||category.stats||category.values||[];
+     if(!Array.isArray(labels)||!Array.isArray(data))continue;
+     for(let i=0;i<labels.length;i++){const key=String(labels[i]).toUpperCase().replace(/\s/g,'');const n=Number(data[i]);if(Number.isFinite(n)&&data[i]!==null&&data[i]!=='')seasonValues[key]=n}
+    }
+    const seasonMarket={PTS:['PTS','AVGPTS','POINTS'],REB:['REB','AVGREB','REBOUNDS'],AST:['AST','AVGAST','ASSISTS'],'3PT':['3PM','3PT','AVG3PM'],MIN:['MIN','AVGMIN']};
+    const getStat=k=>{for(const alias of seasonMarket[k])if(Number.isFinite(seasonValues[alias]))return seasonValues[alias];return null};
+    const seasonParts={PRA:['PTS','REB','AST'],PR:['PTS','REB'],PA:['PTS','AST'],RA:['REB','AST']};
+    const getMarket=k=>seasonParts[k]?(seasonParts[k].every(part=>getStat(part)!==null)?seasonParts[k].reduce((n,part)=>n+getStat(part),0):null):getStat(k);
+    const current=getMarket(market);
+    if(current===null)throw Error('Season averages for this market are unavailable');
+    const items=[['Season '+market+' avg',current.toFixed(1)],['Last '+rows.length+' avg',avg.toFixed(1)],['Recent vs season',(avg-current>=0?'+':'')+(avg-current).toFixed(1)]];
+    const gp=seasonValues.GP;if(Number.isFinite(gp))items.push(['Season games played',String(gp)]);
+    for(const [label,value] of items){const tile=document.createElement('div');tile.className='stat-tile';const caption=document.createElement('span');caption.className='muted';caption.textContent=label;const strong=document.createElement('strong');strong.textContent=value;tile.append(caption,strong);seasonGrid.append(tile)}
+    seasonInfo.textContent='ESPN '+seasonYear+'–'+String(season).slice(-2)+' regular-season per-game averages. Combined markets sum their component averages. Season hit rates require game-by-game season data and are not inferred from averages.';
+   }catch(error){seasonInfo.textContent='Season averages unavailable from ESPN for this player ('+error.message+'). Recent-game analysis remains available.'}
    const minutesTitle=document.createElement('h3');minutesTitle.textContent='Minutes & Playing Time';wrap.append(minutesTitle);
    const minuteRows=rows.filter(r=>Number.isFinite(r.stats.MIN)&&r.stats.MIN>0);
    const minuteGrid=document.createElement('div');minuteGrid.className='analyzer-grid';
