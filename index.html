@@ -330,6 +330,76 @@ if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWo
      defenseInfo.textContent=nextOpponent+' · Regular-season team points conceded in '+sample.length+' available completed games. These are total opponent team points, NOT points allowed to '+player+'’s position or a player-prop projection.';
     }catch(error){defenseInfo.textContent='Opponent defensive context unavailable ('+error.message+').'}
    }else defenseInfo.textContent='Next opponent not available; defensive context will appear when a matchup is found.';
+
+   // Positional defense: sum opposing player box scores by broad listed position.
+   // These are opponent GROUP totals per game, not an individual matchup projection.
+   if(nextOpponent){
+    const positionTitle=document.createElement('h3');positionTitle.textContent='Defense by Position Group';wrap.append(positionTitle);
+    const positionInfo=document.createElement('p');positionInfo.className='muted';positionInfo.textContent='Checking opponent player box scores…';wrap.append(positionInfo);
+    const positionGrid=document.createElement('div');positionGrid.className='analyzer-grid';wrap.append(positionGrid);
+    try{
+     const groupOf=raw=>{
+      const p=String(raw||'').toUpperCase().replace(/[^A-Z]/g,'');
+      if(['PG','SG','G','POINTGUARD','SHOOTINGGUARD','GUARD'].includes(p))return 'Guards';
+      if(['SF','PF','F','SMALLFORWARD','POWERFORWARD','FORWARD'].includes(p))return 'Forwards';
+      if(['C','CENTER','CENTRE'].includes(p))return 'Centers';
+      return null;
+     };
+     // Prefer position found in player box-score rows already cached from the season scan.
+     let playerGroup=null;
+     for(const event of [...allEvents.values()].sort((a,b)=>new Date(b.date)-new Date(a.date)).slice(0,15)){
+      const box=await json(base+'summary?event='+encodeURIComponent(event.id)).catch(()=>null);
+      for(const side of box?.boxscore?.players||[])for(const stat of side.statistics||[])for(const athlete of stat.athletes||[]){
+       if(normal(athlete.athlete?.displayName)===normal(player)){
+        playerGroup=groupOf(athlete.athlete?.position?.abbreviation||athlete.athlete?.position?.name);
+        break;
+       }
+      }
+      if(playerGroup)break;
+     }
+     // defenseGames is scoped to the defensive context try; retrieve the same upcoming opponent's recent events here.
+     const found=new Map(),today=new Date();
+     for(let offset=0;offset<35&&found.size<8;offset+=7){
+      const dates=Array.from({length:7},(_,i)=>{const d=new Date(today);d.setUTCHours(12,0,0,0);d.setUTCDate(d.getUTCDate()-offset-i-1);return d});
+      const boards=await Promise.all(dates.map(d=>json(base+'scoreboard?dates='+dateKey(d)).catch(()=>null)));
+      for(const board of boards)for(const event of board?.events||[]){
+       if(!event.id||event.status?.type?.state!=='post'||new Date(event.date)<seasonStart)continue;
+       if(event.season?.type!==undefined&&Number(event.season.type)!==2)continue;
+       const sides=event.competitions?.[0]?.competitors||[];
+       if(sides.some(side=>normal(side.team?.displayName)===normal(nextOpponent)))found.set(event.id,event);
+      }
+     }
+     const samples=[];
+     for(const event of [...found.values()].sort((a,b)=>new Date(b.date)-new Date(a.date)).slice(0,8)){
+      const box=await json(base+'summary?event='+encodeURIComponent(event.id)).catch(()=>null);
+      if(!box)continue;
+      const opposing=(box.boxscore?.players||[]).find(side=>normal(side.team?.displayName) !== normal(nextOpponent));
+      if(!opposing)continue;
+      const groups={Guards:{PTS:0,REB:0,AST:0,count:0},Forwards:{PTS:0,REB:0,AST:0,count:0},Centers:{PTS:0,REB:0,AST:0,count:0}};
+      for(const stat of opposing.statistics||[])for(const athlete of stat.athletes||[]){
+       const g=groupOf(athlete.athlete?.position?.abbreviation||athlete.athlete?.position?.name);
+       if(!g||athlete.didNotPlay)continue;
+       const labels=stat.labels||[],values=athlete.stats||[];
+       const pts=val(labels,values,['PTS']),reb=val(labels,values,['REB','TRB']),ast=val(labels,values,['AST']);
+       if(![pts,reb,ast].every(Number.isFinite))continue;
+       groups[g].PTS+=pts;groups[g].REB+=reb;groups[g].AST+=ast;groups[g].count++;
+      }
+      samples.push(groups);
+     }
+     if(!samples.length)throw Error('No usable opposing player box scores');
+     const categories=playerGroup?[playerGroup]:['Guards','Forwards','Centers'];
+     for(const g of categories){
+      const valid=samples.filter(x=>x[g].count>0);
+      if(!valid.length)continue;
+      const tile=document.createElement('div');tile.className='stat-tile';
+      const caption=document.createElement('span');caption.className='muted';caption.textContent=g+' · '+valid.length+' games';
+      const value=document.createElement('strong');value.textContent=['PTS','REB','AST'].map(k=>k+': '+(valid.reduce((sum,x)=>sum+x[g][k],0)/valid.length).toFixed(1)).join(' · ');
+      tile.append(caption,value);positionGrid.append(tile);
+     }
+     positionInfo.textContent=nextOpponent+' · Average COMBINED points/rebounds/assists conceded to opposing position groups over up to 8 games. '+(playerGroup?'Player listed as '+playerGroup+'. ':'Player position unknown; showing all groups. ')+'Position labels are approximate; these are group totals, not per-player averages.';
+    }catch(error){positionInfo.textContent='Position-group defensive data unavailable ('+error.message+').'}
+   }
+
    const opponentTitle=document.createElement('h3');opponentTitle.textContent='Against Opponent';wrap.append(opponentTitle);
    const opponentSelect=document.createElement('select');opponentSelect.setAttribute('aria-label','Opponent for head-to-head analysis');
    opponentSelect.add(new Option('Choose opponent',''));
