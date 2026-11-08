@@ -58,7 +58,7 @@ if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWo
  const message=document.getElementById('gamesMessage');
  const button=document.getElementById('refreshGames');
  const timeFmt=new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Lisbon',hour:'2-digit',minute:'2-digit',hourCycle:'h23'});
- const eastDate=()=>new Intl.DateTimeFormat('en-CA',{timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date()).replaceAll('-','');
+ const eastDate=()=>{const parts=new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date());const get=t=>parts.find(p=>p.type===t)?.value;return get('year')+get('month')+get('day')};
  const safe=(value)=>String(value??'');
  const add=(parent,tag,cls,content)=>{const node=document.createElement(tag);if(cls)node.className=cls;node.textContent=safe(content);parent.append(node);return node};
  async function loadGames(){
@@ -122,4 +122,11 @@ if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWo
          });
        }
      }
-     messag
+     message.textContent='';
+   }catch(e){message.textContent='Could not load NBA games: '+(e.name==='AbortError'?'request timed out':e.message)}
+   finally{button.disabled=false}
+  }
+  button.addEventListener('click',loadGames);
+  loadGames();
+})();
+</script></body></html>
