@@ -102,10 +102,13 @@ if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWo
    }
    if(!rows.length)throw Error('No box-score statistics found for '+player+'. Check that the roster name matches ESPN.');
    const avg=rows.reduce((n,r)=>n+r.value,0)/rows.length,over=hasLine?rows.filter(r=>r.value>line).length:0;
+    const sorted=rows.map(r=>r.value).sort((a,b)=>a-b),mid=Math.floor(sorted.length/2);
+    const median=sorted.length%2?sorted[mid]:(sorted[mid-1]+sorted[mid])/2;
+    const lastFive=rows.slice(0,5),lastFiveOver=hasLine?lastFive.filter(r=>r.value>line).length:0;
    const wrap=$('propResults');const grid=document.createElement('div');grid.className='analyzer-grid';
-   for(const [label,value] of [['Games found',rows.length+' / '+count],['Average '+market,avg.toFixed(1)],['Over '+(hasLine?line:'—'),hasLine?over+' / '+rows.length+' ('+(100*over/rows.length).toFixed(0)+'%)':'Enter a line']]){const tile=document.createElement('div');tile.className='stat-tile';const t=document.createElement('span');t.className='muted';t.textContent=label;const v=document.createElement('strong');v.textContent=value;tile.append(t,v);grid.append(tile)}wrap.append(grid);
+   for(const [label,value] of [['Games found',rows.length+' / '+count],['Average '+market,avg.toFixed(1)],['Median '+market,median.toFixed(1)],['Range '+market,sorted[0]+'–'+sorted[sorted.length-1]],['Over '+(hasLine?line:'—'),hasLine?over+' / '+rows.length+' ('+(100*over/rows.length).toFixed(0)+'%)':'Enter a line'],['Last '+lastFive.length+' over',hasLine?lastFiveOver+' / '+lastFive.length:'Enter a line']]){const tile=document.createElement('div');tile.className='stat-tile';const t=document.createElement('span');t.className='muted';t.textContent=label;const v=document.createElement('strong');v.textContent=value;tile.append(t,v);grid.append(tile)}wrap.append(grid);
    const h=document.createElement('h3');h.textContent='Recent game results';wrap.append(h);
-   for(const r of rows){const p=document.createElement('div');p.className='player';p.textContent=new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Lisbon',day:'2-digit',month:'short',year:'numeric'}).format(new Date(r.date))+' · vs '+r.opponent+' · '+market+': '+r.value;wrap.append(p)}
+   for(const r of rows){const p=document.createElement('div');p.className='player';p.textContent=new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Lisbon',day:'2-digit',month:'short',year:'numeric'}).format(new Date(r.date))+' · vs '+r.opponent+' · '+market+': '+r.value+(hasLine?(r.value>line?' · OVER':r.value<line?' · UNDER':' · PUSH'):'');if(hasLine)p.classList.add(r.value>line?'good':r.value<line?'muted':'warning');wrap.append(p)}
    $('propMessage').textContent='Results from available ESPN box scores. Missing games are excluded; sample size may be smaller than requested.';
   }catch(e){$('propMessage').textContent='Unable to analyze: '+e.message}
   finally{running=false;$('analyzeProp').disabled=false}
