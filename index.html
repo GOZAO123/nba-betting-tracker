@@ -111,6 +111,31 @@ if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWo
    const venueGrid=document.createElement('div');venueGrid.className='analyzer-grid';
    for(const venue of ['Home','Away']){const sample=rows.filter(r=>r.venue===venue),tile=document.createElement('div');tile.className='stat-tile';const title=document.createElement('span');title.className='muted';title.textContent=venue+' · '+sample.length+' game'+(sample.length===1?'':'s');const value=document.createElement('strong');value.textContent=sample.length?(sample.reduce((sum,r)=>sum+r.value,0)/sample.length).toFixed(1)+' avg':'No data';tile.append(title,value);if(hasLine&&sample.length){const hits=sample.filter(r=>r.value>line).length,rate=document.createElement('div');rate.className='muted';rate.textContent='Over '+line+': '+hits+'/'+sample.length+' ('+(100*hits/sample.length).toFixed(0)+'%)';tile.append(rate)}venueGrid.append(tile)}wrap.append(venueGrid);
    
+
+   const chartTitle=document.createElement('h3');chartTitle.textContent=market+' · Recent performance';wrap.append(chartTitle);
+   const chartNote=document.createElement('p');chartNote.className='muted';chartNote.textContent='Oldest to newest · Tap or focus a point for game details.';wrap.append(chartNote);
+   const chartHost=document.createElement('div');chartHost.className='boxscore';chartHost.style.overflowX='auto';wrap.append(chartHost);
+   const svgNS='http://www.w3.org/2000/svg',width=Math.max(520,rows.length*48+90),height=270;
+   const svg=document.createElementNS(svgNS,'svg');svg.setAttribute('viewBox','0 0 '+width+' '+height);svg.setAttribute('role','img');svg.setAttribute('aria-label',market+' game performance chart'+(hasLine?' with betting line '+line:''));
+   svg.style.cssText='display:block;width:100%;min-width:480px;max-height:320px;background:#1b2b42;border:1px solid #344b67;border-radius:10px';
+   const draw=(tag,attrs,content)=>{const el=document.createElementNS(svgNS,tag);for(const [key,value] of Object.entries(attrs))el.setAttribute(key,String(value));if(content!==undefined)el.textContent=content;svg.append(el);return el};
+   const chronological=[...rows].reverse(),left=46,right=width-24,top=22,bottom=height-40;
+   const maximum=Math.max(1,...rows.map(r=>r.value),...(hasLine?[line]:[]));
+   const ceiling=Math.ceil(maximum*1.15)||1;
+   const xAt=i=>left+(right-left)*(chronological.length===1?0.5:i/(chronological.length-1));
+   const yAt=value=>bottom-(value/ceiling)*(bottom-top);
+   for(let i=0;i<=4;i++){const v=ceiling*i/4,y=yAt(v);draw('line',{x1:left,y1:y,x2:right,y2:y,stroke:'#344b67','stroke-width':1});draw('text',{x:left-8,y:y+4,fill:'#b2c5dc','font-size':11,'text-anchor':'end'},Number(v.toFixed(1)))}
+   if(hasLine){const y=yAt(line);draw('line',{x1:left,y1:y,x2:right,y2:y,stroke:'#ffca81','stroke-width':2,'stroke-dasharray':'7 5'});draw('text',{x:right,y:y-7,fill:'#ffca81','font-size':12,'text-anchor':'end'},'Line '+line)}
+   draw('polyline',{points:chronological.map((r,i)=>xAt(i)+','+yAt(r.value)).join(' '),fill:'none',stroke:'#70d9ff','stroke-width':2.5,'stroke-linejoin':'round','stroke-linecap':'round'});
+   const detail=document.createElement('p');detail.className='muted';detail.setAttribute('aria-live','polite');detail.textContent='Select a point to inspect that game.';
+   for(let i=0;i<chronological.length;i++){const r=chronological[i],x=xAt(i),y=yAt(r.value),color=hasLine?(r.value>line?'#6de4b2':r.value<line?'#ff9d9d':'#ffca81'):'#70d9ff';
+    const circle=draw('circle',{cx:x,cy:y,r:6,fill:color,stroke:'#0b1220','stroke-width':2,tabindex:0,role:'button','aria-label':'Game '+(i+1)+': '+r.value+' '+market+' against '+r.opponent});
+    const description=new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Lisbon',day:'2-digit',month:'short',year:'numeric'}).format(new Date(r.date))+' · '+r.venue+' vs '+r.opponent+' · '+r.value+' '+market+(hasLine?' · '+(r.value>line?'OVER':r.value<line?'UNDER':'PUSH'):'');
+    const tooltip=document.createElementNS(svgNS,'title');tooltip.textContent=description;circle.append(tooltip);
+    circle.addEventListener('click',()=>{detail.textContent=description});circle.addEventListener('focus',()=>{detail.textContent=description});
+    draw('text',{x,y:height-18,fill:'#b2c5dc','font-size':10,'text-anchor':'middle'},String(i+1));
+   }
+   chartHost.append(svg,detail);
    const opponentTitle=document.createElement('h3');opponentTitle.textContent='Against Opponent';wrap.append(opponentTitle);
    const opponentSelect=document.createElement('select');opponentSelect.setAttribute('aria-label','Opponent for head-to-head analysis');
    opponentSelect.add(new Option('Choose opponent',''));
