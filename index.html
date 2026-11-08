@@ -187,6 +187,31 @@ if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWo
     for(const [label,value] of items){const tile=document.createElement('div');tile.className='stat-tile';const caption=document.createElement('span');caption.className='muted';caption.textContent=label;const strong=document.createElement('strong');strong.textContent=value;tile.append(caption,strong);seasonGrid.append(tile)}
     seasonInfo.textContent='ESPN '+seasonYear+'–'+String(seasonYear+1).slice(-2)+' regular season · '+gp+' player box scores found across '+seasonEvents.length+' team games.'+(unavailable.length?' '+unavailable.length+' box scores unavailable; season figures may be incomplete.':'')+' Only verified game-level statistics are counted; this is not a projected win probability.';
    }catch(error){seasonInfo.textContent='Season statistics unavailable ('+error.message+'). Recent-game analysis remains available.'}
+
+   const consistencyTitle=document.createElement('h3');consistencyTitle.textContent='Player Consistency';wrap.append(consistencyTitle);
+   const consistencyNote=document.createElement('p');consistencyNote.className='muted';
+   consistencyNote.textContent='Descriptive variability across the '+rows.length+' available appearances for '+market+'. This does not predict future outcomes.';wrap.append(consistencyNote);
+   const consistencyGrid=document.createElement('div');consistencyGrid.className='analyzer-grid';wrap.append(consistencyGrid);
+   const numbers=rows.map(r=>r.value).filter(Number.isFinite),n=numbers.length;
+   if(n>=2){
+    const mean=numbers.reduce((sum,v)=>sum+v,0)/n;
+    const variance=numbers.reduce((sum,v)=>sum+(v-mean)**2,0)/(n-1);
+    const sd=Math.sqrt(variance),cv=mean>0?100*sd/mean:null;
+    const within=numbers.filter(v=>Math.abs(v-mean)<=sd).length;
+    const sortedValues=[...numbers].sort((a,b)=>a-b);
+    const quantile=p=>{const x=(n-1)*p,lo=Math.floor(x),hi=Math.ceil(x);return sortedValues[lo]+(sortedValues[hi]-sortedValues[lo])*(x-lo)};
+    const median=quantile(.5),q1=quantile(.25),q3=quantile(.75);
+    const recent=numbers.slice(0,Math.min(5,n)),earlier=numbers.slice(Math.min(5,n));
+    const recentMean=recent.reduce((sum,v)=>sum+v,0)/recent.length;
+    const tiles=[['Standard deviation',sd.toFixed(1)],['Relative variability',cv===null?'Not available':cv.toFixed(0)+'%'],['Middle 50% range',q1.toFixed(1)+'–'+q3.toFixed(1)],['Within ±1 SD',within+'/'+n],['Median',median.toFixed(1)]];
+    if(earlier.length){const previousMean=earlier.reduce((sum,v)=>sum+v,0)/earlier.length;const delta=recentMean-previousMean;tiles.push(['Recent '+recent.length+' vs earlier '+earlier.length,(delta>=0?'+':'')+delta.toFixed(1)])}
+    if(hasLine){
+     const wins=numbers.filter(v=>v>line).length,losses=numbers.filter(v=>v<line).length,pushes=n-wins-losses;
+     tiles.push(['Over / Under / Push',wins+' / '+losses+' / '+pushes]);
+    }
+    for(const [label,value] of tiles){const tile=document.createElement('div');tile.className='stat-tile';const caption=document.createElement('span');caption.className='muted';caption.textContent=label;const strong=document.createElement('strong');strong.textContent=value;tile.append(caption,strong);consistencyGrid.append(tile)}
+    consistencyNote.textContent+=' Lower standard deviation means less absolute game-to-game variation; relative variability is SD divided by the mean. Recent-vs-earlier compares non-overlapping games in the selected sample.';
+   }else consistencyNote.textContent='At least two player appearances are needed to calculate variability.';
    const minutesTitle=document.createElement('h3');minutesTitle.textContent='Minutes & Playing Time';wrap.append(minutesTitle);
    const minuteRows=rows.filter(r=>Number.isFinite(r.stats.MIN)&&r.stats.MIN>0);
    const minuteGrid=document.createElement('div');minuteGrid.className='analyzer-grid';
