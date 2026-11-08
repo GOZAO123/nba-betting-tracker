@@ -40,7 +40,7 @@ exports.oddsPapiTournamentProbe = onCall(
     }
     // Disabled until the owner's UID is configured server-side.
     // This prevents other registered users from exhausting the free API quota.
-    const ownerUid = process.env.ODDS_OWNER_UID;
+    const ownerUid = "I6ZhMcObXxNVdfv2AqapDxwIaet1";
     if (!ownerUid || request.auth.uid !== ownerUid) {
       throw new HttpsError("permission-denied", "OddsPapi testing is not enabled for this account.");
     }
