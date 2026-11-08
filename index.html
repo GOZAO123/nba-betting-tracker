@@ -36,7 +36,7 @@ const remove=document.createElement('button');remove.className='mini danger';rem
 remove.onclick=()=>{if(!confirm('Are you sure you want to remove '+p.name+' from the roster?'))return;data.players.splice(p.i,1);if(!data.players.some(x=>x.name===p.name))delete data.checked[p.name];persist();render()};
 content.append(label,move,remove);menu.append(content);row.append(check,name,menu);box.append(row)
 }root.append(box)}
-if(!list.length){const p=document.createElement('p');p.className='muted';p.textContent='No matching players.';root.append(p)}}
+if(!list.length){const p=document.createElement('p');p.className='muted';p.textContent='No matching players.';root.append(p)}window.dispatchEvent(new CustomEvent('tracker-roster-updated',{detail:data.players.map(p=>({name:p.name,team:p.team}))}))}
 $('signin').onclick=async()=>{try{$('loginmsg').textContent='Signing in…';await signInWithPopup(auth,provider)}catch(e){if(['auth/popup-blocked','auth/operation-not-supported-in-this-environment'].includes(e.code)){await signInWithRedirect(auth,provider)}else $('loginmsg').textContent=e.message}};
 getRedirectResult(auth).catch(e=>{$('loginmsg').textContent=e.message});
 $('signout').onclick=()=>signOut(auth);
@@ -62,14 +62,17 @@ if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWo
  const teams=['Atlanta Hawks','Boston Celtics','Brooklyn Nets','Charlotte Hornets','Chicago Bulls','Cleveland Cavaliers','Dallas Mavericks','Denver Nuggets','Detroit Pistons','Golden State Warriors','Houston Rockets','Indiana Pacers','LA Clippers','Los Angeles Lakers','Memphis Grizzlies','Miami Heat','Milwaukee Bucks','Minnesota Timberwolves','New Orleans Pelicans','New York Knicks','Oklahoma City Thunder','Orlando Magic','Philadelphia 76ers','Phoenix Suns','Portland Trail Blazers','Sacramento Kings','San Antonio Spurs','Toronto Raptors','Utah Jazz','Washington Wizards'];
  teams.forEach(t=>$('propTeam').add(new Option(t,t)));
  const normal=s=>String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]/g,'');
- function roster(){try{const els=[...document.querySelectorAll('#list .team')];const map=new Map();els.forEach(el=>{const name=el.querySelector('summary')?.textContent?.split(' · ')[0];if(name)map.set(name,[...el.querySelectorAll('.player .name')].map(x=>x.textContent))});return map}catch{return new Map()}}
- $('propTeam').addEventListener('change',()=>{
-  const select=$('propPlayer');select.replaceChildren(new Option('Choose player',''));
-  const team=$('propTeam').value;
-  const names=roster().get(team)||[];
-  names.sort((a,b)=>a.localeCompare(b)).forEach(n=>select.add(new Option(n,n)));
-  if(!names.length)$('propMessage').textContent='Open the Checklist tab and expand this team once, then return here to load its players.';
- });
+ let rosterPlayers=[];
+ function updatePropPlayers(){
+  const select=$('propPlayer'),previous=select.value,team=$('propTeam').value;
+  const names=[...new Set(rosterPlayers.filter(p=>p.team===team).map(p=>p.name))].sort((a,b)=>a.localeCompare(b));
+  select.replaceChildren(new Option('Choose player',''));
+  names.forEach(name=>select.add(new Option(name,name)));
+  if(names.includes(previous))select.value=previous;
+  $('propMessage').textContent=names.length?'':'No players on this team yet. Add players in the Checklist tab.';
+ }
+ window.addEventListener('tracker-roster-updated',event=>{rosterPlayers=event.detail||[];updatePropPlayers()});
+ $('propTeam').addEventListener('change',updatePropPlayers);
  const cache=new Map();
  async function json(url){if(cache.has(url))return cache.get(url);const ctl=new AbortController(),timer=setTimeout(()=>ctl.abort(),14000);try{const r=await fetch(url,{signal:ctl.signal});if(!r.ok)throw Error('ESPN HTTP '+r.status);const j=await r.json();cache.set(url,j);return j}finally{clearTimeout(timer)}}
  const dateKey=d=>d.toISOString().slice(0,10).replaceAll('-','');
