@@ -276,6 +276,35 @@ if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWo
      matchupPanel.append(info);
     }else matchupStatus.textContent='No upcoming game found in the next 14 calendar days.';
    }catch(error){matchupStatus.textContent='Upcoming schedule unavailable right now. Historical analysis is still shown.'}
+
+   const defenseTitle=document.createElement('h3');defenseTitle.textContent='Opponent Defensive Context';wrap.append(defenseTitle);
+   const defenseInfo=document.createElement('p');defenseInfo.className='muted';defenseInfo.textContent='Checking the upcoming opponent’s recent defensive results…';wrap.append(defenseInfo);
+   const defenseGrid=document.createElement('div');defenseGrid.className='analyzer-grid';wrap.append(defenseGrid);
+   if(nextOpponent){
+    try{
+     const defenseGames=new Map(),today=new Date();
+     // Scoreboard team points conceded is reliable context; it is NOT position-specific defense.
+     for(let offset=0;offset<45&&defenseGames.size<10;offset+=7){
+      const dates=Array.from({length:Math.min(7,45-offset)},(_,i)=>{const d=new Date(today);d.setUTCHours(12,0,0,0);d.setUTCDate(d.getUTCDate()-offset-i-1);return d});
+      const results=await Promise.all(dates.map(d=>json(base+'scoreboard?dates='+dateKey(d)).catch(()=>null)));
+      for(const result of results)for(const ev of result?.events||[]){
+       if(!ev.id||ev.status?.type?.state!=='post'||new Date(ev.date)<seasonStart)continue;
+       if(ev.season?.type!==undefined&&Number(ev.season.type)!==2)continue;
+       const sides=ev.competitions?.[0]?.competitors||[],defender=sides.find(c=>normal(c.team?.displayName)===normal(nextOpponent)),other=sides.find(c=>c!==defender);
+       if(!defender||!other)continue;
+       const conceded=Number(other.score);
+       if(Number.isFinite(conceded)&&conceded>=0&&conceded<=200)defenseGames.set(ev.id,{date:ev.date,conceded});
+      }
+     }
+     const sample=[...defenseGames.values()].sort((a,b)=>new Date(b.date)-new Date(a.date)).slice(0,10);
+     if(!sample.length)throw Error('No completed regular-season games found');
+     const averages=[5,10].map(n=>{const subset=sample.slice(0,n);return ['Last '+subset.length+' games allowed',(subset.reduce((sum,g)=>sum+g.conceded,0)/subset.length).toFixed(1)+' PPG']});
+     const last=sample[0].conceded;
+     averages.push(['Most recent game allowed',last+' points']);
+     for(const [label,value] of averages){const tile=document.createElement('div');tile.className='stat-tile';const caption=document.createElement('span');caption.className='muted';caption.textContent=label;const strong=document.createElement('strong');strong.textContent=value;tile.append(caption,strong);defenseGrid.append(tile)}
+     defenseInfo.textContent=nextOpponent+' · Regular-season team points conceded in '+sample.length+' available completed games. These are total opponent team points, NOT points allowed to '+player+'’s position or a player-prop projection.';
+    }catch(error){defenseInfo.textContent='Opponent defensive context unavailable ('+error.message+').'}
+   }else defenseInfo.textContent='Next opponent not available; defensive context will appear when a matchup is found.';
    const opponentTitle=document.createElement('h3');opponentTitle.textContent='Against Opponent';wrap.append(opponentTitle);
    const opponentSelect=document.createElement('select');opponentSelect.setAttribute('aria-label','Opponent for head-to-head analysis');
    opponentSelect.add(new Option('Choose opponent',''));
