@@ -130,6 +130,7 @@ if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWo
    for(const [label,value] of [['Games found',rows.length+' / '+count],['Average '+market,avg.toFixed(1)],['Median '+market,median.toFixed(1)],['Range '+market,sorted[0]+'–'+sorted[sorted.length-1]],['Over '+(hasLine?line:'—'),hasLine?over+' / '+rows.length+' ('+(100*over/rows.length).toFixed(0)+'%)':'Enter a line'],['Last '+lastFive.length+' over',hasLine?lastFiveOver+' / '+lastFive.length:'Enter a line']]){const tile=document.createElement('div');tile.className='stat-tile';const t=document.createElement('span');t.className='muted';t.textContent=label;const v=document.createElement('strong');v.textContent=value;tile.append(t,v);grid.append(tile)}wrap.append(grid);
 
 
+   let seasonReport=null,defenseReport=null,positionReport=null,matchupReport=null;
    const seasonTitle=document.createElement('h3');seasonTitle.textContent='Season Statistics';wrap.append(seasonTitle);
    const seasonInfo=document.createElement('p');seasonInfo.className='muted';seasonInfo.textContent='Collecting regular-season player box scores…';wrap.append(seasonInfo);
    const seasonGrid=document.createElement('div');seasonGrid.className='analyzer-grid';wrap.append(seasonGrid);
@@ -178,6 +179,7 @@ if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWo
     }
     if(!seasonRows.length)throw Error('No current regular-season player box scores found');
     const gp=seasonRows.length,seasonAvg=seasonRows.reduce((n,v)=>n+v,0)/gp;
+    seasonReport={season:seasonYear+'-'+(seasonYear+1),gamesFound:gp,teamGamesFound:seasonEvents.length,unavailableBoxScores:unavailable.length,marketAverage:seasonAvg,over:hasLine?seasonRows.filter(v=>v>line).length:null,under:hasLine?seasonRows.filter(v=>v<line).length:null,push:hasLine?seasonRows.filter(v=>v===line).length:null,source:'ESPN individual regular-season box scores',completeness:unavailable.length?'incomplete':'available games only'};
     const items=[['Season '+market+' avg',seasonAvg.toFixed(1)],['Last '+rows.length+' avg',avg.toFixed(1)],['Recent vs season',(avg-seasonAvg>=0?'+':'')+(avg-seasonAvg).toFixed(1)],['Season games found',String(gp)]];
     if(hasLine){
      const hits=seasonRows.filter(v=>v>line).length,pushes=seasonRows.filter(v=>v===line).length;
@@ -289,6 +291,7 @@ if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWo
     const next=[...new Map(upcoming.map(g=>[g.id,g])).values()].sort((a,b)=>new Date(a.date)-new Date(b.date))[0];
     if(next){
      nextOpponent=next.opponent;
+     matchupReport={opponent:next.opponent,venue:next.venue,scheduledAt:next.date,timeZone:'Europe/Lisbon'};
      const when=new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Lisbon',day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(new Date(next.date));
      matchupStatus.textContent=team+' vs '+next.opponent+' · '+next.venue+' · '+when+' (Lisbon)';
      const matching=rows.filter(r=>normal(r.opponentName)===normal(next.opponent));
@@ -324,6 +327,7 @@ if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWo
      const sample=[...defenseGames.values()].sort((a,b)=>new Date(b.date)-new Date(a.date)).slice(0,10);
      if(!sample.length)throw Error('No completed regular-season games found');
      const averages=[5,10].map(n=>{const subset=sample.slice(0,n);return ['Last '+subset.length+' games allowed',(subset.reduce((sum,g)=>sum+g.conceded,0)/subset.length).toFixed(1)+' PPG']});
+     defenseReport={opponent:nextOpponent,games:sample.length,pointsAllowedLast5:sample.slice(0,5).reduce((n,g)=>n+g.conceded,0)/Math.min(5,sample.length),pointsAllowedLast10:sample.reduce((n,g)=>n+g.conceded,0)/sample.length,scope:'team points conceded, not positional player props'};
      const last=sample[0].conceded;
      averages.push(['Most recent game allowed',last+' points']);
      for(const [label,value] of averages){const tile=document.createElement('div');tile.className='stat-tile';const caption=document.createElement('span');caption.className='muted';caption.textContent=label;const strong=document.createElement('strong');strong.textContent=value;tile.append(caption,strong);defenseGrid.append(tile)}
@@ -376,9 +380,11 @@ if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWo
      }
      if(!samples.length)throw Error('No usable opposing player box scores');
      const categories=playerGroup?[playerGroup]:['Guards','Forwards','Centers'];
+     positionReport={opponent:nextOpponent,playerPositionGroup:playerGroup,groups:{},scope:'combined opposing position-group box-score totals per game'};
      for(const g of categories){
       const valid=samples.filter(x=>x[g].count>0);
       if(!valid.length)continue;
+      positionReport.groups[g]={games:valid.length,...Object.fromEntries(['PTS','REB','AST'].map(k=>[k,valid.reduce((sum,x)=>sum+x[g][k],0)/valid.length]))};
       const tile=document.createElement('div');tile.className='stat-tile';
       const caption=document.createElement('span');caption.className='muted';caption.textContent=g+' · '+valid.length+' games';
       const value=document.createElement('strong');value.textContent=['PTS','REB','AST'].map(k=>k+': '+(valid.reduce((sum,x)=>sum+x[g][k],0)/valid.length).toFixed(1)).join(' · ');
@@ -403,6 +409,25 @@ if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWo
     for(const [label,value] of values){const tile=document.createElement('div');tile.className='stat-tile';const caption=document.createElement('span');caption.className='muted';caption.textContent=label;const strong=document.createElement('strong');strong.textContent=value;tile.append(caption,strong);opponentStats.append(tile)}
    };
    opponentSelect.addEventListener('change',showOpponent);wrap.append(opponentSelect,opponentStats);if(nextOpponent&&opponents.includes(nextOpponent))opponentSelect.value=nextOpponent;showOpponent();
+   const reportTitle=document.createElement('h3');reportTitle.textContent='Analysis Data Report';wrap.append(reportTitle);
+   const reportNote=document.createElement('p');reportNote.className='muted';reportNote.textContent='Download structured JSON for future AI analysis. Missing sections remain null; this report does not contain AI predictions or betting recommendations.';wrap.append(reportNote);
+   const reportButton=document.createElement('button');reportButton.type='button';reportButton.textContent='Export analysis JSON';wrap.append(reportButton);
+   reportButton.addEventListener('click',()=>{
+    const values=rows.map(r=>r.value),mean=values.reduce((n,v)=>n+v,0)/values.length;
+    const standardDeviation=values.length>1?Math.sqrt(values.reduce((n,v)=>n+(v-mean)**2,0)/(values.length-1)):null;
+    const homeAway={};
+    for(const venue of ['Home','Away']){const sample=rows.filter(r=>r.venue===venue);homeAway[venue.toLowerCase()]={games:sample.length,average:sample.length?sample.reduce((n,r)=>n+r.value,0)/sample.length:null,overs:hasLine?sample.filter(r=>r.value>line).length:null}}
+    const report={
+     schemaVersion:'1.0',generatedAt:new Date().toISOString(),dataSource:'ESPN public scoreboard and box scores',
+     selection:{team,player,market,requestedGames:count,line:hasLine?line:null},
+     recent:{games:rows.length,average:mean,median,standardDeviation,minimum:sorted[0],maximum:sorted[sorted.length-1],overs:hasLine?rows.filter(r=>r.value>line).length:null,unders:hasLine?rows.filter(r=>r.value<line).length:null,pushes:hasLine?rows.filter(r=>r.value===line).length:null,homeAway},
+     season:seasonReport,upcomingMatchup:matchupReport,opponentDefense:nextOpponent?defenseReport:null,positionGroupDefense:nextOpponent?positionReport:null,
+     gameLog:rows.map(r=>({date:r.date,opponent:r.opponentName,venue:r.venue,stats:r.stats})),
+     caveats:['Historical hit rates are not calibrated future probabilities.','Season results may omit unavailable box scores.','Defensive position-group totals are not individual player projections.','No AI recommendation has been generated.']
+    };
+    const blob=new Blob([JSON.stringify(report,null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');
+    a.href=url;a.download='nba-analysis-'+dateKey(new Date())+'.json';document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
+   });
    const logTitle=document.createElement('h3');logTitle.textContent='Game log';wrap.append(logTitle);
    const log=document.createElement('div');log.className='boxscore';
    const table=document.createElement('table'),thead=document.createElement('thead'),headRow=document.createElement('tr');
