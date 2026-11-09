@@ -51,6 +51,26 @@
 .scanner-dev-content{display:grid;gap:10px;margin-top:14px}
 .scanner-dev-content .row{margin-top:4px}
 @media(max-width:700px){.scanner-overview{grid-template-columns:1fr 1fr}.scanner-tile:last-child{grid-column:1/-1}.scanner-tile{padding:12px}.scanner-workspace,.scanner-dev{padding:13px}.scanner-hero h2{font-size:1.45rem}}
+
+/* UI Update 29.3 — NBA game cards, existing ESPN requests unchanged */
+.game-card-modern{padding:15px;border-radius:15px;background:linear-gradient(145deg,#1c3049,#14243a);border:1px solid #39516b;transition:border-color .15s,transform .15s}
+.game-card-modern:focus-visible{outline:2px solid #70d9ff;outline-offset:2px}
+.game-card-header{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:13px}
+.game-status{font-size:.72rem;font-weight:800;letter-spacing:.06em;border-radius:999px;padding:5px 9px;background:#29435c;color:#d7e7f7}
+.game-status.is-live{background:#612c35;color:#ffbfc6}.game-status.is-final{background:#2a3c50;color:#c2d1e1}.game-status.is-upcoming{background:#17483b;color:#99efd1}
+.game-kickoff{font-size:.8rem;color:#b7cce0}
+.game-matchup{display:grid;gap:11px}
+.game-team-row{display:flex;align-items:center;gap:12px;min-width:0}
+.game-team-logo,.game-team-placeholder{width:35px;height:35px;object-fit:contain;flex:none}
+.game-team-placeholder{display:grid;place-items:center}
+.game-team-name{font-size:1rem;font-weight:700;flex:1;min-width:0}
+.game-team-score{font-size:1.3rem;min-width:32px;text-align:right;font-variant-numeric:tabular-nums}
+.game-card-modern .game-meta{margin-top:13px}
+.game-expand-hint{font-size:.78rem;color:#78cbb4;margin-top:9px;font-weight:700}
+.game-card-modern[aria-expanded="true"]{border-color:#429d86}
+.game-card-modern[aria-expanded="true"] .game-expand-hint{color:#b2ead8}
+@media(max-width:700px){.game-card-modern{padding:13px}.game-team-name{font-size:.92rem}.game-team-logo,.game-team-placeholder{width:30px;height:30px}}
+@media(prefers-reduced-motion:reduce){.game-card-modern{transition:none}}
 </style></head><body><main><div class="bar"><div><h1>🏀 NBA Betting Tracker</h1><p>One player, one check — synced across devices</p></div><button id="signout" hidden>Sign out</button></div><section class="panel" id="login"><h2>Sign in</h2><p>Use the same Google account on Android and PC to see the same checklist.</p><button class="primary" id="signin">Continue with Google</button><p class="muted" id="loginmsg"></p></section><div id="app"><nav class="tabs" aria-label="App sections"><button type="button" data-tab="scanner" aria-selected="true">🤖 AI Scanner</button><button type="button" data-tab="games" aria-selected="false">🏀 NBA Games</button><button type="button" data-tab="analyzer" aria-selected="false">📊 Props Analyzer</button><button type="button" data-tab="checklist" aria-selected="false">✅ Checklist</button></nav><section id="scannerTab" class="panel scanner-panel">
  <header class="scanner-hero"><div><span class="scanner-eyebrow">NBA ANALYTICS · BETANO PT</span><h2>🤖 AI Scanner</h2><p class="muted">Your workspace for NBA player-prop research.</p></div><span class="scanner-badge">● Manual mode</span></header>
  <div class="scanner-overview" aria-label="Scanner overview">
@@ -763,13 +783,28 @@ if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWo
        const home=sides.find(t=>t.homeAway==='home');const away=sides.find(t=>t.homeAway==='away');
        const homeName=home?.team?.displayName||'Home team';const awayName=away?.team?.displayName||'Away team';
        const state=event.status?.type?.state||'pre';
-       const card=add(list,'article','game-card','');
-       add(card,'div','game-teams',awayName+' @ '+homeName);
-       let info;
-       if(state==='post')info='Final · '+safe(away?.score||'–')+' - '+safe(home?.score||'–');
-       else if(state==='in')info='LIVE · '+safe(away?.score||'0')+' - '+safe(home?.score||'0')+' · '+safe(event.status?.type?.shortDetail||'');
-       else {const dt=new Date(event.date);info='Upcoming · '+(Number.isNaN(dt.getTime())?'Time unavailable':new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Lisbon',weekday:'short',day:'numeric',month:'short',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(dt));}
-       add(card,'div','game-meta',info);
+       const card=add(list,'article','game-card game-card-modern','');
+       const header=add(card,'div','game-card-header','');
+       const badge=add(header,'span','game-status '+(state==='in'?'is-live':state==='post'?'is-final':'is-upcoming'),state==='in'?'● LIVE':state==='post'?'FINAL':'UPCOMING');
+       const dt=new Date(event.date);
+       const localTime=Number.isNaN(dt.getTime())?'Time unavailable':new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Lisbon',weekday:'short',day:'numeric',month:'short',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(dt);
+       add(header,'span','game-kickoff',localTime+' · Lisbon');
+       const matchup=add(card,'div','game-matchup','');
+       const makeTeam=(team,name)=>{
+         const row=add(matchup,'div','game-team-row','');
+         const logo=team?.team?.logo;
+         if(typeof logo==='string'&&logo.startsWith('https://')){
+           const img=document.createElement('img');img.className='game-team-logo';img.src=logo;img.alt='';img.loading='lazy';img.referrerPolicy='no-referrer';row.append(img);
+         }else add(row,'span','game-team-placeholder','🏀');
+         const label=add(row,'span','game-team-name',name);
+         const score=add(row,'strong','game-team-score',state==='pre'?'—':String(team?.score??'—'));
+         return row;
+       };
+       makeTeam(away,awayName);makeTeam(home,homeName);
+       if(state==='in')add(card,'div','game-meta','In progress · '+safe(event.status?.type?.shortDetail||'Live'));
+       else if(state==='post')add(card,'div','game-meta','Final score');
+       else add(card,'div','game-meta','Scheduled tip-off');
+       add(card,'div','game-expand-hint',state==='pre'?'Tap for game details ↓':'Tap to view player box scores ↓');
        const target=add(card,'div','boxscore','');target.hidden=true;
        card.tabIndex=0;card.setAttribute('role','button');card.setAttribute('aria-expanded','false');
        const toggle=async()=>{
