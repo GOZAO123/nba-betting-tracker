@@ -613,16 +613,28 @@ if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWo
     const sides=e.competitions?.[0]?.competitors||[];
     for(const side of sides)if(ids.has(String(side.team?.id)))games.set(String(e.id),e);
    }
-   const selected=[...games.values()].sort((a,b)=>new Date(b.date)-new Date(a.date)).filter((e,i,all)=>{
-    const sideIds=(e.competitions?.[0]?.competitors||[]).map(c=>String(c.team?.id));
-    return sideIds.some(id=>ids.has(id)&&all.slice(0,i).filter(prev=>(prev.competitions?.[0]?.competitors||[]).some(c=>String(c.team?.id)===id)).length<5);
-   });
+   // Select each team's five newest completed games independently.
+   // A Lakers vs Hawks fixture may be #6 for Lakers but #5 for Hawks:
+   // fetch it once, then ONLY count it in the Hawks player sample.
+   const allowedGamesByTeam=new Map([...ids].map(id=>[id,new Set()]));
+   const selected=[];
+   for(const event of [...games.values()].sort((a,b)=>new Date(b.date)-new Date(a.date))){
+    let needed=false;
+    for(const side of event.competitions?.[0]?.competitors||[]){
+     const allowed=allowedGamesByTeam.get(String(side.team?.id||''));
+     if(!allowed||allowed.size>=5)continue;
+     allowed.add(String(event.id));needed=true;
+    }
+    if(needed)selected.push(event);
+    if([...allowedGamesByTeam.values()].every(allowed=>allowed.size===5))break;
+   }
    const results=await Promise.all(selected.map(e=>scanFetch('https://site.api.espn.com/apis/site/v2/sports/basketball/nba/summary?event='+encodeURIComponent(e.id)).catch(()=>null)));
    const byTeam=new Map([...ids].map(id=>[id,new Map()]));let usableGames=0;
    for(let i=0;i<results.length;i++){
     const box=results[i];if(!box)continue;usableGames++;
     for(const side of box.boxscore?.players||[]){
-     const teamId=String(side.team?.id||'');if(!byTeam.has(teamId))continue;
+     const teamId=String(side.team?.id||'');
+     if(!byTeam.has(teamId)||!allowedGamesByTeam.get(teamId)?.has(String(selected[i]?.id)))continue;
      for(const group of side.statistics||[])for(const a of group.athletes||[]){
       if(!a.athlete?.id||!Array.isArray(a.stats)||a.didNotPlay===true||a.dnp===true)continue;
       const stats={};let valid=true;
@@ -630,13 +642,15 @@ if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWo
       // A zero-minute record is not a confirmed on-court appearance.
       if(!valid||stats.MIN<=0)continue;
       const teamPlayers=byTeam.get(teamId),id=String(a.athlete.id);
-      if(!teamPlayers.has(id))teamPlayers.set(id,{name:a.athlete.displayName||'Unknown',games:[]});
-      teamPlayers.get(id).games.push(stats);
+      if(!teamPlayers.has(id))teamPlayers.set(id,{name:a.athlete.displayName||'Unknown',games:[],gameIds:new Set()});
+      const entry=teamPlayers.get(id),gameId=String(selected[i].id);
+      if(entry.gameIds.has(gameId))continue; // ESPN may repeat a row in multiple statistics groups.
+      entry.gameIds.add(gameId);entry.games.push(stats);
      }
     }
    }
    area.replaceChildren();
-   scanAdd(area,'p','Recent regular-season box scores · up to 5 team games from the past 18 days. Blank stats, DNPs and zero-minute records are excluded, not counted as zero. Averages are descriptive, not betting predictions.','muted');
+   scanAdd(area,'p','Recent regular-season box scores · each team is independently limited to its 5 most recent completed games from the past 18 days. Blank stats, DNPs and zero-minute records are excluded. Averages are descriptive, not betting predictions.','muted');
    for(const t of teams){
     const section=scanAdd(area,'div','','stat-tile'),id=String(t?.team?.id||''),players=[...(byTeam.get(id)?.values()||[])].sort((a,b)=>b.games.length-a.games.length||a.name.localeCompare(b.name));
     scanAdd(section,'strong',t?.team?.displayName||'Team');
