@@ -244,6 +244,19 @@ main{width:100%;min-width:0}
 .prop-trend-toggle[aria-pressed="true"]{border-color:var(--trend-color);background:#20463f;color:#fff}
 .prop-trend-toggle::before{content:"";display:inline-block;width:15px;height:3px;vertical-align:middle;border-radius:6px;margin-right:8px;background:var(--trend-color)}
 .prop-trend-summary{font-size:.84rem;line-height:1.5;margin:0}
+
+/* Update 31.1 — recent form snapshot: historical samples, streaks and outcomes. */
+.prop-form-grid .stat-tile{display:flex;flex-direction:column;gap:8px}
+.prop-form-grid .stat-tile strong{font-size:1.15rem}
+.prop-form-hit{font-size:.87rem;color:#9be9cc;line-height:1.45}
+.prop-form-streak{display:flex;flex-direction:column;gap:10px;background:#142b3c;border:1px solid #36566d;border-radius:12px;padding:14px;min-width:0}
+.prop-form-streak>strong{color:#e9f8ff;font-size:1.04rem}
+.prop-form-outcomes{display:flex;gap:7px;flex-wrap:wrap;align-items:center}
+.prop-form-chip{padding:6px 10px;border:1px solid #486075;border-radius:9px;font-size:.78rem;font-weight:800;white-space:nowrap}
+.prop-form-over{background:#173f37;border-color:#28765c;color:#9af4c6}
+.prop-form-under{background:#442c36;border-color:#765066;color:#ffc2c9}
+.prop-form-push{background:#423b28;border-color:#75663d;color:#ffe1a2}
+.prop-form-no-line{border:1px dashed #47627c;border-radius:10px;padding:11px 13px;margin:0}
 </style></head><body><main><div class="bar"><div><h1>🏀 NBA Betting Tracker</h1><p>One player, one check — synced across devices</p></div><div class="header-actions"><button id="layoutModeToggle" type="button" class="mini" aria-label="Switch between wide and mobile layouts">📱 Mobile view</button><button id="signout" hidden>Sign out</button></div></div><section class="panel" id="login"><h2>Sign in</h2><p>Use the same Google account on Android and PC to see the same checklist.</p><button class="primary" id="signin">Continue with Google</button><p class="muted" id="loginmsg"></p></section><div id="app"><nav class="tabs" aria-label="App sections"><button type="button" data-tab="scanner" aria-selected="true">🤖 AI Scanner</button><button type="button" data-tab="games" aria-selected="false">🏀 NBA Games</button><button type="button" data-tab="analyzer" aria-selected="false">📊 Props Analyzer</button><button type="button" data-tab="checklist" aria-selected="false">✅ Checklist</button></nav><section id="scannerTab" class="panel scanner-panel">
  <header class="scanner-hero"><div><span class="scanner-eyebrow">NBA ANALYTICS · BETANO PT</span><h2>🤖 AI Scanner</h2><p class="muted">Your workspace for NBA player-prop research.</p></div><span class="scanner-badge">● Manual mode</span></header>
  <div class="scanner-overview" aria-label="Scanner overview">
@@ -670,6 +683,60 @@ if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWo
    const grid=document.createElement('div');grid.className='analyzer-grid';
    for(const [label,value] of [['Games found',rows.length+' / '+count],['Average '+market,avg.toFixed(1)],['Median '+market,median.toFixed(1)],['Range '+market,sorted[0]+'–'+sorted[sorted.length-1]],['Over '+(hasLine?line:'—'),hasLine?over+' / '+rows.length+' ('+(100*over/rows.length).toFixed(0)+'%)':'Enter a line'],['Last '+lastFive.length+' over',hasLine?lastFiveOver+' / '+lastFive.length:'Enter a line']]){const tile=document.createElement('div');tile.className='stat-tile';const t=document.createElement('span');t.className='muted';t.textContent=label;const v=document.createElement('strong');v.textContent=value;tile.append(t,v);grid.append(tile)}wrap.append(grid);
 
+   // Update 31.1: recent form uses the same already-loaded player appearances.
+   // Rows are newest-first. No extra ESPN, Firebase or odds requests.
+   const formTitle=document.createElement('h3');
+   formTitle.textContent='Recent Form Snapshot';wrap.append(formTitle);
+   const formNote=document.createElement('p');formNote.className='muted';
+   formNote.textContent='Compare recent completed appearances. Smaller samples can fluctuate substantially; historical results are not forecasts.';
+   wrap.append(formNote);
+   const formGrid=document.createElement('div');formGrid.className='analyzer-grid prop-form-grid';
+   const lengths=[...new Set([3,5,10].map(n=>Math.min(n,rows.length)))].filter(Boolean);
+   for(const size of lengths){
+     const sample=rows.slice(0,size);
+     const average=sample.reduce((sum,r)=>sum+r.value,0)/size;
+     const tile=document.createElement('div');tile.className='stat-tile prop-form-card';
+     const caption=document.createElement('span');caption.className='muted';caption.textContent='Last '+size+' game'+(size===1?'':'s');
+     const value=document.createElement('strong');value.textContent=average.toFixed(1)+' avg '+market;
+     tile.append(caption,value);
+     if(hasLine){
+       const wins=sample.filter(r=>r.value>line).length;
+       const pushes=sample.filter(r=>r.value===line).length;
+       const hit=document.createElement('span');hit.className='prop-form-hit';
+       hit.textContent='Over '+line+': '+wins+'/'+size+' ('+Math.round(100*wins/size)+'%)'+(pushes?' · '+pushes+' push'+(pushes===1?'':'es'):'');
+       tile.append(hit);
+     }
+     formGrid.append(tile);
+   }
+   wrap.append(formGrid);
+   if(hasLine){
+     const outcomes=rows.map(r=>r.value>line?'OVER':r.value<line?'UNDER':'PUSH');
+     const current=outcomes[0];let consecutive=0;
+     for(const outcome of outcomes){if(outcome!==current)break;consecutive++}
+     const streak=document.createElement('div');streak.className='prop-form-streak';
+     const streakLabel=document.createElement('strong');
+     streakLabel.textContent='Current recorded streak: '+consecutive+' '+current+(consecutive===1?'':'s');
+     streak.append(streakLabel);
+     const streakNote=document.createElement('span');streakNote.className='muted';
+     streakNote.textContent='Consecutive appearances in the analysed sample, most recent first. Pushes break Over/Under streaks.';
+     streak.append(streakNote);
+     const recent=document.createElement('div');recent.className='prop-form-outcomes';
+     for(const r of rows.slice(0,10)){
+       const result=r.value>line?'OVER':r.value<line?'UNDER':'PUSH';
+       const chip=document.createElement('span');
+       chip.className='prop-form-chip prop-form-'+result.toLowerCase();
+       chip.textContent=result+' · '+r.value;
+       const date=new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Lisbon',day:'2-digit',month:'short'}).format(new Date(r.date));
+       chip.title=date+' vs '+r.opponent+' · '+r.value+' '+market;
+       recent.append(chip);
+     }
+     streak.append(recent);wrap.append(streak);
+   }else{
+     const notice=document.createElement('p');notice.className='muted prop-form-no-line';
+     notice.textContent='Enter a betting line before running the analysis to see Over/Under streaks and game-by-game outcomes.';
+     wrap.append(notice);
+   }
+
    // Compare nearby historical betting lines using already-loaded game results only.
    // This is a local what-if tool: it does not edit the original analysis or fetch odds.
    const lineExplorerTitle=document.createElement('h3');
@@ -1079,7 +1146,7 @@ if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWo
    const h=document.createElement('h3');h.textContent='Recent game results';wrap.append(h);
    for(const r of rows){const p=document.createElement('div');p.className='player';p.textContent=new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Lisbon',day:'2-digit',month:'short',year:'numeric'}).format(new Date(r.date))+' · '+(r.venue==='Home'?'vs ':r.venue==='Away'?'@ ':'vs ') +r.opponent+' · '+market+': '+r.value+(hasLine?(r.value>line?' · OVER':r.value<line?' · UNDER':' · PUSH'):'');if(hasLine)p.classList.add(r.value>line?'good':r.value<line?'muted':'warning');wrap.append(p)}
    // Build quick navigation from sections already rendered; no new data requests.
-   const sections=[['Overview',grid],['Line explorer',lineExplorerTitle],['Consistency','Consistency'],['Minutes','Minutes & Playing Time'],['Home/Away','Home vs Away'],['Opponent','Against Opponent'],['Trend chart',chartTitle],['Game log',logTitle],['Recent results',h]];
+   const sections=[['Overview',grid],['Recent form',formTitle],['Line explorer',lineExplorerTitle],['Consistency','Consistency'],['Minutes','Minutes & Playing Time'],['Home/Away','Home vs Away'],['Opponent','Against Opponent'],['Trend chart',chartTitle],['Game log',logTitle],['Recent results',h]];
    const headings=[...wrap.querySelectorAll('h3')];
    for(const [label,section] of sections){
      const target=typeof section==='string'?headings.find(el=>el.textContent.trim()===section):section;
