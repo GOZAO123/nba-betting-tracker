@@ -1,11 +1,56 @@
 "use strict";
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { initializeApp } = require("firebase-admin/app");
+const { getFirestore } = require("firebase-admin/firestore");
 const { defineSecret } = require("firebase-functions/params");
 
 initializeApp();
 
 const oddsPapiKey = defineSecret("ODDSPAPI_API_KEY");
+
+// Safety Update 32.9 — persistent budget shared by all manual OddsPapi probes.
+// In-memory caches alone are not a spend guard: cloud instance restarts clear them.
+// Reserve the MAXIMUM requests a diagnostic might send before any outbound call.
+// The document is server-only and every increment is transactional across instances.
+const ODDSPAPI_REQUESTS_PER_UTC_DAY = 6;
+async function reserveDiagnosticRequests(amount) {
+  if (!Number.isSafeInteger(amount) || amount < 1 || amount > 2) {
+    throw new HttpsError("invalid-argument", "Invalid diagnostic request reservation.");
+  }
+  const utcDay = new Date().toISOString().slice(0, 10);
+  const db = getFirestore();
+  const ref = db.doc("_internal/oddsPapiDailyDiagnosticBudget");
+  try {
+    return await db.runTransaction(async (transaction) => {
+      const snap = await transaction.get(ref);
+      const previous = snap.exists ? snap.data() : null;
+      const sameDay = previous?.utcDay === utcDay;
+      if (sameDay && (!Number.isSafeInteger(previous.reserved) || previous.reserved < 0)) {
+        throw new HttpsError("failed-precondition", "Invalid API budget record; requests blocked.");
+      }
+      const reserved = sameDay ? previous.reserved : 0;
+      if (reserved + amount > ODDSPAPI_REQUESTS_PER_UTC_DAY) {
+        throw new HttpsError(
+          "resource-exhausted",
+          "Daily OddsPapi diagnostic safety limit reached. No external API request was made."
+        );
+      }
+      const newReserved = reserved + amount;
+      transaction.set(ref, {
+        utcDay,
+        reserved: newReserved,
+        limit: ODDSPAPI_REQUESTS_PER_UTC_DAY,
+        lastReservedAt: new Date().toISOString()
+      });
+      return { utcDay, remaining: ODDSPAPI_REQUESTS_PER_UTC_DAY - newReserved };
+    }, { maxAttempts: 5 });
+  } catch (error) {
+    if (error instanceof HttpsError) throw error;
+    // Fail closed on Firestore errors: no verified budget means no paid API calls.
+    throw new HttpsError("unavailable", "Could not check the OddsPapi budget. No API request was made.");
+  }
+}
+
 
 exports.oddsBackendStatus = onCall(
   { region: "europe-west1", maxInstances: 2, enforceAppCheck: false },
@@ -46,6 +91,7 @@ exports.oddsPapiTournamentProbe = onCall(
     }
     const key = oddsPapiKey.value();
     if (!key) throw new HttpsError("failed-precondition", "OddsPapi secret is missing.");
+    await reserveDiagnosticRequests(1);
     const url = new URL("https://api.oddspapi.io/v4/tournaments");
     url.searchParams.set("sportId", "11");
     url.searchParams.set("apiKey", key);
@@ -88,6 +134,8 @@ exports.oddsPapiNbaOddsProbe = onCall(
     }
     if (nbaOddsCache.pending) return nbaOddsCache.pending;
     const run = async () => {
+      if (!oddsPapiKey.value()) throw new HttpsError("failed-precondition", "OddsPapi key is unavailable.");
+      await reserveDiagnosticRequests(1);
       const url = new URL("https://api.oddspapi.io/v4/odds-by-tournaments");
       url.searchParams.set("tournamentIds", "132");
       url.searchParams.set("bookmakers", "betano.pt");
@@ -199,6 +247,9 @@ exports.oddsPapiDetailedPropsProbe = onCall(
     const run = async () => {
       const key = oddsPapiKey.value();
       if (!key) throw new HttpsError("failed-precondition", "OddsPapi key is unavailable.");
+      // Worst case is 2 outbound requests, so reserve both upfront.
+      // Unused slots are not refunded: this conservative guard cannot undercount.
+      await reserveDiagnosticRequests(2);
       let requestsUsed = 0;
       async function get(path, params) {
         // Hard ceiling of two outbound OddsPapi calls per invocation.
