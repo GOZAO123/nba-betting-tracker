@@ -158,6 +158,37 @@ main{width:100%;min-width:0}
   #propResults .stat-tile strong{font-size:clamp(1.15rem,4.7vw,1.4rem)}
   #propResults h3{overflow-wrap:anywhere}
 }
+
+/* UI Update 30.5 — fix scanner's intrinsic grid width from expanded player-stat tables.
+   Keep full-size content while confining wide tables to horizontal scrollers. */
+#scannerTab.scanner-panel{grid-template-columns:minmax(0,1fr);width:100%;min-width:0}
+#scannerTab>.scanner-workspace,#scannerTab>.scanner-dev{width:100%;min-width:0;max-width:100%}
+#scanGames{grid-template-columns:minmax(0,1fr)!important;width:100%;min-width:0}
+#scanGames>.game-card{min-width:0;max-width:100%;width:100%}
+#scanGames .scanner-rosters,#scanGames .scanner-stats{min-width:0;max-width:100%;width:100%}
+#scanGames .scanner-rosters{grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr))}
+#scanGames .scanner-rosters>.stat-tile,
+#scanGames .scanner-stats>.stat-tile{width:100%;max-width:100%;min-width:0}
+#scanGames .scanner-stats .boxscore{display:block;min-width:0;max-width:100%;width:100%;overflow-x:auto;overflow-y:hidden;overscroll-behavior-x:contain;-webkit-overflow-scrolling:touch;border:1px solid #344b67;border-radius:10px}
+#scanGames .scanner-stats .boxscore table{width:max-content;min-width:100%;max-width:none;font-size:.88rem}
+#scanGames .scanner-stats .boxscore th,#scanGames .scanner-stats .boxscore td{padding:10px 9px;white-space:nowrap}
+#scanGames .scanner-stats .boxscore th:first-child,#scanGames .scanner-stats .boxscore td:first-child{position:sticky;left:0;background:#1b2b42;z-index:1}
+#scanGames .scanner-table-hint{font-size:.83rem;margin:10px 0 7px}
+#scanSummary{grid-template-columns:repeat(2,minmax(0,1fr));width:100%;min-width:0}
+#scanSummary>.stat-tile{min-width:0;padding:13px}
+#scanSummary>.stat-tile strong{font-size:1.45rem}
+@media(max-width:700px){
+ main{padding-left:10px;padding-right:10px}
+ #scannerTab.scanner-panel{padding:12px}
+ #scannerTab .scanner-workspace{padding:12px}
+ #scanGames .game-card{padding:13px}
+ #scanGames .game-teams{font-size:1rem;line-height:1.4;overflow-wrap:anywhere}
+ #scanGames .game-meta{font-size:.88rem;line-height:1.45}
+ #scanGames .scanner-rosters{grid-template-columns:minmax(0,1fr)!important}
+ #scanGames .scanner-stats .stat-tile{padding:10px}
+ #scanGames .scanner-stats .boxscore th,#scanGames .scanner-stats .boxscore td{padding:10px}
+ #scanGames .scanner-stats .boxscore table{font-size:.87rem}
+}
 </style></head><body><main><div class="bar"><div><h1>🏀 NBA Betting Tracker</h1><p>One player, one check — synced across devices</p></div><button id="signout" hidden>Sign out</button></div><section class="panel" id="login"><h2>Sign in</h2><p>Use the same Google account on Android and PC to see the same checklist.</p><button class="primary" id="signin">Continue with Google</button><p class="muted" id="loginmsg"></p></section><div id="app"><nav class="tabs" aria-label="App sections"><button type="button" data-tab="scanner" aria-selected="true">🤖 AI Scanner</button><button type="button" data-tab="games" aria-selected="false">🏀 NBA Games</button><button type="button" data-tab="analyzer" aria-selected="false">📊 Props Analyzer</button><button type="button" data-tab="checklist" aria-selected="false">✅ Checklist</button></nav><section id="scannerTab" class="panel scanner-panel">
  <header class="scanner-hero"><div><span class="scanner-eyebrow">NBA ANALYTICS · BETANO PT</span><h2>🤖 AI Scanner</h2><p class="muted">Your workspace for NBA player-prop research.</p></div><span class="scanner-badge">● Manual mode</span></header>
  <div class="scanner-overview" aria-label="Scanner overview">
@@ -397,7 +428,7 @@ if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWo
     const section=scanAdd(area,'div','','stat-tile'),id=String(t?.team?.id||''),players=[...(byTeam.get(id)?.values()||[])].sort((a,b)=>b.games.length-a.games.length||a.name.localeCompare(b.name));
     scanAdd(section,'strong',t?.team?.displayName||'Team');
     if(!players.length){scanAdd(section,'p','No usable recent player box scores found.','warning');continue}
-    const scroller=scanAdd(section,'div','','boxscore'),table=document.createElement('table'),head=document.createElement('tr');
+    const hint=scanAdd(section,'p','↔ Swipe the table sideways to see all columns','muted scanner-table-hint');const scroller=scanAdd(section,'div','','boxscore'),table=document.createElement('table'),head=document.createElement('tr');
     for(const h of ['Player','GP','MIN','PTS','REB','AST'])scanAdd(head,'th',h);
     const thead=document.createElement('thead');thead.append(head);table.append(thead);
     const body=document.createElement('tbody');
@@ -437,7 +468,7 @@ if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWo
     scanAdd(card,'div','Odds: not connected · Probability model: not connected · AI recommendation: not available','muted');
     if(away&&home){
      const toggle=scanAdd(card,'button','Show team rosters','mini');toggle.type='button';toggle.style.marginTop='10px';
-     const area=scanAdd(card,'div','','scanner-rosters');area.hidden=true;area.style.cssText='grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px;margin-top:10px';
+     const area=scanAdd(card,'div','','scanner-rosters');area.hidden=true;area.style.cssText='grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr));gap:10px;margin-top:10px';
      toggle.addEventListener('click',()=>showRoster(card,toggle,[away,home]));
      const statsToggle=scanAdd(card,'button','Show recent player stats','mini');statsToggle.type='button';statsToggle.style.margin='10px 0 0 8px';
      const statsArea=scanAdd(card,'div','','scanner-stats');statsArea.hidden=true;statsArea.style.marginTop='10px';
