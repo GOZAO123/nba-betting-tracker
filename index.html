@@ -309,7 +309,7 @@ main{width:100%;min-width:0}
 </script><script type="module">
 import {initializeApp} from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-app.js';
 import {getAuth,GoogleAuthProvider,signInWithPopup,signInWithRedirect,getRedirectResult,onAuthStateChanged,signOut} from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js';
-import {getFirestore,doc,onSnapshot,setDoc} from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js';
+import {getFirestore,doc,onSnapshot,runTransaction} from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js';
 import {getFunctions,httpsCallable} from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-functions.js';
 const firebaseConfig={apiKey:'AIzaSyCW2dgvRxO_Lh5i79wAMpX4tc6VgP7K8wk',authDomain:'nba-betting-tracker-3979d.firebaseapp.com',projectId:'nba-betting-tracker-3979d',storageBucket:'nba-betting-tracker-3979d.firebasestorage.app',messagingSenderId:'846190824224',appId:'1:846190824224:web:71a3a188df36519f0a2545'};
 const app=initializeApp(firebaseConfig),auth=getAuth(app),db=getFirestore(app),provider=new GoogleAuthProvider();
@@ -376,23 +376,90 @@ if(oddsProbeButton)oddsProbeButton.addEventListener('click',async()=>{
 
 const $=id=>document.getElementById(id);const TODAY=()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`};
 const TEAM_NAMES=['Atlanta Hawks','Boston Celtics','Brooklyn Nets','Charlotte Hornets','Chicago Bulls','Cleveland Cavaliers','Dallas Mavericks','Denver Nuggets','Detroit Pistons','Golden State Warriors','Houston Rockets','Indiana Pacers','LA Clippers','Los Angeles Lakers','Memphis Grizzlies','Miami Heat','Milwaukee Bucks','Minnesota Timberwolves','New Orleans Pelicans','New York Knicks','Oklahoma City Thunder','Orlando Magic','Philadelphia 76ers','Phoenix Suns','Portland Trail Blazers','Sacramento Kings','San Antonio Spurs','Toronto Raptors','Utah Jazz','Washington Wizards'];
-const teamFilterOpen=new Set();let data={players:[],checked:{},date:TODAY()},user=null,unsubscribe=null,ready=false,writeQueue=Promise.resolve(),version=0,authSession=0;
+const teamFilterOpen=new Set();const blankChecklist=()=>({players:[],checked:{},date:TODAY(),revision:0});let data=blankChecklist(),user=null,unsubscribe=null,ready=false,writeQueue=Promise.resolve(),authSession=0,pendingWrites=0,latestCloud=null,lastCommitted=null,syncError=null;
 function msg(s,error=false){$('status').textContent=s;$('status').className=error?'warning':'muted'}
-function normalize(raw){if(!raw||!Array.isArray(raw.players)||!raw.checked||typeof raw.checked!=='object')throw Error('Invalid backup');return {players:raw.players.filter(p=>p&&typeof p.name==='string'&&typeof p.team==='string').map(p=>({name:p.name,team:p.team})),checked:Object.fromEntries(Object.entries(raw.checked).filter(([k,v])=>typeof k==='string'&&v===true)),date:typeof raw.date==='string'?raw.date:TODAY()}}
-function dayReset(){if(data.date!==TODAY()){data.date=TODAY();data.checked={};persist()}}
-function persist(){
+function normalize(raw){if(!raw||!Array.isArray(raw.players)||!raw.checked||typeof raw.checked!=='object'||Array.isArray(raw.checked))throw Error('Invalid backup');return {players:raw.players.filter(p=>p&&typeof p.name==='string'&&typeof p.team==='string').map(p=>({name:p.name,team:p.team})),checked:Object.fromEntries(Object.entries(raw.checked).filter(([k,v])=>typeof k==='string'&&v===true)),date:typeof raw.date==='string'?raw.date:TODAY(),revision:Number.isSafeInteger(raw.revision)&&raw.revision>=0?raw.revision:0}}
+function applyChecklistChange(current,change){
+ // Called inside a Firestore transaction; must remain deterministic and side-effect free.
+ const next=structuredClone(current),day=change.day;
+ if(['check','reset','dayReset'].includes(change.type)){
+  if(next.date>day)return next; // Do not let a previous day's queued change overwrite today.
+  if(next.date!==day){next.date=day;next.checked={}}
+ }
+ switch(change.type){
+  case 'check':
+   if(next.players.some(p=>p.name===change.name)){
+    if(change.checked)next.checked[change.name]=true;
+    else delete next.checked[change.name];
+   }
+   break;
+  case 'reset':next.checked={};break;
+  case 'dayReset':break;
+  case 'add':
+   if(!next.players.some(p=>p.name.toLowerCase()===change.name.toLowerCase()))next.players.push({name:change.name,team:change.team});
+   break;
+  case 'move':{
+   const found=next.players.find(p=>p.name===change.name&&p.team===change.fromTeam);
+   if(found)found.team=change.toTeam;
+   break;
+  }
+  case 'remove':{
+   const at=next.players.findIndex(p=>p.name===change.name&&p.team===change.team);
+   if(at>=0)next.players.splice(at,1);
+   if(!next.players.some(p=>p.name===change.name))delete next.checked[change.name];
+   break;
+  }
+  case 'import':
+   // Import is intentionally destructive. Reject it if another device changed
+   // the cloud data since the user reviewed their backup.
+   if(current.revision!==change.baselineRevision)throw Error('Cloud checklist changed on another device. Refresh and review your backup before importing.');
+   next.players=change.backup.players.map(p=>({name:p.name,team:p.team}));
+   next.checked={...change.backup.checked};next.date=change.backup.date;
+   break;
+  default:throw Error('Unknown checklist change');
+ }
+ return next;
+}
+function finishChecklistSync(){
+ if(pendingWrites||!ready)return;
+ const best=latestCloud&&(!lastCommitted||latestCloud.revision>=lastCommitted.revision)?latestCloud:lastCommitted;
+ if(best){data=structuredClone(best);render()}
+ if(data.date!==TODAY()){dayReset();return}
+ if(syncError)msg('Sync failed: '+syncError,true);
+ else msg('✓ Synced');
+}
+function dayReset(){
+ if(!ready||data.date===TODAY())return;
+ const day=TODAY();data.date=day;data.checked={};
+ persist({type:'dayReset',day});
+}
+function persist(change){
  if(!user||!ready)return;
- // Bind every queued write to the exact account and sign-in session that created it.
- // Never read the mutable global user inside an asynchronous write.
- const uid=user.uid, session=authSession, snapshot=structuredClone(data);
- version++;msg('Saving…');
- writeQueue=writeQueue.catch(()=>{}).then(()=>{
-  if(authSession!==session||auth.currentUser?.uid!==uid)return;
-  return setDoc(doc(db,'users',uid,'data','checklist'),snapshot);
- }).then(()=>{
-  if(authSession===session&&user?.uid===uid&&JSON.stringify(snapshot)===JSON.stringify(data))msg('✓ Synced');
+ // Serialize changes, and rebase each one on the latest server document.
+ // No whole-document snapshot from a stale second device can replace another's edits.
+ const uid=user.uid,session=authSession,reference=doc(db,'users',user.uid,'data','checklist');
+ pendingWrites++;syncError=null;msg('Saving…');
+ writeQueue=writeQueue.catch(()=>{}).then(async()=>{
+  if(authSession!==session||auth.currentUser?.uid!==uid)return null;
+  return runTransaction(db,async transaction=>{
+   const snap=await transaction.get(reference);
+   const current=snap.exists()?normalize(snap.data()):blankChecklist();
+   const next=applyChecklistChange(current,change);
+   if(JSON.stringify(next)===JSON.stringify(current))return current;
+   next.revision=current.revision+1;
+   transaction.set(reference,next);
+   return next;
+  },{maxAttempts:3});
+ }).then(result=>{
+  if(authSession!==session||user?.uid!==uid)return;
+  pendingWrites=Math.max(0,pendingWrites-1);
+  if(result&&(!lastCommitted||result.revision>=lastCommitted.revision))lastCommitted=result;
+  finishChecklistSync();
  }).catch(e=>{
-  if(authSession===session&&user?.uid===uid)msg('Sync failed: '+e.message,true);
+  if(authSession!==session||user?.uid!==uid)return;
+  pendingWrites=Math.max(0,pendingWrites-1);
+  syncError=e.message||String(e);
+  finishChecklistSync();
  });
 }
 function options(){const names=[...new Set([...TEAM_NAMES,...data.players.map(p=>p.team)])].sort();for(const id of ['team','newTeam']){let el=$(id),old=el.value;el.replaceChildren();if(id==='team')el.add(new Option('All teams',''));for(const name of names)el.add(new Option(name,name));el.value=old&&names.includes(old)?old:(id==='team'?'':names[0])}}
@@ -404,7 +471,7 @@ box.append(h);
 for(const p of players.sort((a,b)=>a.name.localeCompare(b.name))){
 const row=document.createElement('div');row.className='player'+(data.checked[p.name]?' done':'');
 const check=document.createElement('input');check.type='checkbox';check.checked=!!data.checked[p.name];check.setAttribute('aria-label','Bet on '+p.name);
-check.onchange=()=>{if(check.checked)data.checked[p.name]=true;else delete data.checked[p.name];persist();render()};
+check.onchange=()=>{const day=TODAY();if(data.date!==day){data.date=day;data.checked={}}if(check.checked)data.checked[p.name]=true;else delete data.checked[p.name];persist({type:'check',name:p.name,checked:check.checked,day});render()};
 const name=document.createElement('span');name.className='name';name.textContent=p.name;
 const menu=document.createElement('details');menu.className='menu';
 const toggle=document.createElement('summary');toggle.textContent='⋮';toggle.setAttribute('aria-label','Options for '+p.name);menu.append(toggle);
@@ -412,25 +479,43 @@ const content=document.createElement('div');content.className='menu-content';
 const label=document.createElement('label');label.textContent='Move to team';
 const move=document.createElement('select');move.setAttribute('aria-label','Move '+p.name+' to team');
 for(const t of TEAM_NAMES)move.add(new Option(t,t));move.value=p.team;
-move.onchange=()=>{if(move.value===p.team)return;data.players[p.i].team=move.value;persist();render()};
+move.onchange=()=>{if(move.value===p.team)return;const fromTeam=p.team,toTeam=move.value;data.players[p.i].team=toTeam;persist({type:'move',name:p.name,fromTeam,toTeam});render()};
 const remove=document.createElement('button');remove.className='mini danger';remove.textContent='Remove player';
-remove.onclick=()=>{if(!confirm('Are you sure you want to remove '+p.name+' from the roster?'))return;data.players.splice(p.i,1);if(!data.players.some(x=>x.name===p.name))delete data.checked[p.name];persist();render()};
+remove.onclick=()=>{if(!confirm('Are you sure you want to remove '+p.name+' from the roster?'))return;data.players.splice(p.i,1);if(!data.players.some(x=>x.name===p.name))delete data.checked[p.name];persist({type:'remove',name:p.name,team:p.team});render()};
 content.append(label,move,remove);menu.append(content);row.append(check,name,menu);box.append(row)
 }root.append(box)}
 if(!list.length){const p=document.createElement('p');p.className='muted';p.textContent='No matching players.';root.append(p)}window.dispatchEvent(new CustomEvent('tracker-roster-updated',{detail:data.players.map(p=>({name:p.name,team:p.team}))}))}
 $('signin').onclick=async()=>{try{$('loginmsg').textContent='Signing in…';await signInWithPopup(auth,provider)}catch(e){if(['auth/popup-blocked','auth/operation-not-supported-in-this-environment'].includes(e.code)){await signInWithRedirect(auth,provider)}else $('loginmsg').textContent=e.message}};
 getRedirectResult(auth).catch(e=>{$('loginmsg').textContent=e.message});
 $('signout').onclick=()=>signOut(auth);
-onAuthStateChanged(auth,u=>{authSession++;version=0;writeQueue=Promise.resolve();if(unsubscribe){unsubscribe();unsubscribe=null}user=u;ready=false;$('login').hidden=!!u;$('app').style.display=u?'block':'none';$('signout').hidden=!u;if(!u)return;msg('Loading cloud checklist…');const listenerSession=authSession,listenerUid=u.uid;unsubscribe=onSnapshot(doc(db,'users',u.uid,'data','checklist'),snap=>{if(authSession!==listenerSession||user?.uid!==listenerUid)return;if(!ready){data=snap.exists()?normalize(snap.data()):{players:[],checked:{},date:TODAY()};ready=true;dayReset();render();msg(snap.exists()?'✓ Synced':'Cloud checklist empty — import your backup');return}if(snap.metadata.hasPendingWrites)return; // local updates are rendered immediately
-// Ignore incoming older snapshots while a local save is pending.
-if(version===0){data=snap.exists()?normalize(snap.data()):{players:[],checked:{},date:TODAY()};dayReset();render()}else{writeQueue.then(()=>{version=0})}
-},e=>{if(authSession===listenerSession&&user?.uid===listenerUid)msg('Database access error: '+e.message,true)})});
-$('add').onclick=()=>{const name=$('newName').value.trim().replace(/\s+/g,' '),team=$('newTeam').value;if(!name)return;if(data.players.some(p=>p.name.toLowerCase()===name.toLowerCase())){alert('Player already exists.');return}data.players.push({name,team});$('newName').value='';persist();render()};
-$('reset').onclick=()=>{if(confirm('Clear all today’s checks?')){data.checked={};persist();render()}};
+onAuthStateChanged(auth,u=>{
+ authSession++;writeQueue=Promise.resolve();pendingWrites=0;latestCloud=null;lastCommitted=null;syncError=null;
+ if(unsubscribe){unsubscribe();unsubscribe=null}
+ user=u;ready=false;$('login').hidden=!!u;$('app').style.display=u?'block':'none';$('signout').hidden=!u;
+ if(!u)return;
+ msg('Loading cloud checklist…');
+ const listenerSession=authSession,listenerUid=u.uid;
+ unsubscribe=onSnapshot(doc(db,'users',u.uid,'data','checklist'),snap=>{
+  if(authSession!==listenerSession||user?.uid!==listenerUid)return;
+  if(snap.metadata.hasPendingWrites)return;
+  const remote=snap.exists()?normalize(snap.data()):blankChecklist();
+  if(!latestCloud||remote.revision>=latestCloud.revision)latestCloud=remote;
+  if(!ready){
+   data=structuredClone(remote);ready=true;
+   if(data.date!==TODAY())dayReset();
+   render();
+   if(!pendingWrites)msg(snap.exists()?'✓ Synced':'Cloud checklist empty — import your backup');
+   return;
+  }
+  if(!pendingWrites)finishChecklistSync();
+ },e=>{if(authSession===listenerSession&&user?.uid===listenerUid)msg('Database access error: '+e.message,true)});
+});
+$('add').onclick=()=>{const name=$('newName').value.trim().replace(/\s+/g,' '),team=$('newTeam').value;if(!name)return;if(data.players.some(p=>p.name.toLowerCase()===name.toLowerCase())){alert('Player already exists.');return}data.players.push({name,team});$('newName').value='';persist({type:'add',name,team});render()};
+$('reset').onclick=()=>{if(confirm('Clear all today’s checks?')){const day=TODAY();data.date=day;data.checked={};persist({type:'reset',day});render()}};
 $('search').oninput=render;$('team').onchange=render;$('filter').onchange=render;
 $('export').onclick=()=>{const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='nba-checklist-backup-'+TODAY()+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),2000)};
 function openImport(){$('file').click()}$('import').onclick=openImport;$('importFirst').onclick=openImport;
-$('file').onchange=async e=>{const f=e.target.files?.[0];if(!f)return;try{const parsed=normalize(JSON.parse(await f.text()));if(!confirm(`Import ${parsed.players.length} roster entries? This REPLACES your current cloud checklist.`))return;data=parsed;dayReset();persist();render();alert('Backup imported. Wait for “Synced” before switching devices.')}catch(err){alert('Could not import: '+err.message)}finally{e.target.value=''}};
+$('file').onchange=async e=>{const f=e.target.files?.[0];if(!f)return;try{const parsed=normalize(JSON.parse(await f.text()));if(!confirm(`Import ${parsed.players.length} roster entries? This REPLACES your current cloud checklist.`))return;const baselineRevision=data.revision;data=parsed;data.revision=baselineRevision;if(data.date!==TODAY()){data.date=TODAY();data.checked={}}persist({type:'import',baselineRevision,backup:structuredClone(data)});render();alert('Backup import queued. Wait until the status says “Synced” before switching devices.')}catch(err){alert('Could not import: '+err.message)}finally{e.target.value=''}};
 if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
 </script><script>
 // Tabs and read-only player props analyzer. The Firebase checklist is untouched.
