@@ -376,11 +376,25 @@ if(oddsProbeButton)oddsProbeButton.addEventListener('click',async()=>{
 
 const $=id=>document.getElementById(id);const TODAY=()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`};
 const TEAM_NAMES=['Atlanta Hawks','Boston Celtics','Brooklyn Nets','Charlotte Hornets','Chicago Bulls','Cleveland Cavaliers','Dallas Mavericks','Denver Nuggets','Detroit Pistons','Golden State Warriors','Houston Rockets','Indiana Pacers','LA Clippers','Los Angeles Lakers','Memphis Grizzlies','Miami Heat','Milwaukee Bucks','Minnesota Timberwolves','New Orleans Pelicans','New York Knicks','Oklahoma City Thunder','Orlando Magic','Philadelphia 76ers','Phoenix Suns','Portland Trail Blazers','Sacramento Kings','San Antonio Spurs','Toronto Raptors','Utah Jazz','Washington Wizards'];
-const teamFilterOpen=new Set();let data={players:[],checked:{},date:TODAY()},user=null,unsubscribe=null,ready=false,writeQueue=Promise.resolve(),version=0;
+const teamFilterOpen=new Set();let data={players:[],checked:{},date:TODAY()},user=null,unsubscribe=null,ready=false,writeQueue=Promise.resolve(),version=0,authSession=0;
 function msg(s,error=false){$('status').textContent=s;$('status').className=error?'warning':'muted'}
 function normalize(raw){if(!raw||!Array.isArray(raw.players)||!raw.checked||typeof raw.checked!=='object')throw Error('Invalid backup');return {players:raw.players.filter(p=>p&&typeof p.name==='string'&&typeof p.team==='string').map(p=>({name:p.name,team:p.team})),checked:Object.fromEntries(Object.entries(raw.checked).filter(([k,v])=>typeof k==='string'&&v===true)),date:typeof raw.date==='string'?raw.date:TODAY()}}
 function dayReset(){if(data.date!==TODAY()){data.date=TODAY();data.checked={};persist()}}
-function persist(){if(!user||!ready)return;const snapshot=structuredClone(data);version++;msg('Saving…');writeQueue=writeQueue.catch(()=>{}).then(()=>setDoc(doc(db,'users',user.uid,'data','checklist'),snapshot)).then(()=>{if(JSON.stringify(snapshot)===JSON.stringify(data))msg('✓ Synced')}).catch(e=>msg('Sync failed: '+e.message,true));}
+function persist(){
+ if(!user||!ready)return;
+ // Bind every queued write to the exact account and sign-in session that created it.
+ // Never read the mutable global user inside an asynchronous write.
+ const uid=user.uid, session=authSession, snapshot=structuredClone(data);
+ version++;msg('Saving…');
+ writeQueue=writeQueue.catch(()=>{}).then(()=>{
+  if(authSession!==session||auth.currentUser?.uid!==uid)return;
+  return setDoc(doc(db,'users',uid,'data','checklist'),snapshot);
+ }).then(()=>{
+  if(authSession===session&&user?.uid===uid&&JSON.stringify(snapshot)===JSON.stringify(data))msg('✓ Synced');
+ }).catch(e=>{
+  if(authSession===session&&user?.uid===uid)msg('Sync failed: '+e.message,true);
+ });
+}
 function options(){const names=[...new Set([...TEAM_NAMES,...data.players.map(p=>p.team)])].sort();for(const id of ['team','newTeam']){let el=$(id),old=el.value;el.replaceChildren();if(id==='team')el.add(new Option('All teams',''));for(const name of names)el.add(new Option(name,name));el.value=old&&names.includes(old)?old:(id==='team'?'':names[0])}}
 function render(){if(!ready)return;options();$('marked').textContent=Object.keys(data.checked).filter(k=>data.checked[k]&&data.players.some(p=>p.name===k)).length;$('count').textContent=data.players.length+' roster entries';$('date').textContent=data.date;$('setup').hidden=data.players.length>0;const q=$('search').value.trim().toLowerCase(),team=$('team').value,filter=$('filter').value;const list=data.players.map((p,i)=>({...p,i})).filter(p=>(!q||p.name.toLowerCase().includes(q)||p.team.toLowerCase().includes(q))&&(!team||p.team===team)&&(filter==='all'||(filter==='done'?!!data.checked[p.name]:!data.checked[p.name])));const root=$('list');root.replaceChildren();const groups=new Map();for(const p of list){if(!groups.has(p.team))groups.set(p.team,[]);groups.get(p.team).push(p)}for(const [team,players] of [...groups].sort((a,b)=>a[0].localeCompare(b[0]))){
 const box=document.createElement('details');box.className='team';box.open=(q!==''||filter!=='all'||teamFilterOpen.has(team));
@@ -407,10 +421,10 @@ if(!list.length){const p=document.createElement('p');p.className='muted';p.textC
 $('signin').onclick=async()=>{try{$('loginmsg').textContent='Signing in…';await signInWithPopup(auth,provider)}catch(e){if(['auth/popup-blocked','auth/operation-not-supported-in-this-environment'].includes(e.code)){await signInWithRedirect(auth,provider)}else $('loginmsg').textContent=e.message}};
 getRedirectResult(auth).catch(e=>{$('loginmsg').textContent=e.message});
 $('signout').onclick=()=>signOut(auth);
-onAuthStateChanged(auth,u=>{if(unsubscribe){unsubscribe();unsubscribe=null}user=u;ready=false;$('login').hidden=!!u;$('app').style.display=u?'block':'none';$('signout').hidden=!u;if(!u)return;msg('Loading cloud checklist…');unsubscribe=onSnapshot(doc(db,'users',u.uid,'data','checklist'),snap=>{if(!ready){data=snap.exists()?normalize(snap.data()):{players:[],checked:{},date:TODAY()};ready=true;dayReset();render();msg(snap.exists()?'✓ Synced':'Cloud checklist empty — import your backup');return}if(snap.metadata.hasPendingWrites)return; // local updates are rendered immediately
+onAuthStateChanged(auth,u=>{authSession++;version=0;writeQueue=Promise.resolve();if(unsubscribe){unsubscribe();unsubscribe=null}user=u;ready=false;$('login').hidden=!!u;$('app').style.display=u?'block':'none';$('signout').hidden=!u;if(!u)return;msg('Loading cloud checklist…');const listenerSession=authSession,listenerUid=u.uid;unsubscribe=onSnapshot(doc(db,'users',u.uid,'data','checklist'),snap=>{if(authSession!==listenerSession||user?.uid!==listenerUid)return;if(!ready){data=snap.exists()?normalize(snap.data()):{players:[],checked:{},date:TODAY()};ready=true;dayReset();render();msg(snap.exists()?'✓ Synced':'Cloud checklist empty — import your backup');return}if(snap.metadata.hasPendingWrites)return; // local updates are rendered immediately
 // Ignore incoming older snapshots while a local save is pending.
 if(version===0){data=snap.exists()?normalize(snap.data()):{players:[],checked:{},date:TODAY()};dayReset();render()}else{writeQueue.then(()=>{version=0})}
-},e=>msg('Database access error: '+e.message,true))});
+},e=>{if(authSession===listenerSession&&user?.uid===listenerUid)msg('Database access error: '+e.message,true)})});
 $('add').onclick=()=>{const name=$('newName').value.trim().replace(/\s+/g,' '),team=$('newTeam').value;if(!name)return;if(data.players.some(p=>p.name.toLowerCase()===name.toLowerCase())){alert('Player already exists.');return}data.players.push({name,team});$('newName').value='';persist();render()};
 $('reset').onclick=()=>{if(confirm('Clear all today’s checks?')){data.checked={};persist();render()}};
 $('search').oninput=render;$('team').onchange=render;$('filter').onchange=render;
