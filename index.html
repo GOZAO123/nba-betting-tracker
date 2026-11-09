@@ -392,6 +392,20 @@ function canonicalPlayerName(name){
  return ordered.normalize("NFKD").replace(/[\u0300-\u036f]/g,"")
   .toLocaleLowerCase("en-US").replace(/[^a-z0-9]+/g," ").trim().replace(/\s+/g," ");
 }
+const ESPN_NBA_TEAM_IDS=Object.freeze({
+ "Atlanta Hawks":"1","Boston Celtics":"2","Brooklyn Nets":"17",
+ "Charlotte Hornets":"30","Chicago Bulls":"4","Cleveland Cavaliers":"5",
+ "Dallas Mavericks":"6","Denver Nuggets":"7","Detroit Pistons":"8",
+ "Golden State Warriors":"9","Houston Rockets":"10","Indiana Pacers":"11",
+ "LA Clippers":"12","Los Angeles Lakers":"13","Memphis Grizzlies":"29",
+ "Miami Heat":"14","Milwaukee Bucks":"15","Minnesota Timberwolves":"16",
+ "New Orleans Pelicans":"3","New York Knicks":"18","Oklahoma City Thunder":"25",
+ "Orlando Magic":"19","Philadelphia 76ers":"20","Phoenix Suns":"21",
+ "Portland Trail Blazers":"22","Sacramento Kings":"23","San Antonio Spurs":"24",
+ "Toronto Raptors":"28","Utah Jazz":"26","Washington Wizards":"27"
+});
+// Stable ESPN NBA franchise IDs; the /teams directory endpoint lacks browser CORS.
+// Roster calls alone are used here, after validating the selected ID/team pairing.
 const espnIdLookupCache=new Map();
 async function readEspnIdentity(url){
  const saved=espnIdLookupCache.get(url);
@@ -412,13 +426,15 @@ document.getElementById("espnIdentityBtn")?.addEventListener("click",async()=>{
   player=document.getElementById("espnIdentityName").value.trim(),
   teamName=espnIdentityTeam.value;
  if(!player||!teamName){status.textContent="Enter the OddsPapi player name and choose an NBA team.";return}
- button.disabled=true;status.textContent="Checking ESPN's NBA team directory and roster…";
+ button.disabled=true;status.textContent="Checking the selected team's ESPN roster…";
  try{
-  const directory=await readEspnIdentity("https://site.api.espn.com/apis/site/v2/sports/basketball/nba/teams");
-  const teams=(directory.sports||[]).flatMap(s=>(s.leagues||[]).flatMap(l=>(l.teams||[]).map(x=>x.team||x)));
-  const matches=teams.filter(x=>canonicalPlayerName(x?.displayName)===canonicalPlayerName(teamName));
-  if(matches.length!==1||!matches[0].id)throw Error("Unable to uniquely identify this team on ESPN.");
-  const roster=await readEspnIdentity("https://site.api.espn.com/apis/site/v2/sports/basketball/nba/teams/"+encodeURIComponent(matches[0].id)+"/roster");
+  const teamId=ESPN_NBA_TEAM_IDS[teamName];
+  if(!teamId)throw Error("No verified ESPN team ID for the selected NBA team.");
+  const roster=await readEspnIdentity("https://site.api.espn.com/apis/site/v2/sports/basketball/nba/teams/"+encodeURIComponent(teamId)+"/roster");
+  if(roster.team?.id && String(roster.team.id)!==teamId)
+   throw Error("ESPN roster belongs to a different team. Identity matching blocked.");
+  if(roster.team?.displayName && canonicalPlayerName(roster.team.displayName)!==canonicalPlayerName(teamName))
+   throw Error("ESPN team name does not match the selected team. Identity matching blocked.");
   const people=(roster.athletes||[]).flatMap(x=>Array.isArray(x?.items)?x.items:[x])
    .filter(x=>x?.id&&x?.displayName);
   const lookup=canonicalPlayerName(player);
@@ -436,8 +452,8 @@ document.getElementById("espnIdentityBtn")?.addEventListener("click",async()=>{
     ". Multiple ESPN athlete IDs found; automatic linking blocked.";
   }
  }catch(error){
-  status.textContent="ESPN identity check unavailable: "+(error.message||String(error))+
-   ". No player was linked.";
+  status.textContent="ESPN roster identity check unavailable: "+(error.message||String(error))+
+   ". No player was linked. If the request is browser-blocked, check whether Show team rosters works in AI Scanner.";
  }finally{button.disabled=false}
 });
 
