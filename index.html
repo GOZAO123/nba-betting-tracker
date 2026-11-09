@@ -22,7 +22,7 @@ document.getElementById('nbaOddsTestBtn')?.addEventListener('click',async()=>{
    'Markets: '+data.marketCount+' · Price entries: '+data.playerEntries+' · Named player entries: '+data.namedPlayerEntries,
    'Backend diagnostic version: '+(data.diagnosticVersion||'old / unknown')+' · Market diagnostics: '+(data.diagnosticCount??'not reported'),
    'Response shape: '+data.responseShape,
-   ...(data.marketDiagnostics||[]).map(m=>'Market '+m.marketId+' ('+m.marketName+') · fields: '+m.marketKeys.join(', ')+' · outcomes: '+m.outcomeCount+' · examples: '+m.outcomeSamples.map(o=>o.outcomeId+' ['+o.keys.join(', ')+'] players='+o.playersCount).join(' / ')),
+   ...(data.marketDiagnostics||[]).map(m=>'Market '+m.marketId+' ('+m.marketName+') · fields: '+m.marketKeys.join(', ')+' · outcomes: '+m.outcomeCount+' · examples: '+m.outcomeSamples.map(o=>o.outcomeId+' ['+o.keys.join(', ')+'] players='+o.playersCount+' entries='+JSON.stringify(o.playerEntryShapes||[])).join(' / ')),
    ...(data.samples||[]).map(x=>x.player+' · '+x.outcome+' · '+x.price+' (market '+x.marketId+')'),
    data.note
   ];
