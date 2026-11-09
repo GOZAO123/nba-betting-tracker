@@ -132,6 +132,32 @@
 .prop-jump-btn{flex:none;white-space:nowrap;font-size:.8rem;padding:8px 11px;min-height:38px;background:#203b53;border:1px solid #45637c}
 .prop-jump-btn:active{background:#0e775c}
 .prop-results h3,.prop-results .analyzer-grid{scroll-margin-top:90px}
+
+/* UI Update 30.4 — mobile width and overflow repair across the entire app.
+   No changes to analytics, API requests, or Firebase data. */
+html,body{width:100%;max-width:100%;overflow-x:clip}
+main{width:100%;min-width:0}
+#app,#scannerTab,#gamesTab,#analyzerTab,#checklistTab,
+.panel,.team,.scanner-workspace,.scanner-dev{min-width:0;max-width:100%}
+#app .analyzer-grid,#app .scanner-overview,#app .prop-controls,
+#app .checklist-summary .stats{min-width:0;max-width:100%}
+/* Report content must never determine the width of its parent grid. */
+#propResults{width:100%;max-width:100%;min-width:0;grid-template-columns:minmax(0,1fr)}
+#propResults>*{min-width:0;max-width:100%}
+#propResults .analyzer-grid{width:100%;min-width:0;grid-template-columns:repeat(2,minmax(0,1fr))}
+#propResults .stat-tile{min-width:0;max-width:100%;overflow-wrap:anywhere}
+#propResults .stat-tile strong{overflow-wrap:anywhere}
+#propResults .boxscore{width:100%;max-width:100%;min-width:0;overflow-x:auto;overscroll-behavior-x:contain}
+#propResults .prop-jump-nav{width:100%;min-width:0;max-width:100%}
+#propResults .prop-jump-items{max-width:100%;min-width:0}
+#gamesList,#scanGames,#scanSummary,#list{min-width:0;max-width:100%}
+@media(max-width:700px){
+  main{padding-left:12px;padding-right:12px}
+  #app .panel,#app .team{width:100%}
+  #propResults .stat-tile{padding:12px;min-height:76px}
+  #propResults .stat-tile strong{font-size:clamp(1.15rem,4.7vw,1.4rem)}
+  #propResults h3{overflow-wrap:anywhere}
+}
 </style></head><body><main><div class="bar"><div><h1>🏀 NBA Betting Tracker</h1><p>One player, one check — synced across devices</p></div><button id="signout" hidden>Sign out</button></div><section class="panel" id="login"><h2>Sign in</h2><p>Use the same Google account on Android and PC to see the same checklist.</p><button class="primary" id="signin">Continue with Google</button><p class="muted" id="loginmsg"></p></section><div id="app"><nav class="tabs" aria-label="App sections"><button type="button" data-tab="scanner" aria-selected="true">🤖 AI Scanner</button><button type="button" data-tab="games" aria-selected="false">🏀 NBA Games</button><button type="button" data-tab="analyzer" aria-selected="false">📊 Props Analyzer</button><button type="button" data-tab="checklist" aria-selected="false">✅ Checklist</button></nav><section id="scannerTab" class="panel scanner-panel">
  <header class="scanner-hero"><div><span class="scanner-eyebrow">NBA ANALYTICS · BETANO PT</span><h2>🤖 AI Scanner</h2><p class="muted">Your workspace for NBA player-prop research.</p></div><span class="scanner-badge">● Manual mode</span></header>
  <div class="scanner-overview" aria-label="Scanner overview">
