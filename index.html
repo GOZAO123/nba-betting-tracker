@@ -627,12 +627,30 @@ if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWo
    area.dataset.loaded=results.every(r=>!r.error)?'true':'false';
   }finally{button.disabled=false}
  }
- const scanHistoryCache=new Map();
- async function scanFetch(url){
-  if(scanHistoryCache.has(url))return scanHistoryCache.get(url);
+ // Cache only during this app session. Fresh NBA results must not stay cached forever.
+ const scanHistoryCache=new Map(),SCAN_RECENT_TTL=5*60*1000,SCAN_OLD_TTL=24*60*60*1000;
+ function scanRecentDate(url,now=new Date()){
+  const match=url.match(/[?&]dates=(\d{4})(\d{2})(\d{2})(?:&|$)/);
+  if(!match)return false;
+  const key=scanDate();
+  const today=Date.UTC(Number(key.slice(0,4)),Number(key.slice(4,6))-1,Number(key.slice(6,8)),12);
+  const requested=Date.UTC(Number(match[1]),Number(match[2])-1,Number(match[3]),12);
+  const days=(today-requested)/86400000;
+  return days>=0&&days<=2;
+ }
+ async function scanFetch(url,{recent=false}={}){
+  const ttl=recent||scanRecentDate(url)?SCAN_RECENT_TTL:SCAN_OLD_TTL;
+  const saved=scanHistoryCache.get(url);
+  if(saved&&Date.now()-saved.at<ttl)return saved.data;
   const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),14000);
-  try{const r=await fetch(url,{signal:controller.signal});if(!r.ok)throw Error('ESPN HTTP '+r.status);const data=await r.json();scanHistoryCache.set(url,data);return data}
-  finally{clearTimeout(timer)}
+  try{
+   const r=await fetch(url,{signal:controller.signal,cache:ttl===SCAN_RECENT_TTL?'no-store':'default'});
+   if(!r.ok)throw Error('ESPN HTTP '+r.status);
+   const data=await r.json();
+   if(scanHistoryCache.size>=400&&!scanHistoryCache.has(url))scanHistoryCache.delete(scanHistoryCache.keys().next().value);
+   scanHistoryCache.set(url,{data,at:Date.now()});
+   return data;
+  }finally{clearTimeout(timer)}
  }
  // ESPN may return blank, dash or DNP statistics. These must never become zero.
  const scanStat=(labels,values,key)=>{
@@ -656,12 +674,18 @@ if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWo
   const area=card.querySelector('.scanner-stats');
   if(!area.hidden){area.hidden=true;button.textContent='Show recent player stats';return}
   area.hidden=false;button.textContent='Hide recent player stats';
-  if(area.dataset.loaded==='true')return;
+  // Reopen within five minutes: instant local display. Later reopen: recheck ESPN.
+  if(area.dataset.loaded==='true'&&Date.now()-Number(area.dataset.loadedAt||0)<SCAN_RECENT_TTL)return;
   area.replaceChildren();scanAdd(area,'p','Loading recent completed NBA games and player box scores…','muted');button.disabled=true;
   try{
    const ids=new Set(teams.map(t=>String(t?.team?.id||'')).filter(Boolean));
-   const today=new Date(),dates=Array.from({length:18},(_,i)=>{const d=new Date(today);d.setUTCHours(12,0,0,0);d.setUTCDate(d.getUTCDate()-i-1);return d.toISOString().slice(0,10).replaceAll('-','')});
+   // ESPN calendar days use US Eastern time, so include the current NBA schedule
+   // date even when it has already become tomorrow in Portugal.
+   const key=scanDate();
+   const easternDay=new Date(Date.UTC(Number(key.slice(0,4)),Number(key.slice(4,6))-1,Number(key.slice(6,8)),12));
+   const dates=Array.from({length:18},(_,i)=>{const d=new Date(easternDay);d.setUTCDate(d.getUTCDate()-i);return d.toISOString().slice(0,10).replaceAll('-','')});
    const boards=await Promise.all(dates.map(d=>scanFetch('https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard?dates='+d).catch(()=>null)));
+   const missingLatestDates=dates.slice(0,2).filter((_,i)=>boards[i]===null);
    const games=new Map();
    for(const board of boards)for(const e of board?.events||[]){
     if(!e.id||e.status?.type?.state!=='post'||(e.season?.type!==undefined&&Number(e.season.type)!==2))continue;
@@ -683,7 +707,10 @@ if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWo
     if(needed)selected.push(event);
     if([...allowedGamesByTeam.values()].every(allowed=>allowed.size===5))break;
    }
-   const results=await Promise.all(selected.map(e=>scanFetch('https://site.api.espn.com/apis/site/v2/sports/basketball/nba/summary?event='+encodeURIComponent(e.id)).catch(()=>null)));
+   const results=await Promise.all(selected.map(e=>scanFetch(
+    'https://site.api.espn.com/apis/site/v2/sports/basketball/nba/summary?event='+encodeURIComponent(e.id),
+    {recent:new Date(e.date).getTime()>Date.now()-48*60*60*1000}
+   ).catch(()=>null)));
    const byTeam=new Map([...ids].map(id=>[id,new Map()]));let usableGames=0;
    for(let i=0;i<results.length;i++){
     const box=results[i];if(!box)continue;usableGames++;
@@ -705,7 +732,10 @@ if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWo
     }
    }
    area.replaceChildren();
-   scanAdd(area,'p','Recent regular-season box scores · each team is independently limited to its 5 most recent completed games from the past 18 days. Blank stats, DNPs and zero-minute records are excluded. Averages are descriptive, not betting predictions.','muted');
+   if(missingLatestDates.length)scanAdd(area,'p',
+    '⚠️ ESPN unavailable for recent NBA schedule date(s) '+missingLatestDates.join(', ')+'. Recent stats may be incomplete.',
+    'warning');
+   scanAdd(area,'p','Recent regular-season box scores · each team is independently limited to its 5 most recent completed games from the past 18 US Eastern schedule dates. Recent results refresh on your next expansion after 5 minutes. Blank stats, DNPs and zero-minute records are excluded. Averages are descriptive, not betting predictions.','muted');
    for(const t of teams){
     const section=scanAdd(area,'div','','stat-tile'),id=String(t?.team?.id||''),players=[...(byTeam.get(id)?.values()||[])].sort((a,b)=>b.games.length-a.games.length||a.name.localeCompare(b.name));
     scanAdd(section,'strong',t?.team?.displayName||'Team');
@@ -761,6 +791,7 @@ if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWo
    }
    scanAdd(area,'p',usableGames+' box-score responses loaded. Missing or incomplete games may reduce sample sizes.','muted');
    area.dataset.loaded=usableGames>0?'true':'false';
+   area.dataset.loadedAt=String(Date.now());
   }catch(e){area.replaceChildren();scanAdd(area,'p','Recent player statistics unavailable: '+e.message,'warning')}
   finally{button.disabled=false}
  }
