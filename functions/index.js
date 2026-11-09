@@ -439,3 +439,156 @@ exports.oddsPapiMarketCatalogProbe = onCall(
     finally { marketCatalogCache.pending = null; }
   }
 );
+
+
+// Update 33.3 — independently verify full-game player props against the official
+// market catalogue and the current Betano PT event odds. Manual test only:
+// exactly two upstream requests at most (markets + NBA tournament listing).
+const verifiedPropsCache = {at:0, data:null, pending:null};
+const verifiedPropNames = Object.freeze({
+  "Over Under Player Points (incl. overtime)": "PTS",
+  "Over Under Player Rebounds (incl. overtime)": "REB",
+  "Over Under Player Assists (incl. overtime)": "AST",
+  "Over Under Player 3 Point FG (incl. overtime)": "3PT",
+  "Over Under Player Points + Rebounds (incl. overtime)": "PR",
+  "Over Under Player Points + Assists (incl. overtime)": "PA",
+  "Over Under Player Assists + Rebounds (incl. overtime)": "RA",
+  "Over Under Player Points + Assists + Rebounds (incl. overtime)": "PRA"
+});
+function summariseVerifiedProps(definitions,fixtures,now=Date.now()){
+  const marketMap=new Map();
+  for(const m of definitions){
+    if(Number(m?.sportId)!==11||m?.playerProp!==true)continue;
+    const family=verifiedPropNames[String(m.marketName||"").trim()];
+    if(!family||!Number.isFinite(Number(m.handicap))||Number(m.handicap)<0)continue;
+    const validOutcomes=new Map();
+    for(const o of m.outcomes||[]){
+      const side=String(o?.outcomeName||"").trim();
+      if(side==="Over"||side==="Under")validOutcomes.set(String(o.outcomeId),side);
+    }
+    if(validOutcomes.size!==2)continue;
+    marketMap.set(String(m.marketId),{family,line:Number(m.handicap),outcomes:validOutcomes});
+  }
+  const eligible=fixtures.filter(f=>{
+    const start=Date.parse(f?.startTime);
+    return f?.fixtureId&&f?.hasOdds&&Number.isFinite(start)&&start>now&&start<=now+36*3600000;
+  }).sort((a,b)=>Date.parse(a.startTime)-Date.parse(b.startTime));
+  const fixture=eligible[0];
+  const result={
+    diagnosticVersion:"33.3",catalogueDefinitions:definitions.length,
+    verifiedFullGameMarketIds:marketMap.size,
+    eligibleFixtures:eligible.length,
+    fixtureId:fixture?String(fixture.fixtureId):null,
+    fixture:fixture?[fixture.participant1Name,fixture.participant2Name].filter(Boolean).join(" vs "):null,
+    startTime:fixture?.startTime||null,
+    bookmakerPresent:false,bookmakerSuspended:null,
+    activeSelections:0,unavailableSelections:0,marketCount:0,
+    marketCounts:[],samples:[],
+    cached:false,requestsReserved:2,
+    note:"Official full-game, including-overtime market definitions only. Active selections are not predictions; player names are OddsPapi identities, not yet matched to ESPN."
+  };
+  if(!fixture)return result;
+  const book=fixture.bookmakerOdds?.["betano.pt"];
+  if(!book)return result;
+  result.bookmakerPresent=true;
+  result.bookmakerSuspended=book.suspended===true;
+  if(book.suspended===true||book.bookmakerIsActive===false)return result;
+  const totals=new Map();
+  const all=[];
+  for(const [marketId,market] of Object.entries(book.markets||{})){
+    const meta=marketMap.get(String(marketId));
+    if(!meta)continue;
+    result.marketCount++;
+    const count=totals.get(meta.family)||{family:meta.family,marketIds:0,activeSelections:0};
+    count.marketIds++;
+    totals.set(meta.family,count);
+    if(market.marketActive!==true)continue;
+    for(const [outcomeId,outcome] of Object.entries(market.outcomes||{})){
+      const selection=meta.outcomes.get(String(outcomeId));
+      if(!selection)continue;
+      for(const [playerId,entry] of Object.entries(outcome?.players||{})){
+        const price=Number(entry?.price);
+        const name=typeof entry?.playerName==="string"?entry.playerName.trim():"";
+        if(!name||playerId==="0"||entry?.active!==true||!Number.isFinite(price)||price<=1){
+          result.unavailableSelections++;
+          continue;
+        }
+        result.activeSelections++;count.activeSelections++;
+        all.push({
+          family:meta.family,line:meta.line,selection,
+          marketId:String(marketId),outcomeId:String(outcomeId),
+          player:name.slice(0,100),
+          oddsPapiPlayerId:String(playerId).slice(0,60),
+          price,mainLine:entry.mainLine===true,
+          changedAt:typeof entry.changedAt==="string"?entry.changedAt:null
+        });
+      }
+    }
+  }
+  result.marketCounts=[...totals.values()].sort((a,b)=>a.family.localeCompare(b.family));
+  // A small representative sample per market family; never return the full odds payload.
+  const byFamily=new Map();
+  for(const x of all.sort((a,b)=>
+     Number(b.mainLine)-Number(a.mainLine)||
+     a.player.localeCompare(b.player)||a.line-b.line||a.selection.localeCompare(b.selection))){
+    const n=byFamily.get(x.family)||0;
+    if(n>=6)continue;
+    byFamily.set(x.family,n+1);
+    result.samples.push(x);
+  }
+  result.samples.sort((a,b)=>a.family.localeCompare(b.family)||a.player.localeCompare(b.player));
+  return result;
+}
+exports.oddsPapiVerifiedPropsProbe = onCall(
+  {region:"europe-west1",secrets:[oddsPapiKey],maxInstances:1,concurrency:1,
+   timeoutSeconds:120,memory:"512MiB",enforceAppCheck:false},
+  async request=>{
+    if(!request.auth||request.auth.uid!=="I6ZhMcObXxNVdfv2AqapDxwIaet1"||!request.auth.token.email_verified)
+      throw new HttpsError("permission-denied","Only the authorised account can verify Betano PT props.");
+    if(verifiedPropsCache.data&&Date.now()-verifiedPropsCache.at<15*60000)
+      return {...verifiedPropsCache.data,cached:true};
+    if(verifiedPropsCache.pending)return verifiedPropsCache.pending;
+    const run=async()=>{
+      const key=oddsPapiKey.value();
+      if(!key)throw new HttpsError("failed-precondition","OddsPapi secret is not available.");
+      // Reserve two slots BEFORE either upstream request; failures and unused slots
+      // are conservatively charged against the daily six-request safety ceiling.
+      await reserveDiagnosticRequests(2);
+      let used=0;
+      async function get(path,params){
+        if(++used>2)throw new HttpsError("resource-exhausted","Per-test request limit reached.");
+        const url=new URL("https://api.oddspapi.io"+path);
+        for(const [k,v] of Object.entries(params))url.searchParams.set(k,String(v));
+        url.searchParams.set("apiKey",key);
+        const controller=new AbortController();
+        const timer=setTimeout(()=>controller.abort(),35000);
+        try{
+          const response=await fetch(url,{signal:controller.signal,headers:{Accept:"application/json"}});
+          if(!response.ok)throw new HttpsError("unavailable","OddsPapi responded HTTP "+response.status);
+          return await response.json();
+        }finally{clearTimeout(timer)}
+      }
+      try{
+        const definitions=await get("/v4/markets",{language:"en"});
+        const markets=Array.isArray(definitions)?definitions:Array.isArray(definitions?.data)?definitions.data:[];
+        if(!markets.length)throw new HttpsError("unavailable","Missing official market definitions.");
+        const odds=await get("/v4/odds-by-tournaments",{
+          tournamentIds:"132",bookmaker:"betano.pt",language:"en",verbosity:3
+        });
+        const fixtures=Array.isArray(odds)?odds:Array.isArray(odds?.data)?odds.data:Array.isArray(odds?.fixtures)?odds.fixtures:[];
+        if(!fixtures.length)throw new HttpsError("unavailable","Missing NBA fixture array.");
+        const result=summariseVerifiedProps(markets,fixtures);
+        result.requestsUsed=used;
+        verifiedPropsCache.data=result;
+        verifiedPropsCache.at=Date.now();
+        return result;
+      }catch(e){
+        if(e instanceof HttpsError)throw e;
+        throw new HttpsError("unavailable","Market verification failed. Check Firebase logs.");
+      }
+    };
+    verifiedPropsCache.pending=run();
+    try{return await verifiedPropsCache.pending}
+    finally{verifiedPropsCache.pending=null}
+  }
+);
