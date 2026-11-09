@@ -192,13 +192,18 @@ exports.oddsPapiDetailedPropsProbe = onCall(
     if (!request.auth || request.auth.uid !== "I6ZhMcObXxNVdfv2AqapDxwIaet1" || !request.auth.token.email_verified) {
       throw new HttpsError("permission-denied", "Only the authorised account can test odds.");
     }
+    // Manual-only diagnostic. No scheduled function or automatic API polling.
     if (detailedProbeCache.data && Date.now() - detailedProbeCache.at < 30 * 60 * 1000)
       return { ...detailedProbeCache.data, cached: true };
     if (detailedProbeCache.pending) return detailedProbeCache.pending;
     const run = async () => {
       const key = oddsPapiKey.value();
       if (!key) throw new HttpsError("failed-precondition", "OddsPapi key is unavailable.");
+      let requestsUsed = 0;
       async function get(path, params) {
+        // Hard ceiling of two outbound OddsPapi calls per invocation.
+        if (requestsUsed >= 2) throw new HttpsError("resource-exhausted", "Diagnostic API request limit reached.");
+        requestsUsed++;
         const url = new URL("https://api.oddspapi.io" + path);
         for (const [k, v] of Object.entries(params)) url.searchParams.set(k, String(v));
         url.searchParams.set("apiKey", key);
@@ -212,48 +217,75 @@ exports.oddsPapiDetailedPropsProbe = onCall(
       }
       try {
         const listing = await get("/v4/odds-by-tournaments", {
-          bookmaker: "betano.pt", tournamentIds: "132", oddsFormat: "decimal"
+          bookmakers: "betano.pt", tournamentIds: "132", language: "en", oddsFormat: "decimal"
         });
-        const fixtures = Array.isArray(listing) ? listing : Array.isArray(listing?.data) ? listing.data : [];
-        const now = Date.now();
-        const upcoming = fixtures.filter(f => f.fixtureId && f.hasOdds && new Date(f.startTime).getTime() > now)
-          .sort((a,b) => new Date(a.startTime) - new Date(b.startTime));
-        if (!upcoming.length) return {
-          diagnosticVersion: "27.1", fixtures: fixtures.length, fixtureId: null,
-          note: "No upcoming NBA fixture with Betano odds was found. No detailed request made.", cached: false
-        };
-        const fixture = upcoming[0];
+        const fixtures = Array.isArray(listing) ? listing : Array.isArray(listing?.data) ? listing.data : Array.isArray(listing?.fixtures) ? listing.fixtures : [];
+        const now = Date.now(), hour = 60 * 60 * 1000;
+        const eligible = fixtures.filter(f => {
+          const start = Date.parse(f.startTime);
+          return f.fixtureId && f.hasOdds && Number.isFinite(start) && start > now && start <= now + 36 * hour;
+        }).sort((a, b) => Date.parse(a.startTime) - Date.parse(b.startTime));
+        const within24 = eligible.filter(f => Date.parse(f.startTime) <= now + 24 * hour);
+        const fixture = (within24.length ? within24 : eligible)[0];
+        if (!fixture) {
+          const result = {
+            diagnosticVersion: "28.1", fixtures: fixtures.length, eligibleFixtures: 0,
+            fixtureId: null, requestsUsed,
+            note: "No upcoming NBA fixture with odds within 36 hours. No detailed odds request made.",
+            cached: false
+          };
+          detailedProbeCache.data = result; detailedProbeCache.at = Date.now();
+          return result;
+        }
         const details = await get("/v4/odds", {
           fixtureId: fixture.fixtureId, bookmakers: "betano.pt", language: "en", oddsFormat: "decimal", verbosity: 3
         });
         const book = details?.bookmakerOdds?.["betano.pt"];
         const markets = Object.entries(book?.markets || {});
         const samples = [];
-        let namedPlayers = 0, playerSelections = 0, marketCountWithNames = 0;
+        let namedPlayers = 0, playerSelections = 0, marketCountWithNames = 0, linesFound = 0, decimalPrices = 0;
+        const marketDiagnostics = [];
         for (const [marketId, market] of markets) {
           let namesInMarket = 0;
+          const outcomeNames = [];
           for (const [outcomeId, outcome] of Object.entries(market.outcomes || {})) {
+            if (outcomeNames.length < 6) outcomeNames.push(String(outcome.name || outcome.outcomeName || outcomeId).slice(0, 80));
             for (const [playerId, entry] of Object.entries(outcome.players || {})) {
               playerSelections++;
-              if (typeof entry?.playerName === "string" && entry.playerName.trim()) {
+              const name = [entry?.playerName, entry?.name, entry?.participantName].find(v => typeof v === "string" && v.trim());
+              const line = [entry?.line, entry?.handicap, entry?.points, outcome?.line, outcome?.handicap].find(v => v !== null && v !== undefined && v !== "" && Number.isFinite(Number(v)));
+              const price = Number(entry?.price);
+              if (line !== undefined) linesFound++;
+              if (Number.isFinite(price) && price > 1) decimalPrices++;
+              if (name) {
                 namedPlayers++; namesInMarket++;
                 if (samples.length < 12) samples.push({
-                  marketId: String(marketId), outcomeId: String(outcomeId),
-                  playerId: String(playerId), player: entry.playerName.slice(0, 90),
-                  price: entry.price, bookmakerOutcomeId: String(entry.bookmakerOutcomeId || "").slice(0, 100)
+                  marketId: String(marketId).slice(0, 80), outcomeId: String(outcomeId).slice(0, 80),
+                  playerId: String(playerId).slice(0, 80), player: name.slice(0, 90),
+                  line: line === undefined ? null : Number(line),
+                  price: Number.isFinite(price) && price > 1 ? price : null,
+                  bookmakerOutcomeId: String(entry.bookmakerOutcomeId || "").slice(0, 100)
                 });
               }
             }
           }
           if (namesInMarket) marketCountWithNames++;
+          if (marketDiagnostics.length < 12) marketDiagnostics.push({
+            marketId: String(marketId).slice(0, 80),
+            marketName: String(market.marketName || market.name || "").slice(0, 90),
+            outcomes: outcomeNames
+          });
         }
         const result = {
-          diagnosticVersion: "27.1", fixtureId: String(fixture.fixtureId),
-          startTime: fixture.startTime, fixtures: fixtures.length,
-          fixture: [details?.participant1Name, details?.participant2Name].filter(Boolean).join(" vs "),
+          diagnosticVersion: "28.1", fixtureId: String(fixture.fixtureId),
+          startTime: fixture.startTime, fixtures: fixtures.length, eligibleFixtures: eligible.length,
+          selectedWindowHours: within24.length ? 24 : 36,
+          fixture: [details?.participant1Name || fixture.participant1Name, details?.participant2Name || fixture.participant2Name].filter(Boolean).join(" vs "),
           bookmakerPresent: Boolean(book), marketCount: markets.length,
-          playerSelections, namedPlayers, marketCountWithNames, samples,
-          note: "Diagnostic only. Player prop markets and over/under lines are not yet mapped or validated.",
+          playerSelections, namedPlayers, marketCountWithNames, linesFound, decimalPrices,
+          marketDiagnostics, samples, requestsUsed,
+          databaseMatches: null,
+          note: "Diagnostic only. Market mapping and roster matching await verified player-name/line fields. No bets generated.",
           cached: false
         };
         detailedProbeCache.data = result; detailedProbeCache.at = Date.now();
