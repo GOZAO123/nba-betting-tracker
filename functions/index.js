@@ -184,3 +184,87 @@ exports.oddsPapiNbaOddsProbe = onCall(
     finally { nbaOddsCache.pending = null; }
   }
 );
+
+const detailedProbeCache = { at: 0, data: null, pending: null };
+exports.oddsPapiDetailedPropsProbe = onCall(
+  { region: "europe-west1", secrets: [oddsPapiKey], maxInstances: 1, concurrency: 1, timeoutSeconds: 45, enforceAppCheck: false },
+  async (request) => {
+    if (!request.auth || request.auth.uid !== "I6ZhMcObXxNVdfv2AqapDxwIaet1" || !request.auth.token.email_verified) {
+      throw new HttpsError("permission-denied", "Only the authorised account can test odds.");
+    }
+    if (detailedProbeCache.data && Date.now() - detailedProbeCache.at < 30 * 60 * 1000)
+      return { ...detailedProbeCache.data, cached: true };
+    if (detailedProbeCache.pending) return detailedProbeCache.pending;
+    const run = async () => {
+      const key = oddsPapiKey.value();
+      if (!key) throw new HttpsError("failed-precondition", "OddsPapi key is unavailable.");
+      async function get(path, params) {
+        const url = new URL("https://api.oddspapi.io" + path);
+        for (const [k, v] of Object.entries(params)) url.searchParams.set(k, String(v));
+        url.searchParams.set("apiKey", key);
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 15000);
+        try {
+          const response = await fetch(url, { signal: controller.signal, headers: { Accept: "application/json" } });
+          if (!response.ok) throw new HttpsError("unavailable", "OddsPapi returned HTTP " + response.status);
+          return await response.json();
+        } finally { clearTimeout(timer); }
+      }
+      try {
+        const listing = await get("/v4/odds-by-tournaments", {
+          bookmaker: "betano.pt", tournamentIds: "132", oddsFormat: "decimal"
+        });
+        const fixtures = Array.isArray(listing) ? listing : Array.isArray(listing?.data) ? listing.data : [];
+        const now = Date.now();
+        const upcoming = fixtures.filter(f => f.fixtureId && f.hasOdds && new Date(f.startTime).getTime() > now)
+          .sort((a,b) => new Date(a.startTime) - new Date(b.startTime));
+        if (!upcoming.length) return {
+          diagnosticVersion: "27.1", fixtures: fixtures.length, fixtureId: null,
+          note: "No upcoming NBA fixture with Betano odds was found. No detailed request made.", cached: false
+        };
+        const fixture = upcoming[0];
+        const details = await get("/v4/odds", {
+          fixtureId: fixture.fixtureId, bookmakers: "betano.pt", language: "en", oddsFormat: "decimal", verbosity: 3
+        });
+        const book = details?.bookmakerOdds?.["betano.pt"];
+        const markets = Object.entries(book?.markets || {});
+        const samples = [];
+        let namedPlayers = 0, playerSelections = 0, marketCountWithNames = 0;
+        for (const [marketId, market] of markets) {
+          let namesInMarket = 0;
+          for (const [outcomeId, outcome] of Object.entries(market.outcomes || {})) {
+            for (const [playerId, entry] of Object.entries(outcome.players || {})) {
+              playerSelections++;
+              if (typeof entry?.playerName === "string" && entry.playerName.trim()) {
+                namedPlayers++; namesInMarket++;
+                if (samples.length < 12) samples.push({
+                  marketId: String(marketId), outcomeId: String(outcomeId),
+                  playerId: String(playerId), player: entry.playerName.slice(0, 90),
+                  price: entry.price, bookmakerOutcomeId: String(entry.bookmakerOutcomeId || "").slice(0, 100)
+                });
+              }
+            }
+          }
+          if (namesInMarket) marketCountWithNames++;
+        }
+        const result = {
+          diagnosticVersion: "27.1", fixtureId: String(fixture.fixtureId),
+          startTime: fixture.startTime, fixtures: fixtures.length,
+          fixture: [details?.participant1Name, details?.participant2Name].filter(Boolean).join(" vs "),
+          bookmakerPresent: Boolean(book), marketCount: markets.length,
+          playerSelections, namedPlayers, marketCountWithNames, samples,
+          note: "Diagnostic only. Player prop markets and over/under lines are not yet mapped or validated.",
+          cached: false
+        };
+        detailedProbeCache.data = result; detailedProbeCache.at = Date.now();
+        return result;
+      } catch (err) {
+        if (err instanceof HttpsError) throw err;
+        throw new HttpsError("unavailable", "Detailed OddsPapi test failed. See Firebase logs.");
+      }
+    };
+    detailedProbeCache.pending = run();
+    try { return await detailedProbeCache.pending; }
+    finally { detailedProbeCache.pending = null; }
+  }
+);
