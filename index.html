@@ -291,6 +291,7 @@ main{width:100%;min-width:0}
   <div class="row"><button id="oddsProbeBtn" type="button" class="mini">Test OddsPapi NBA connection</button><span id="oddsProbeStatus" class="muted" role="status">Test uses one API request. Available only to the configured owner.</span></div><div id="oddsProbeResult" class="muted"></div>
   <div class="row"><button id="nbaOddsTestBtn" type="button" class="mini">Test Betano PT NBA odds</button><span id="nbaOddsTestStatus" class="muted">One request; 15-minute server cache when successful.</span></div><div id="nbaOddsTestResult" class="muted"></div>
   <div class="row"><button id="detailedPropsBtn" type="button" class="mini">Test detailed NBA player props</button><span id="detailedPropsStatus" class="muted">Up to 2 OddsPapi requests; cached for 30 minutes.</span></div><div id="detailedPropsResult" class="muted"></div>
+  <div class="row"><button id="marketCatalogBtn" type="button" class="mini">Identify NBA prop markets</button><span id="marketCatalogStatus" class="muted">One manual OddsPapi request. Resolves market IDs and betting lines from the official catalogue.</span></div><div id="marketCatalogResult" class="muted"></div>
  </div></details>
 </section><div id="gamesTab" hidden><section class="panel" aria-label="NBA games dashboard"><div class="dashboard-head"><div><h2 style="margin:0">🏀 Today's NBA Games</h2><p class="muted" style="margin:5px 0 0">NBA schedule date (US Eastern Time) · Times shown on your device</p></div><button id="refreshGames" class="mini" type="button">↻ Refresh</button></div><div class="game-filters" role="group" aria-label="Filter NBA games"><button type="button" class="game-filter" data-game-filter="all" aria-pressed="true">All <span data-game-count="all">0</span></button><button type="button" class="game-filter" data-game-filter="pre" aria-pressed="false">Upcoming <span data-game-count="pre">0</span></button><button type="button" class="game-filter" data-game-filter="in" aria-pressed="false">Live <span data-game-count="in">0</span></button><button type="button" class="game-filter" data-game-filter="post" aria-pressed="false">Final <span data-game-count="post">0</span></button></div><div class="game-search"><input id="gameTeamSearch" type="search" placeholder="Search NBA teams…" aria-label="Search NBA games by team" autocomplete="off"><button id="clearGameSearch" type="button" class="mini" hidden>Clear</button></div><div id="gamesMessage" class="muted" role="status">Loading games…</div><div id="gamesList"></div><p id="gamesFilterEmpty" class="muted" hidden>No games match this filter.</p><p class="muted notice">Game data is provided by a free public ESPN endpoint and may be delayed or temporarily unavailable. Tap a completed game to view individual player box-score statistics. Tap a game to see available game details and player box scores.</p></section></div><section id="analyzerTab" class="panel" hidden><header class="prop-hero"><span class="prop-eyebrow">PLAYER RESEARCH · ESPN DATA</span><h2>📊 Props Analyzer</h2><p class="muted">Explore recent performance, historical hit rates and consistency.</p></header><div class="prop-info-banner"><strong>Historical analysis only</strong><span>Completed NBA games · Hit rates are not predicted probabilities or betting recommendations.</span></div><h3 class="prop-form-title">Build your analysis</h3><div class="prop-controls"><label class="prop-field"><span>Team</span><select id="propTeam" aria-label="Player team"><option value="">Choose team</option></select></label><label class="prop-field"><span>Player</span><select id="propPlayer" aria-label="Player"><option value="">Choose player</option></select></label><label class="prop-field"><span>Market</span><select id="propMarket" aria-label="Prop market"><option value="PTS">Points</option><option value="REB">Rebounds</option><option value="AST">Assists</option><option value="3PT">3-pointers made</option><option value="PRA">Points + Rebounds + Assists (PRA)</option><option value="PR">Points + Rebounds (PR)</option><option value="PA">Points + Assists (PA)</option><option value="RA">Rebounds + Assists (RA)</option></select></label><label class="prop-field"><span>Recent games</span><select id="propWindow" aria-label="Number of games"><option value="5">Last 5</option><option value="10" selected>Last 10</option><option value="20">Last 20</option></select></label><label class="prop-field"><span>Betting line</span><input id="propLine" type="number" step="0.5" min="0" placeholder="Betting line (e.g. 24.5)" aria-label="Betting line"></label></div><div class="prop-actions"><button class="primary" id="analyzeProp" type="button">Analyze player →</button></div><p id="propMessage" class="muted prop-status" role="status">Select a team and player to begin.</p><div id="propResults" class="prop-results"></div></section><div id="checklistTab"><header class="checklist-hero"><span class="checklist-eyebrow">DAILY WORKSPACE · CLOUD SYNC</span><h2>✅ Player Checklist</h2><p class="muted">Organise your NBA player research and track today’s checks.</p></header><div class="panel checklist-summary"><div class="stats"><strong><span id="marked">0</span> checked today</strong><span id="count" class="muted"></span><span id="date" class="muted"></span></div><div id="status" class="muted">Connecting…</div></div><section class="panel" id="setup" hidden><h2>Import your saved roster</h2><p class="notice">Your cloud checklist is empty. Import your exported JSON backup to preserve your team assignments and checked players. This will replace the empty cloud list.</p><button class="primary" id="importFirst">Import backup JSON</button></section><div class="panel checklist-filters"><h3>Find players</h3><div class="controls"><input id="search" type="text" placeholder="Search players or teams" aria-label="Search players"><select id="team" aria-label="Filter by team"><option value="">All teams</option></select><select id="filter" aria-label="Filter status"><option value="all">All players</option><option value="open">Not checked</option><option value="done">Checked</option></select></div><div class="row" style="margin-top:12px"><button id="export">Export backup</button><button id="import">Import backup</button><button id="reset">Reset today's checks</button></div></div><details class="panel fold checklist-add" id="addPanel"><summary>＋ Add player ▾</summary><div class="row"><input id="newName" type="text" placeholder="Player name"><select id="newTeam" aria-label="Team"></select><button class="primary" id="add">Add</button></div></details><div class="checklist-list-head"><h3>Team rosters</h3><span class="muted">Tap a team to expand</span></div><div id="list"></div><p class="muted notice">Changes save to your private Firebase account. Keep a separate exported backup. Your original roster is never automatically modified.</p></div></div><input id="file" type="file" accept=".json,application/json"></main><script>
 /* Layout preference is local to this device. Wide by default: desktop-width page
@@ -335,11 +336,43 @@ document.getElementById('detailedPropsBtn')?.addEventListener('click',async()=>{
    'Start: '+(data.startTime?new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Lisbon',hour:'2-digit',minute:'2-digit',day:'2-digit',month:'2-digit',hour12:false}).format(new Date(data.startTime)):'n/a')+' (Lisbon)',
    'Betano PT present: '+(data.bookmakerPresent??'n/a')+' · Markets: '+(data.marketCount??'n/a'),
    'Selections: '+(data.playerSelections??'n/a')+' · Named players: '+(data.namedPlayers??'n/a')+' · Markets with names: '+(data.marketCountWithNames??'n/a'),
-   ...(data.samples||[]).map(x=>x.player+' · market '+x.marketId+' · outcome '+x.outcomeId+' · price '+x.price),
+   'Line fields: '+(data.linesFound??'n/a')+' · Valid decimal prices: '+(data.decimalPrices??'n/a')+' · OddsPapi requests used: '+(data.requestsUsed??'n/a'),
+   ...(data.samples||[]).map(x=>x.player+' · market '+x.marketId+' · outcome '+x.outcomeId+' · candidate line '+(x.line??'unresolved')+' · price '+x.price+' · bookmaker selection '+(x.bookmakerOutcomeId||'n/a')),
    data.note
   ];
   for(const value of lines){if(!value)continue;const p=document.createElement('p');p.textContent=value;out.append(p)}
  }catch(e){status.textContent='Detailed test failed: '+(e.code||'unknown')+' — '+(e.message||'See function logs.')}
+ finally{btn.disabled=false}
+});
+
+document.getElementById('marketCatalogBtn')?.addEventListener('click',async()=>{
+ const btn=document.getElementById('marketCatalogBtn');
+ const status=document.getElementById('marketCatalogStatus');
+ const out=document.getElementById('marketCatalogResult');
+ if(!auth.currentUser){status.textContent='Sign in first.';return}
+ if(!confirm('Identify official NBA player-prop markets? This may use 1 OddsPapi request from your daily 6-request diagnostic allowance.'))return;
+ btn.disabled=true;status.textContent='Looking up official NBA market definitions…';out.replaceChildren();
+ try{
+  const {data}=await httpsCallable(oddsFunctions,'oddsPapiMarketCatalogProbe')({});
+  status.textContent='Market catalogue loaded'+(data.cached?' (cached)':'')+' · '+(data.requestsUsed??'?')+' API request(s) when fetched.';
+  const lines=[
+   'Official definitions: '+(data.totalDefinitions??'n/a')+' · NBA player-prop definitions: '+(data.nbaPlayerPropDefinitions??'n/a'),
+   'Market IDs seen in the Hawks–Lakers test:',
+   ...(data.sampleIds||[]).map(x=>{
+    const m=x.market;
+    return m?('ID '+x.id+' · '+m.marketName+' · line '+(m.handicap??'unknown')+
+      ' · period '+m.period+' · outcomes '+m.outcomes.map(o=>o.name+' ('+o.id+')').join(' / ')):
+      'ID '+x.id+' · not present in catalogue';
+   }),
+   'NBA player prop market families (examples):',
+   ...(data.categorySamples||[]).map(x=>x.marketName+' · '+x.marketCount+' market IDs · sample line '+(x.example?.handicap??'n/a')),
+   data.note
+  ];
+  for(const value of lines){
+   if(!value)continue;
+   const p=document.createElement('p');p.textContent=value;out.append(p);
+  }
+ }catch(e){status.textContent='Market catalogue test failed: '+(e.code||'unknown')+' — '+(e.message||'See function logs.')}
  finally{btn.disabled=false}
 });
 
