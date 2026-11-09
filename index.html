@@ -124,6 +124,14 @@
 .game-search input::-webkit-search-cancel-button{cursor:pointer}
 .game-search button{flex:none;min-height:40px}
 .game-search button[hidden]{display:none!important}
+
+/* UI Update 30.3 — quick navigation for long Props Analyzer reports. */
+.prop-jump-nav{padding:12px;border:1px solid #36566d;background:#152a40;border-radius:12px;margin:2px 0 6px}
+.prop-jump-label{display:block;font-size:.7rem;font-weight:800;letter-spacing:.1em;color:#8fcdb9;margin-bottom:9px}
+.prop-jump-items{display:flex;gap:7px;overflow-x:auto;padding-bottom:3px;scrollbar-width:thin}
+.prop-jump-btn{flex:none;white-space:nowrap;font-size:.8rem;padding:8px 11px;min-height:38px;background:#203b53;border:1px solid #45637c}
+.prop-jump-btn:active{background:#0e775c}
+.prop-results h3,.prop-results .analyzer-grid{scroll-margin-top:90px}
 </style></head><body><main><div class="bar"><div><h1>🏀 NBA Betting Tracker</h1><p>One player, one check — synced across devices</p></div><button id="signout" hidden>Sign out</button></div><section class="panel" id="login"><h2>Sign in</h2><p>Use the same Google account on Android and PC to see the same checklist.</p><button class="primary" id="signin">Continue with Google</button><p class="muted" id="loginmsg"></p></section><div id="app"><nav class="tabs" aria-label="App sections"><button type="button" data-tab="scanner" aria-selected="true">🤖 AI Scanner</button><button type="button" data-tab="games" aria-selected="false">🏀 NBA Games</button><button type="button" data-tab="analyzer" aria-selected="false">📊 Props Analyzer</button><button type="button" data-tab="checklist" aria-selected="false">✅ Checklist</button></nav><section id="scannerTab" class="panel scanner-panel">
  <header class="scanner-hero"><div><span class="scanner-eyebrow">NBA ANALYTICS · BETANO PT</span><h2>🤖 AI Scanner</h2><p class="muted">Your workspace for NBA player-prop research.</p></div><span class="scanner-badge">● Manual mode</span></header>
  <div class="scanner-overview" aria-label="Scanner overview">
@@ -482,7 +490,12 @@ if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWo
     const sorted=rows.map(r=>r.value).sort((a,b)=>a-b),mid=Math.floor(sorted.length/2);
     const median=sorted.length%2?sorted[mid]:(sorted[mid-1]+sorted[mid])/2;
     const lastFive=rows.slice(0,5),lastFiveOver=hasLine?lastFive.filter(r=>r.value>line).length:0;
-   const wrap=$('propResults');const grid=document.createElement('div');grid.className='analyzer-grid';
+   const wrap=$('propResults');
+   const jumpNav=document.createElement('nav');jumpNav.className='prop-jump-nav';jumpNav.setAttribute('aria-label','Analysis sections');
+   const jumpTitle=document.createElement('span');jumpTitle.className='prop-jump-label';jumpTitle.textContent='JUMP TO';jumpNav.append(jumpTitle);
+   const jumpItems=document.createElement('div');jumpItems.className='prop-jump-items';jumpNav.append(jumpItems);
+   wrap.append(jumpNav);
+   const grid=document.createElement('div');grid.className='analyzer-grid';
    for(const [label,value] of [['Games found',rows.length+' / '+count],['Average '+market,avg.toFixed(1)],['Median '+market,median.toFixed(1)],['Range '+market,sorted[0]+'–'+sorted[sorted.length-1]],['Over '+(hasLine?line:'—'),hasLine?over+' / '+rows.length+' ('+(100*over/rows.length).toFixed(0)+'%)':'Enter a line'],['Last '+lastFive.length+' over',hasLine?lastFiveOver+' / '+lastFive.length:'Enter a line']]){const tile=document.createElement('div');tile.className='stat-tile';const t=document.createElement('span');t.className='muted';t.textContent=label;const v=document.createElement('strong');v.textContent=value;tile.append(t,v);grid.append(tile)}wrap.append(grid);
 
 
@@ -795,6 +808,17 @@ if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWo
    table.append(tbody);log.append(table);wrap.append(log);
    const h=document.createElement('h3');h.textContent='Recent game results';wrap.append(h);
    for(const r of rows){const p=document.createElement('div');p.className='player';p.textContent=new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Lisbon',day:'2-digit',month:'short',year:'numeric'}).format(new Date(r.date))+' · '+(r.venue==='Home'?'vs ':r.venue==='Away'?'@ ':'vs ') +r.opponent+' · '+market+': '+r.value+(hasLine?(r.value>line?' · OVER':r.value<line?' · UNDER':' · PUSH'):'');if(hasLine)p.classList.add(r.value>line?'good':r.value<line?'muted':'warning');wrap.append(p)}
+   // Build quick navigation from sections already rendered; no new data requests.
+   const sections=[['Overview',grid],['Consistency','Consistency'],['Minutes','Minutes & Playing Time'],['Home/Away','Home vs Away'],['Opponent','Against Opponent'],['Game log',logTitle],['Recent results',h]];
+   const headings=[...wrap.querySelectorAll('h3')];
+   for(const [label,section] of sections){
+     const target=typeof section==='string'?headings.find(el=>el.textContent.trim()===section):section;
+     if(!target)continue;
+     const button=document.createElement('button');button.type='button';button.className='prop-jump-btn';button.textContent=label;
+     button.addEventListener('click',()=>target.scrollIntoView({behavior:window.matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth',block:'start'}));
+     jumpItems.append(button);
+   }
+   if(!jumpItems.children.length)jumpNav.remove();
    $('propMessage').textContent='Player appearances: '+rows.length+'/'+count+' · Team games checked: '+teamGames+' · Games without a matching player stat: '+missingAppearances+' · Box scores unavailable: '+missingBoxScores+'. Search limited to the current season.';
   }catch(e){$('propMessage').textContent='Unable to analyze: '+e.message}
   finally{running=false;$('analyzeProp').disabled=false}
