@@ -1,4 +1,16 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=1000,minimum-scale=0.25,maximum-scale=5,user-scalable=yes"><script>try{if(localStorage.getItem("nba-layout-mode")==="mobile")document.querySelector('meta[name="viewport"]').setAttribute("content","width=device-width,initial-scale=1,user-scalable=yes")}catch(e){}</script><meta name="theme-color" content="#101827"><meta name="description" content="Private cloud-synced NBA player betting checklist"><link rel="manifest" href="manifest.webmanifest"><link rel="icon" href="icon.svg" type="image/svg+xml"><title>NBA Betting Tracker</title><style>
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=800,minimum-scale=0.25,maximum-scale=5,user-scalable=yes"><script>
+/* Fit the default 800px-wide page to the screen at launch, with pinch zoom enabled. */
+function nbaViewportContent(mode){
+ if(mode==="mobile")return "width=device-width,initial-scale=1,user-scalable=yes";
+ const deviceWidth=window.screen&&window.screen.width||800;
+ const initialScale=Math.max(0.25,Math.min(1,deviceWidth/800));
+ return "width=800,initial-scale="+initialScale.toFixed(3)+",minimum-scale=0.25,maximum-scale=5,user-scalable=yes";
+}
+try{
+ const saved=localStorage.getItem("nba-layout-mode");
+ document.querySelector('meta[name="viewport"]').setAttribute("content",nbaViewportContent(saved==="mobile"?"mobile":"wide"));
+}catch(e){document.querySelector('meta[name="viewport"]').setAttribute("content",nbaViewportContent("wide"))}
+</script><meta name="theme-color" content="#101827"><meta name="description" content="Private cloud-synced NBA player betting checklist"><link rel="manifest" href="manifest.webmanifest"><link rel="icon" href="icon.svg" type="image/svg+xml"><title>NBA Betting Tracker</title><style>
 :root{color-scheme:dark;font-family:system-ui,Arial,sans-serif;background:#0b1220;color:#edf3fb}*{box-sizing:border-box}body{margin:0}main{max-width:960px;margin:auto;padding:22px 14px 65px}h1{margin:0;font-size:1.7rem}p{color:#a8b8cf}.bar,.row,.controls,.stats{display:flex;gap:9px;align-items:center;flex-wrap:wrap}.bar{justify-content:space-between}.panel,.team{background:#142035;border:1px solid #2a3c55;border-radius:15px;padding:15px;margin-top:15px}button,input,select{font:inherit;border-radius:9px;padding:11px;border:1px solid #38516d;background:#1e3049;color:#fff}button{cursor:pointer}button.primary{background:#0e775c;border-color:#159d77}button:disabled{opacity:.5}input[type=checkbox]{width:22px;height:22px;accent-color:#50d7a1}input[type=text]{min-width:150px;flex:1}select{max-width:100%}.controls>*{flex:1;min-width:140px}.stats{justify-content:space-between}.muted{color:#9fb0c7;font-size:.9rem}.warning{color:#ffca81}.good{color:#6de4b2}.player{display:flex;align-items:center;gap:9px;padding:9px 0;border-top:1px solid #293c56}.name{flex:1;min-width:0}.done .name{text-decoration:line-through;color:#91b8aa}.mini{padding:7px;font-size:.82rem}.danger{color:#ffb8b8}.team h3{margin:0 0 9px}.tag{color:#5ee4aa;font-size:.73rem}#app{display:none}#status{margin-top:9px}#file{display:none}.notice{font-size:.88rem;line-height:1.5}details summary{cursor:pointer;list-style:none}details summary::-webkit-details-marker{display:none}.fold>summary{font-weight:700;padding:4px 0}.fold[open]>summary{margin-bottom:12px}.menu{position:relative;margin-left:auto}.menu>summary{border:1px solid #38516d;background:#1e3049;border-radius:9px;padding:5px 11px;font-size:1.2rem;line-height:1.2;min-width:39px;text-align:center}.menu[open]>summary{background:#304663}.menu-content{position:absolute;right:0;top:100%;z-index:5;background:#1e3049;border:1px solid #47607e;border-radius:10px;padding:10px;min-width:220px;box-shadow:0 10px 30px #0008;display:grid;gap:8px}.menu-content label{font-size:.82rem;color:#bed0e6}.menu-content select{width:100%}.menu-content button{width:100%}.player{position:relative}.team[open]>summary{margin-bottom:8px}button:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visible{outline:2px solid #70d9ff}
 #gamesList{display:grid;gap:10px;margin-top:12px}.game-card{background:#1b2b42;border:1px solid #344b67;border-radius:11px;padding:12px}.game-teams{font-weight:700}.game-meta{font-size:.88rem;color:#b2c5dc;margin-top:5px}.dashboard-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}#gamesMessage{margin-top:9px}.tabs{display:flex;gap:8px;flex-wrap:wrap;margin-top:16px}.tabs button[aria-selected="true"]{background:#0e775c;border-color:#159d77}.analyzer-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:10px}.stat-tile{padding:12px;background:#1b2b42;border:1px solid #344b67;border-radius:10px}.stat-tile strong{display:block;font-size:1.4rem}.game-card{cursor:pointer}.game-card:focus-visible{outline:2px solid #70d9ff}.game-card button{cursor:pointer}
 .boxscore{margin-top:12px;overflow-x:auto}.boxscore table{border-collapse:collapse;width:100%;font-size:.82rem;white-space:nowrap}.boxscore th,.boxscore td{padding:7px;border-bottom:1px solid #344b67;text-align:right}.boxscore th:first-child,.boxscore td:first-child{text-align:left;position:sticky;left:0;background:#1b2b42}.boxscore h4{margin:12px 0 5px}.boxscore .muted{padding:8px 0}.scanner-rosters:not([hidden]){display:grid}.scanner-rosters[hidden]{display:none!important}.scanner-stats[hidden]{display:none!important}
@@ -192,7 +204,7 @@ main{width:100%;min-width:0}
 
 /* Update 30.6 — choose full desktop-width page (default) or compact phone layout.
    Unlike inner-table scrolling, wide layout shows the whole report horizontally.
-   On Android the browser scales the 1000px layout to fit; pinch zoom stays enabled. */
+   On Android the 800px layout initially fits the screen; pinch zoom stays enabled. */
 .header-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap}
 #layoutModeToggle{white-space:nowrap;font-size:.85rem;border-color:#4e7288;background:#203951}
 #layoutModeToggle[aria-pressed="true"]{border-color:#2b8979;background:#163c3c}
@@ -235,7 +247,7 @@ main{width:100%;min-width:0}
  button.addEventListener('click',()=>{
    mode=mode==='wide'?'mobile':'wide';
    try{localStorage.setItem('nba-layout-mode',mode)}catch(e){}
-   meta.setAttribute('content',mode==='wide'?'width=1000,minimum-scale=0.25,maximum-scale=5,user-scalable=yes':'width=device-width,initial-scale=1,user-scalable=yes');
+   meta.setAttribute('content',nbaViewportContent(mode));
    refreshLabel();
    window.scrollTo({top:0,behavior:'instant'});
  });
