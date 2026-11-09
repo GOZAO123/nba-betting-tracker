@@ -269,7 +269,7 @@ main{width:100%;min-width:0}
 .prop-verified-identity{border:1px solid #31795f;background:#14392f;color:#b5f0d5;border-radius:11px;padding:11px 14px;font-weight:700;font-size:.85rem;overflow-wrap:anywhere}
 /* Safety Update 32.4 — current NBA schedule date and freshness warnings. */
 .prop-source-warning{background:#4a3027;border:1px solid #bb7954;border-radius:11px;color:#ffe3cd;font-weight:700;font-size:.88rem;line-height:1.5;padding:12px 14px}
-/* Update 32.7: midnight safety is logic-only; no layout changes. */
+/* Update 32.8: checklist day rolls over at 06:00 Europe/Lisbon, DST aware. */
 </style></head><body><main><div class="bar"><div><h1>🏀 NBA Betting Tracker</h1><p>One player, one check — synced across devices</p></div><div class="header-actions"><button id="layoutModeToggle" type="button" class="mini" aria-label="Switch between wide and mobile layouts">📱 Mobile view</button><button id="signout" hidden>Sign out</button></div></div><section class="panel" id="login"><h2>Sign in</h2><p>Use the same Google account on Android and PC to see the same checklist.</p><button class="primary" id="signin">Continue with Google</button><p class="muted" id="loginmsg"></p></section><div id="app"><nav class="tabs" aria-label="App sections"><button type="button" data-tab="scanner" aria-selected="true">🤖 AI Scanner</button><button type="button" data-tab="games" aria-selected="false">🏀 NBA Games</button><button type="button" data-tab="analyzer" aria-selected="false">📊 Props Analyzer</button><button type="button" data-tab="checklist" aria-selected="false">✅ Checklist</button></nav><section id="scannerTab" class="panel scanner-panel">
  <header class="scanner-hero"><div><span class="scanner-eyebrow">NBA ANALYTICS · BETANO PT</span><h2>🤖 AI Scanner</h2><p class="muted">Your workspace for NBA player-prop research.</p></div><span class="scanner-badge">● Manual mode</span></header>
  <div class="scanner-overview" aria-label="Scanner overview">
@@ -380,7 +380,24 @@ if(oddsProbeButton)oddsProbeButton.addEventListener('click',async()=>{
  finally{oddsProbeButton.disabled=false}
 });
 
-const $=id=>document.getElementById(id);const TODAY=()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`};
+const $=id=>document.getElementById(id);
+// The NBA checklist day runs from 06:00 to 05:59 in mainland Portugal (Europe/Lisbon).
+// Use a single time-zone clock across devices, even if the device is travelling.
+const CHECKLIST_ZONE='Europe/Lisbon',CHECKLIST_RESET_HOUR=6;
+function lisbonClock(now=new Date()){
+ const parts=new Intl.DateTimeFormat('en-GB',{
+  timeZone:CHECKLIST_ZONE,year:'numeric',month:'2-digit',day:'2-digit',
+  hour:'2-digit',hourCycle:'h23'
+ }).formatToParts(now);
+ const part=type=>Number(parts.find(item=>item.type===type).value);
+ return {year:part('year'),month:part('month'),day:part('day'),hour:part('hour')};
+}
+function TODAY(now=new Date()){
+ const clock=lisbonClock(now);
+ const logicalDay=new Date(Date.UTC(clock.year,clock.month-1,clock.day,12));
+ if(clock.hour<CHECKLIST_RESET_HOUR)logicalDay.setUTCDate(logicalDay.getUTCDate()-1);
+ return logicalDay.toISOString().slice(0,10);
+}
 const TEAM_NAMES=['Atlanta Hawks','Boston Celtics','Brooklyn Nets','Charlotte Hornets','Chicago Bulls','Cleveland Cavaliers','Dallas Mavericks','Denver Nuggets','Detroit Pistons','Golden State Warriors','Houston Rockets','Indiana Pacers','LA Clippers','Los Angeles Lakers','Memphis Grizzlies','Miami Heat','Milwaukee Bucks','Minnesota Timberwolves','New Orleans Pelicans','New York Knicks','Oklahoma City Thunder','Orlando Magic','Philadelphia 76ers','Phoenix Suns','Portland Trail Blazers','Sacramento Kings','San Antonio Spurs','Toronto Raptors','Utah Jazz','Washington Wizards'];
 const teamFilterOpen=new Set();const blankChecklist=()=>({players:[],checked:{},date:TODAY(),revision:0});let data=blankChecklist(),user=null,unsubscribe=null,ready=false,writeQueue=Promise.resolve(),authSession=0,pendingWrites=0,latestCloud=null,lastCommitted=null,syncError=null;
 function msg(s,error=false){$('status').textContent=s;$('status').className=error?'warning':'muted'}
@@ -443,20 +460,26 @@ function dayReset(){
  render();
  persist({type:'dayReset',day});
 }
-// One local-midnight timer, not periodic polling. Android may suspend timers:
-// visibility/focus rechecks the calendar day after the app is reopened.
-let midnightTimer=null;
-function nextLocalMidnightDelay(now=new Date()){
- const midnight=new Date(now.getFullYear(),now.getMonth(),now.getDate()+1,0,0,2);
- return Math.max(1000,midnight.getTime()-now.getTime());
+// One timer for 06:00 Lisbon each day; not continuous polling.
+// Android may suspend timers, so visibility/focus rechecks the logical day.
+let resetTimer=null;
+function nextLisbonResetDelay(now=new Date()){
+ const clock=lisbonClock(now);
+ const dayOffset=clock.hour>=CHECKLIST_RESET_HOUR?1:0;
+ // Construct 06:00 at the target Lisbon calendar date; adjust UTC for DST.
+ // Europe/Lisbon is UTC+0 in winter and UTC+1 in summer.
+ const target=new Date(Date.UTC(clock.year,clock.month-1,clock.day+dayOffset,CHECKLIST_RESET_HOUR,0,2));
+ const targetLocalHour=lisbonClock(target).hour;
+ target.setUTCHours(target.getUTCHours()+CHECKLIST_RESET_HOUR-targetLocalHour);
+ return Math.max(1000,target.getTime()-now.getTime());
 }
 function scheduleDailyCheck(){
- if(midnightTimer!==null){clearTimeout(midnightTimer);midnightTimer=null}
+ if(resetTimer!==null){clearTimeout(resetTimer);resetTimer=null}
  if(!user)return;
- midnightTimer=setTimeout(()=>{
-  midnightTimer=null;
+ resetTimer=setTimeout(()=>{
+  resetTimer=null;
   checkCalendarDay();
- },nextLocalMidnightDelay());
+ },nextLisbonResetDelay());
 }
 function checkCalendarDay(){
  if(user&&ready&&data.date<TODAY())dayReset();
@@ -496,7 +519,7 @@ function persist(change){
  });
 }
 function options(){const names=[...new Set([...TEAM_NAMES,...data.players.map(p=>p.team)])].sort();for(const id of ['team','newTeam']){let el=$(id),old=el.value;el.replaceChildren();if(id==='team')el.add(new Option('All teams',''));for(const name of names)el.add(new Option(name,name));el.value=old&&names.includes(old)?old:(id==='team'?'':names[0])}}
-function render(){if(!ready)return;options();$('marked').textContent=Object.keys(data.checked).filter(k=>data.checked[k]&&data.players.some(p=>p.name===k)).length;$('count').textContent=data.players.length+' roster entries';$('date').textContent=data.date;$('setup').hidden=data.players.length>0;const q=$('search').value.trim().toLowerCase(),team=$('team').value,filter=$('filter').value;const list=data.players.map((p,i)=>({...p,i})).filter(p=>(!q||p.name.toLowerCase().includes(q)||p.team.toLowerCase().includes(q))&&(!team||p.team===team)&&(filter==='all'||(filter==='done'?!!data.checked[p.name]:!data.checked[p.name])));const root=$('list');root.replaceChildren();const groups=new Map();for(const p of list){if(!groups.has(p.team))groups.set(p.team,[]);groups.get(p.team).push(p)}for(const [team,players] of [...groups].sort((a,b)=>a[0].localeCompare(b[0]))){
+function render(){if(!ready)return;options();$('marked').textContent=Object.keys(data.checked).filter(k=>data.checked[k]&&data.players.some(p=>p.name===k)).length;$('count').textContent=data.players.length+' roster entries';$('date').textContent=data.date+' · resets 06:00 Lisbon';$('setup').hidden=data.players.length>0;const q=$('search').value.trim().toLowerCase(),team=$('team').value,filter=$('filter').value;const list=data.players.map((p,i)=>({...p,i})).filter(p=>(!q||p.name.toLowerCase().includes(q)||p.team.toLowerCase().includes(q))&&(!team||p.team===team)&&(filter==='all'||(filter==='done'?!!data.checked[p.name]:!data.checked[p.name])));const root=$('list');root.replaceChildren();const groups=new Map();for(const p of list){if(!groups.has(p.team))groups.set(p.team,[]);groups.get(p.team).push(p)}for(const [team,players] of [...groups].sort((a,b)=>a[0].localeCompare(b[0]))){
 const box=document.createElement('details');box.className='team';box.open=(q!==''||filter!=='all'||teamFilterOpen.has(team));
 const h=document.createElement('summary');h.textContent=`${team} · ${players.length} players ▾`;
 h.onclick=()=>{if(box.open)teamFilterOpen.delete(team);else teamFilterOpen.add(team)};
