@@ -298,8 +298,9 @@ main{width:100%;min-width:0}
   <div class="row"><button id="verifiedPropsBtn" type="button" class="mini">Preview verified Betano props</button><span id="verifiedPropsStatus" class="muted">Manual test · up to 2 OddsPapi requests · full game including overtime · no betting predictions.</span></div><div id="verifiedPropsResult" class="muted"></div>
   <div class="row" style="margin-top:12px"><input id="espnIdentityName" type="text" placeholder="OddsPapi player name, e.g. Doncic, Luka" aria-label="OddsPapi player name" style="min-width:260px"><select id="espnIdentityTeam" aria-label="ESPN team for identity check"><option value="">Choose NBA team</option></select><button id="espnIdentityBtn" type="button" class="mini">Check ESPN roster match</button></div>
   <p id="espnIdentityStatus" class="muted" role="status">Name matching only. Checks one selected team's official ESPN roster manually; no OddsPapi requests or automatic player linking.</p>
+  <button id="espnSendToAnalyzer" type="button" class="primary mini" hidden>Use this verified Betano offer in Props Analyzer →</button>
  </div></details>
-</section><div id="gamesTab" hidden><section class="panel" aria-label="NBA games dashboard"><div class="dashboard-head"><div><h2 style="margin:0">🏀 Today's NBA Games</h2><p class="muted" style="margin:5px 0 0">NBA schedule date (US Eastern Time) · Times shown on your device</p></div><button id="refreshGames" class="mini" type="button">↻ Refresh</button></div><div class="game-filters" role="group" aria-label="Filter NBA games"><button type="button" class="game-filter" data-game-filter="all" aria-pressed="true">All <span data-game-count="all">0</span></button><button type="button" class="game-filter" data-game-filter="pre" aria-pressed="false">Upcoming <span data-game-count="pre">0</span></button><button type="button" class="game-filter" data-game-filter="in" aria-pressed="false">Live <span data-game-count="in">0</span></button><button type="button" class="game-filter" data-game-filter="post" aria-pressed="false">Final <span data-game-count="post">0</span></button></div><div class="game-search"><input id="gameTeamSearch" type="search" placeholder="Search NBA teams…" aria-label="Search NBA games by team" autocomplete="off"><button id="clearGameSearch" type="button" class="mini" hidden>Clear</button></div><div id="gamesMessage" class="muted" role="status">Loading games…</div><div id="gamesList"></div><p id="gamesFilterEmpty" class="muted" hidden>No games match this filter.</p><p class="muted notice">Game data is provided by a free public ESPN endpoint and may be delayed or temporarily unavailable. Tap a completed game to view individual player box-score statistics. Tap a game to see available game details and player box scores.</p></section></div><section id="analyzerTab" class="panel" hidden><header class="prop-hero"><span class="prop-eyebrow">PLAYER RESEARCH · ESPN DATA</span><h2>📊 Props Analyzer</h2><p class="muted">Explore recent performance, historical hit rates and consistency.</p></header><div class="prop-info-banner"><strong>Historical analysis only</strong><span>Completed NBA games · Hit rates are not predicted probabilities or betting recommendations.</span></div><h3 class="prop-form-title">Build your analysis</h3><div class="prop-controls"><label class="prop-field"><span>Team</span><select id="propTeam" aria-label="Player team"><option value="">Choose team</option></select></label><label class="prop-field"><span>Player</span><select id="propPlayer" aria-label="Player"><option value="">Choose player</option></select></label><label class="prop-field"><span>Market</span><select id="propMarket" aria-label="Prop market"><option value="PTS">Points</option><option value="REB">Rebounds</option><option value="AST">Assists</option><option value="3PT">3-pointers made</option><option value="PRA">Points + Rebounds + Assists (PRA)</option><option value="PR">Points + Rebounds (PR)</option><option value="PA">Points + Assists (PA)</option><option value="RA">Rebounds + Assists (RA)</option></select></label><label class="prop-field"><span>Recent games</span><select id="propWindow" aria-label="Number of games"><option value="5">Last 5</option><option value="10" selected>Last 10</option><option value="20">Last 20</option></select></label><label class="prop-field"><span>Betting line</span><input id="propLine" type="number" step="0.5" min="0" placeholder="Betting line (e.g. 24.5)" aria-label="Betting line"></label></div><div class="prop-actions"><button class="primary" id="analyzeProp" type="button">Analyze player →</button></div><p id="propMessage" class="muted prop-status" role="status">Select a team and player to begin.</p><div id="propResults" class="prop-results"></div></section><div id="checklistTab"><header class="checklist-hero"><span class="checklist-eyebrow">DAILY WORKSPACE · CLOUD SYNC</span><h2>✅ Player Checklist</h2><p class="muted">Organise your NBA player research and track today’s checks.</p></header><div class="panel checklist-summary"><div class="stats"><strong><span id="marked">0</span> checked today</strong><span id="count" class="muted"></span><span id="date" class="muted"></span></div><div id="status" class="muted">Connecting…</div></div><section class="panel" id="setup" hidden><h2>Import your saved roster</h2><p class="notice">Your cloud checklist is empty. Import your exported JSON backup to preserve your team assignments and checked players. This will replace the empty cloud list.</p><button class="primary" id="importFirst">Import backup JSON</button></section><div class="panel checklist-filters"><h3>Find players</h3><div class="controls"><input id="search" type="text" placeholder="Search players or teams" aria-label="Search players"><select id="team" aria-label="Filter by team"><option value="">All teams</option></select><select id="filter" aria-label="Filter status"><option value="all">All players</option><option value="open">Not checked</option><option value="done">Checked</option></select></div><div class="row" style="margin-top:12px"><button id="export">Export backup</button><button id="import">Import backup</button><button id="reset">Reset today's checks</button></div></div><details class="panel fold checklist-add" id="addPanel"><summary>＋ Add player ▾</summary><div class="row"><input id="newName" type="text" placeholder="Player name"><select id="newTeam" aria-label="Team"></select><button class="primary" id="add">Add</button></div></details><div class="checklist-list-head"><h3>Team rosters</h3><span class="muted">Tap a team to expand</span></div><div id="list"></div><p class="muted notice">Changes save to your private Firebase account. Keep a separate exported backup. Your original roster is never automatically modified.</p></div></div><input id="file" type="file" accept=".json,application/json"></main><script>
+</section><div id="gamesTab" hidden><section class="panel" aria-label="NBA games dashboard"><div class="dashboard-head"><div><h2 style="margin:0">🏀 Today's NBA Games</h2><p class="muted" style="margin:5px 0 0">NBA schedule date (US Eastern Time) · Times shown on your device</p></div><button id="refreshGames" class="mini" type="button">↻ Refresh</button></div><div class="game-filters" role="group" aria-label="Filter NBA games"><button type="button" class="game-filter" data-game-filter="all" aria-pressed="true">All <span data-game-count="all">0</span></button><button type="button" class="game-filter" data-game-filter="pre" aria-pressed="false">Upcoming <span data-game-count="pre">0</span></button><button type="button" class="game-filter" data-game-filter="in" aria-pressed="false">Live <span data-game-count="in">0</span></button><button type="button" class="game-filter" data-game-filter="post" aria-pressed="false">Final <span data-game-count="post">0</span></button></div><div class="game-search"><input id="gameTeamSearch" type="search" placeholder="Search NBA teams…" aria-label="Search NBA games by team" autocomplete="off"><button id="clearGameSearch" type="button" class="mini" hidden>Clear</button></div><div id="gamesMessage" class="muted" role="status">Loading games…</div><div id="gamesList"></div><p id="gamesFilterEmpty" class="muted" hidden>No games match this filter.</p><p class="muted notice">Game data is provided by a free public ESPN endpoint and may be delayed or temporarily unavailable. Tap a completed game to view individual player box-score statistics. Tap a game to see available game details and player box scores.</p></section></div><section id="analyzerTab" class="panel" hidden><header class="prop-hero"><span class="prop-eyebrow">PLAYER RESEARCH · ESPN DATA</span><h2>📊 Props Analyzer</h2><p class="muted">Explore recent performance, historical hit rates and consistency.</p></header><div class="prop-info-banner"><strong>Historical analysis only</strong><span>Completed NBA games · Hit rates are not predicted probabilities or betting recommendations.</span></div><h3 class="prop-form-title">Build your analysis</h3><div class="prop-controls"><label class="prop-field"><span>Team</span><select id="propTeam" aria-label="Player team"><option value="">Choose team</option></select></label><label class="prop-field"><span>Player</span><select id="propPlayer" aria-label="Player"><option value="">Choose player</option></select></label><label class="prop-field"><span>Market</span><select id="propMarket" aria-label="Prop market"><option value="PTS">Points</option><option value="REB">Rebounds</option><option value="AST">Assists</option><option value="3PT">3-pointers made</option><option value="PRA">Points + Rebounds + Assists (PRA)</option><option value="PR">Points + Rebounds (PR)</option><option value="PA">Points + Assists (PA)</option><option value="RA">Rebounds + Assists (RA)</option></select></label><label class="prop-field"><span>Recent games</span><select id="propWindow" aria-label="Number of games"><option value="5">Last 5</option><option value="10" selected>Last 10</option><option value="20">Last 20</option></select></label><label class="prop-field"><span>Betting line</span><input id="propLine" type="number" step="0.5" min="0" placeholder="Betting line (e.g. 24.5)" aria-label="Betting line"></label></div><div id="propLinkedQuote" class="prop-verified-identity" role="status" hidden></div><div class="prop-actions"><button class="primary" id="analyzeProp" type="button">Analyze player →</button></div><p id="propMessage" class="muted prop-status" role="status">Select a team and player to begin.</p><div id="propResults" class="prop-results"></div></section><div id="checklistTab"><header class="checklist-hero"><span class="checklist-eyebrow">DAILY WORKSPACE · CLOUD SYNC</span><h2>✅ Player Checklist</h2><p class="muted">Organise your NBA player research and track today’s checks.</p></header><div class="panel checklist-summary"><div class="stats"><strong><span id="marked">0</span> checked today</strong><span id="count" class="muted"></span><span id="date" class="muted"></span></div><div id="status" class="muted">Connecting…</div></div><section class="panel" id="setup" hidden><h2>Import your saved roster</h2><p class="notice">Your cloud checklist is empty. Import your exported JSON backup to preserve your team assignments and checked players. This will replace the empty cloud list.</p><button class="primary" id="importFirst">Import backup JSON</button></section><div class="panel checklist-filters"><h3>Find players</h3><div class="controls"><input id="search" type="text" placeholder="Search players or teams" aria-label="Search players"><select id="team" aria-label="Filter by team"><option value="">All teams</option></select><select id="filter" aria-label="Filter status"><option value="all">All players</option><option value="open">Not checked</option><option value="done">Checked</option></select></div><div class="row" style="margin-top:12px"><button id="export">Export backup</button><button id="import">Import backup</button><button id="reset">Reset today's checks</button></div></div><details class="panel fold checklist-add" id="addPanel"><summary>＋ Add player ▾</summary><div class="row"><input id="newName" type="text" placeholder="Player name"><select id="newTeam" aria-label="Team"></select><button class="primary" id="add">Add</button></div></details><div class="checklist-list-head"><h3>Team rosters</h3><span class="muted">Tap a team to expand</span></div><div id="list"></div><p class="muted notice">Changes save to your private Firebase account. Keep a separate exported backup. Your original roster is never automatically modified.</p></div></div><input id="file" type="file" accept=".json,application/json"></main><script>
 /* Layout preference is local to this device. Wide by default: desktop-width page
    automatically fits the phone, and pinch zoom remains enabled. No API usage. */
 (function(){
@@ -423,12 +424,50 @@ async function readEspnIdentity(url){
  }finally{clearTimeout(timeout)}
 }
 const espnIdentityTeam=document.getElementById("espnIdentityTeam");
+// A preview row is NOT a trusted athlete match until checked against ESPN's
+// specific team's roster. Neither action requests fresh OddsPapi data.
+let selectedPreviewOffer=null,verifiedPreviewOffer=null;
+const sendToAnalyzer=document.getElementById("espnSendToAnalyzer");
+function invalidateVerifiedOffer(){
+ verifiedPreviewOffer=null;
+ sendToAnalyzer.hidden=true;
+}
+document.getElementById("espnIdentityName").addEventListener("input",()=>{
+ selectedPreviewOffer=null;
+ invalidateVerifiedOffer();
+});
+espnIdentityTeam.addEventListener("change",invalidateVerifiedOffer);
+sendToAnalyzer.addEventListener("click",()=>{
+ const v=verifiedPreviewOffer;
+ const currentName=document.getElementById("espnIdentityName").value.trim();
+ const currentTeam=espnIdentityTeam.value;
+ if(!v||v.offer!==selectedPreviewOffer||
+    canonicalPlayerName(currentName)!==canonicalPlayerName(v.player)||
+    currentTeam!==v.team||
+    !Number.isFinite(Date.parse(v.startTime))||Date.parse(v.startTime)<=Date.now()){
+  invalidateVerifiedOffer();
+  document.getElementById("espnIdentityStatus").textContent=
+   "The selected quote is no longer verifiable for this upcoming fixture. Select an offer and check ESPN identity again.";
+  return;
+ }
+ window.dispatchEvent(new CustomEvent("tracker-verified-odds-to-analyzer",{
+  detail:{
+   team:v.team,espnName:v.espnName,espnAthleteId:v.espnAthleteId,
+   market:v.market,line:v.line,selection:v.selection,price:v.price,
+   oddsPapiPlayerId:v.oddsPapiPlayerId,
+   fixtureId:v.fixtureId,fixture:v.fixture,startTime:v.startTime,
+   previewSelectedAt:v.previewSelectedAt
+  }
+ }));
+});
 document.getElementById("espnIdentityBtn")?.addEventListener("click",async()=>{
  const button=document.getElementById("espnIdentityBtn"),
   status=document.getElementById("espnIdentityStatus"),
   player=document.getElementById("espnIdentityName").value.trim(),
   teamName=espnIdentityTeam.value;
  if(!player||!teamName){status.textContent="Enter the OddsPapi player name and choose an NBA team.";return}
+ invalidateVerifiedOffer();
+ const quoteAtStart=selectedPreviewOffer;
  button.disabled=true;status.textContent="Checking the selected team's ESPN roster…";
  try{
   const teamId=ESPN_NBA_TEAM_IDS[teamName];
@@ -443,10 +482,42 @@ document.getElementById("espnIdentityBtn")?.addEventListener("click",async()=>{
   const lookup=canonicalPlayerName(player);
   const found=new Map(people.filter(x=>canonicalPlayerName(x.displayName)===lookup)
     .map(x=>[String(x.id),x]));
+  // Ignore an old request if the user switched players or teams while it loaded.
+  if(document.getElementById("espnIdentityName").value.trim()!==player||
+     espnIdentityTeam.value!==teamName||selectedPreviewOffer!==quoteAtStart){
+   status.textContent="Player or team changed during the roster check. Please verify the new selection.";
+   return;
+  }
   if(found.size===1){
    const athlete=[...found.values()][0];
    status.textContent="ESPN roster match: "+athlete.displayName+" · "+teamName+
     " · ESPN athlete ID "+athlete.id+" · Name matched exactly after format normalization. Availability not confirmed.";
+   if(quoteAtStart){
+    const participantNames=String(quoteAtStart.fixture||"").split(/\s+vs\s+/i);
+    const teamInFixture=participantNames.length===2&&participantNames.some(
+      part=>canonicalPlayerName(part)===canonicalPlayerName(teamName));
+    const nameAgrees=canonicalPlayerName(quoteAtStart.player)===canonicalPlayerName(athlete.displayName);
+    const start=Date.parse(quoteAtStart.startTime);
+    const marketAllowed=["PTS","REB","AST","3PT","PRA","PR","PA","RA"].includes(quoteAtStart.market);
+    if(!teamInFixture||!nameAgrees||!Number.isFinite(start)||start<=Date.now()||
+       !marketAllowed||!Number.isFinite(quoteAtStart.line)||quoteAtStart.line<0||
+       !Number.isFinite(quoteAtStart.price)||quoteAtStart.price<=1||
+       !["Over","Under"].includes(quoteAtStart.selection)){
+     status.textContent+=" Betano offer cannot be linked: team, player, market or upcoming fixture did not verify.";
+    }else{
+     verifiedPreviewOffer={
+      offer:quoteAtStart,team:teamName,espnName:athlete.displayName,
+      espnAthleteId:String(athlete.id),player:quoteAtStart.player,
+      market:quoteAtStart.market,line:quoteAtStart.line,
+      selection:quoteAtStart.selection,price:quoteAtStart.price,
+      oddsPapiPlayerId:quoteAtStart.oddsPapiPlayerId,
+      fixtureId:quoteAtStart.fixtureId,fixture:quoteAtStart.fixture,
+      startTime:quoteAtStart.startTime,previewSelectedAt:quoteAtStart.previewSelectedAt
+     };
+     sendToAnalyzer.hidden=false;
+     status.textContent+=" Verified Betano offer ready for manual transfer to Props Analyzer. Price is a snapshot, not a live guarantee.";
+    }
+   }
   }else if(found.size===0){
    status.textContent="No exact ESPN roster match for “"+player+"” on "+teamName+
     ". This player will NOT be linked automatically.";
@@ -464,6 +535,7 @@ document.getElementById('verifiedPropsBtn')?.addEventListener('click',async()=>{
  const btn=document.getElementById('verifiedPropsBtn'),status=document.getElementById('verifiedPropsStatus'),out=document.getElementById('verifiedPropsResult');
  if(!auth.currentUser){status.textContent='Sign in first.';return}
  if(!confirm('Preview active full-game Betano PT player props? This reserves 2 of your 6 daily OddsPapi diagnostic requests. No bets will be placed.'))return;
+ selectedPreviewOffer=null;invalidateVerifiedOffer();
  btn.disabled=true;status.textContent='Checking official market names against current Betano PT offers…';out.replaceChildren();
  try{
   const {data}=await httpsCallable(oddsFunctions,'oddsPapiVerifiedPropsProbe')({});
@@ -496,11 +568,22 @@ document.getElementById('verifiedPropsBtn')?.addEventListener('click',async()=>{
    choose.textContent=x.player;
    choose.setAttribute('aria-label','Check ESPN roster identity for '+x.player);
    choose.addEventListener('click',()=>{
+    invalidateVerifiedOffer();
+    // Select precisely the same Over/Under row, line and price. This cannot be
+    // silently reused for another market or another player.
+    selectedPreviewOffer={
+     player:String(x.player),market:String(x.family),line:Number(x.line),
+     selection:String(x.selection),price:Number(x.price),
+     oddsPapiPlayerId:String(x.oddsPapiPlayerId||""),
+     fixtureId:String(data.fixtureId||""),fixture:String(data.fixture||""),
+     startTime:String(data.startTime||""),previewSelectedAt:Date.now()
+    };
     document.getElementById('espnIdentityName').value=x.player;
     const select=document.getElementById('espnIdentityTeam');
     select.value=''; // Never retain the team selected for a different player.
     document.getElementById('espnIdentityStatus').textContent=
-      'Selected '+x.player+' from OddsPapi. Choose the correct team and click Check ESPN roster match.';
+      'Selected '+x.player+' · '+x.family+' '+x.selection+' '+x.line+' @ '+Number(x.price).toFixed(2)+
+      ' from OddsPapi. Choose the correct team in this fixture and click Check ESPN roster match.';
     select.scrollIntoView({behavior:'smooth',block:'center'});
     select.focus({preventScroll:true});
    });
@@ -1032,17 +1115,58 @@ if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWo
  const teams=['Atlanta Hawks','Boston Celtics','Brooklyn Nets','Charlotte Hornets','Chicago Bulls','Cleveland Cavaliers','Dallas Mavericks','Denver Nuggets','Detroit Pistons','Golden State Warriors','Houston Rockets','Indiana Pacers','LA Clippers','Los Angeles Lakers','Memphis Grizzlies','Miami Heat','Milwaukee Bucks','Minnesota Timberwolves','New Orleans Pelicans','New York Knicks','Oklahoma City Thunder','Orlando Magic','Philadelphia 76ers','Phoenix Suns','Portland Trail Blazers','Sacramento Kings','San Antonio Spurs','Toronto Raptors','Utah Jazz','Washington Wizards'];
  teams.forEach(t=>$('propTeam').add(new Option(t,t)));
  const normal=s=>String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]/g,'');
- let rosterPlayers=[];
+ let rosterPlayers=[],linkedOffer=null;
  function updatePropPlayers(){
   const select=$('propPlayer'),previous=select.value,team=$('propTeam').value;
-  const names=[...new Set(rosterPlayers.filter(p=>p.team===team).map(p=>p.name))].sort((a,b)=>a.localeCompare(b));
+  const names=[...new Set(rosterPlayers.filter(p=>p.team===team).map(p=>p.name))];
+  // Temporary ESPN-verified option only: NEVER write it to the user's Firebase roster.
+  if(linkedOffer?.team===team&&!names.includes(linkedOffer.espnName))names.push(linkedOffer.espnName);
+  names.sort((a,b)=>a.localeCompare(b));
   select.replaceChildren(new Option('Choose player',''));
   names.forEach(name=>select.add(new Option(name,name)));
   if(names.includes(previous))select.value=previous;
   $('propMessage').textContent=names.length?'':'No players on this team yet. Add players in the Checklist tab.';
  }
+ function unlinkOffer(){
+  linkedOffer=null;
+  const notice=$('propLinkedQuote');
+  notice.hidden=true;notice.textContent='';
+ }
  window.addEventListener('tracker-roster-updated',event=>{rosterPlayers=event.detail||[];updatePropPlayers()});
- $('propTeam').addEventListener('change',updatePropPlayers);
+ $('propTeam').addEventListener('change',()=>{unlinkOffer();updatePropPlayers()});
+ for(const id of ['propPlayer','propMarket','propLine']){
+  $(id).addEventListener('change',unlinkOffer);
+ }
+ $('propLine').addEventListener('input',unlinkOffer);
+ // Only a completed manual ESPN roster verification can trigger this action.
+ window.addEventListener('tracker-verified-odds-to-analyzer',event=>{
+  const d=event.detail||{};
+  const valid=teams.includes(d.team)&&typeof d.espnName==='string'&&d.espnName.trim()&&
+   /^\d+$/.test(String(d.espnAthleteId||''))&&
+   [...$('propMarket').options].some(o=>o.value===d.market)&&
+   Number.isFinite(d.line)&&d.line>=0&&Number.isFinite(d.price)&&d.price>1&&
+   ['Over','Under'].includes(d.selection)&&Number.isFinite(Date.parse(d.startTime))&&
+   Date.parse(d.startTime)>Date.now();
+  if(!valid){$('propMessage').textContent='Verified offer was incomplete or already started. Nothing was linked.';return}
+  linkedOffer={...d,espnName:d.espnName.trim()};
+  $('propTeam').value=d.team;
+  updatePropPlayers();
+  $('propPlayer').value=linkedOffer.espnName;
+  $('propMarket').value=d.market;
+  $('propLine').value=String(d.line);
+  if($('propPlayer').value!==linkedOffer.espnName){
+   unlinkOffer();$('propMessage').textContent='Cannot select the verified ESPN player; transfer blocked.';return;
+  }
+  const notice=$('propLinkedQuote');notice.hidden=false;
+  notice.textContent='Betano PT snapshot · '+d.fixture+' · '+linkedOffer.espnName+
+    ' (ESPN ID '+d.espnAthleteId+') · '+d.market+' '+d.selection+' '+d.line+
+    ' @ '+Number(d.price).toFixed(2)+'. Only historical ESPN analysis follows. '+
+    'Not a live price; verify again on Betano before any bet.';
+  $('propResults').replaceChildren();
+  $('propMessage').textContent='Verified Betano line and ESPN player selected. Click Analyze player to compare historical results.';
+  document.querySelector('[data-tab="analyzer"]')?.click();
+  notice.scrollIntoView({behavior:'smooth',block:'center'});
+ });
  const cache=new Map(),MINUTE=60000,DAY=86400000;
  const dateKey=d=>d.toISOString().slice(0,10).replaceAll('-','');
  // NBA schedule dates are US Eastern, even when games finish after midnight in Lisbon.
@@ -1109,13 +1233,18 @@ if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWo
   const team=$('propTeam').value,player=$('propPlayer').value,market=$('propMarket').value,count=Number($('propWindow').value),line=Number($('propLine').value),hasLine=$('propLine').value.trim()!=='';
   if(!team||!player){$('propMessage').textContent='Choose a team and player first.';return}
   if(hasLine&&(!Number.isFinite(line)||line<0)){$('propMessage').textContent='Enter a valid nonnegative betting line.';return}
+  const quote=linkedOffer&&linkedOffer.team===team&&linkedOffer.espnName===player&&
+   linkedOffer.market===market&&Number(linkedOffer.line)===line&&
+   Number.isFinite(Number(linkedOffer.price))?{...linkedOffer}:null;
   running=true;$('analyzeProp').disabled=true;$('propResults').replaceChildren();
   try{
    const now=new Date(),seasonYear=now.getUTCMonth()>=6?now.getUTCFullYear():now.getUTCFullYear()-1;
    const seasonStart=new Date(Date.UTC(seasonYear,9,1)),seen=new Set(),rows=[];
    let days=0,teamGames=0,missingBoxScores=0,missingAppearances=0;
    const skippedAppearances=[],missingRecentScoreboards=[];
-   let matchedAthleteId=null;
+   // Seed the verified ESPN athlete ID before requesting any historical game.
+   // A matching player name with a different athlete ID will be rejected.
+   let matchedAthleteId=quote?.espnAthleteId||null;
    const easternToday=nbaEasternDate(now);
    // Continue past team games the player missed; only count actual appearances.
    // Keep requests within the current NBA season and a bounded search window.
@@ -1184,12 +1313,27 @@ if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWo
    const identity=document.createElement('div');identity.className='prop-verified-identity';
    identity.textContent='Verified ESPN player: '+player+' · Athlete ID '+matchedAthleteId+' · Team: '+team+' (ID checked for each game)';
    wrap.append(identity);
+   if(quote){
+    const snapshot=document.createElement('div');snapshot.className='prop-source-warning';
+    const old=Date.now()-Number(quote.previewSelectedAt)>15*60*1000||
+      Date.parse(quote.startTime)<=Date.now();
+    snapshot.textContent='Betano '+quote.selection+' '+quote.line+' '+market+
+      ' @ '+Number(quote.price).toFixed(2)+' · '+quote.fixture+
+      ' · '+(old?'Snapshot may be old or game already started. ':'Reference snapshot only. ')+
+      'Prices can change. This analysis does not establish positive expected value.';
+    wrap.append(snapshot);
+   }
    const jumpNav=document.createElement('nav');jumpNav.className='prop-jump-nav';jumpNav.setAttribute('aria-label','Analysis sections');
    const jumpTitle=document.createElement('span');jumpTitle.className='prop-jump-label';jumpTitle.textContent='JUMP TO';jumpNav.append(jumpTitle);
    const jumpItems=document.createElement('div');jumpItems.className='prop-jump-items';jumpNav.append(jumpItems);
    wrap.append(jumpNav);
    const grid=document.createElement('div');grid.className='analyzer-grid';
-   for(const [label,value] of [['Games found',rows.length+' / '+count],['Average '+market,avg.toFixed(1)],['Median '+market,median.toFixed(1)],['Range '+market,sorted[0]+'–'+sorted[sorted.length-1]],['Over '+(hasLine?line:'—'),hasLine?over+' / '+rows.length+' ('+(100*over/rows.length).toFixed(0)+'%)':'Enter a line'],['Last '+lastFive.length+' over',hasLine?lastFiveOver+' / '+lastFive.length:'Enter a line']]){const tile=document.createElement('div');tile.className='stat-tile';const t=document.createElement('span');t.className='muted';t.textContent=label;const v=document.createElement('strong');v.textContent=value;tile.append(t,v);grid.append(tile)}wrap.append(grid);
+   const summaryTiles=[['Games found',rows.length+' / '+count],['Average '+market,avg.toFixed(1)],['Median '+market,median.toFixed(1)],['Range '+market,sorted[0]+'–'+sorted[sorted.length-1]],['Over '+(hasLine?line:'—'),hasLine?over+' / '+rows.length+' ('+(100*over/rows.length).toFixed(0)+'%)':'Enter a line'],['Last '+lastFive.length+' over',hasLine?lastFiveOver+' / '+lastFive.length:'Enter a line']];
+   if(quote){
+    const hits=rows.filter(r=>quote.selection==='Over'?r.value>line:r.value<line).length;
+    summaryTiles.push(['Historical '+quote.selection+' '+line,hits+' / '+rows.length+' ('+(100*hits/rows.length).toFixed(0)+'%)']);
+   }
+   for(const [label,value] of summaryTiles){const tile=document.createElement('div');tile.className='stat-tile';const t=document.createElement('span');t.className='muted';t.textContent=label;const v=document.createElement('strong');v.textContent=value;tile.append(t,v);grid.append(tile)}wrap.append(grid);
 
    // Transparent accounting: team games with no usable player line are excluded
    // from prop hit rates, rather than incorrectly treated as zero-point games.
@@ -1661,6 +1805,12 @@ if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWo
     const report={
      schemaVersion:'1.0',generatedAt:new Date().toISOString(),dataSource:'ESPN public scoreboard and box scores',
      selection:{team,player,espnAthleteId:matchedAthleteId,market,requestedGames:count,line:hasLine?line:null},
+     betanoSnapshot:quote?{
+       fixtureId:quote.fixtureId,fixture:quote.fixture,startTime:quote.startTime,
+       market:quote.market,selection:quote.selection,line:quote.line,decimalOdds:quote.price,
+       oddsPapiPlayerId:quote.oddsPapiPlayerId,previewSelectedAt:quote.previewSelectedAt,
+       source:'OddsPapi Betano PT manual preview; quote may be stale'
+     }:null,
      recent:{games:rows.length,average:mean,median,standardDeviation,minimum:sorted[0],maximum:sorted[sorted.length-1],overs:hasLine?rows.filter(r=>r.value>line).length:null,unders:hasLine?rows.filter(r=>r.value<line).length:null,pushes:hasLine?rows.filter(r=>r.value===line).length:null,homeAway},
      season:seasonReport,upcomingMatchup:matchupReport,opponentDefense:nextOpponent?defenseReport:null,positionGroupDefense:nextOpponent?positionReport:null,
      gameLog:rows.map(r=>({date:r.date,opponent:r.opponentName,venue:r.venue,stats:r.stats})),
