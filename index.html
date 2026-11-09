@@ -579,12 +579,23 @@ if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWo
   try{const r=await fetch(url,{signal:controller.signal});if(!r.ok)throw Error('ESPN HTTP '+r.status);const data=await r.json();scanHistoryCache.set(url,data);return data}
   finally{clearTimeout(timer)}
  }
+ // ESPN may return blank, dash or DNP statistics. These must never become zero.
  const scanStat=(labels,values,key)=>{
-  const idx=labels.findIndex(x=>String(x).toUpperCase()===key);
+  if(!Array.isArray(labels)||!Array.isArray(values))return null;
+  const idx=labels.findIndex(x=>String(x).trim().toUpperCase()===key);
   if(idx<0||values[idx]===undefined||values[idx]===null)return null;
-  const raw=String(values[idx]);
-  if(key==='MIN'&&raw.includes(':')){const parts=raw.split(':').map(Number);return parts.length===2&&parts.every(Number.isFinite)?parts[0]+parts[1]/60:null}
-  const n=Number(raw);return Number.isFinite(n)?n:null;
+  const raw=String(values[idx]).trim();
+  if(!raw)return null;
+  if(key==='MIN'){
+   const match=/^(\d+):(\d{1,2})$/.exec(raw);
+   if(match){
+    const minutes=Number(match[1]),seconds=Number(match[2]);
+    return seconds<60?minutes+seconds/60:null;
+   }
+  }
+  if(!/^\d+(?:\.\d+)?$/.test(raw))return null;
+  const n=Number(raw);
+  return Number.isFinite(n)?n:null;
  };
  async function scanPlayerStats(card,button,teams){
   const area=card.querySelector('.scanner-stats');
@@ -613,10 +624,11 @@ if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWo
     for(const side of box.boxscore?.players||[]){
      const teamId=String(side.team?.id||'');if(!byTeam.has(teamId))continue;
      for(const group of side.statistics||[])for(const a of group.athletes||[]){
-      if(!a.athlete?.id||!Array.isArray(a.stats)||a.didNotPlay)continue;
+      if(!a.athlete?.id||!Array.isArray(a.stats)||a.didNotPlay===true||a.dnp===true)continue;
       const stats={};let valid=true;
       for(const k of ['PTS','REB','AST','MIN']){stats[k]=scanStat(group.labels||[],a.stats,k);if(stats[k]===null)valid=false}
-      if(!valid)continue;
+      // A zero-minute record is not a confirmed on-court appearance.
+      if(!valid||stats.MIN<=0)continue;
       const teamPlayers=byTeam.get(teamId),id=String(a.athlete.id);
       if(!teamPlayers.has(id))teamPlayers.set(id,{name:a.athlete.displayName||'Unknown',games:[]});
       teamPlayers.get(id).games.push(stats);
@@ -624,7 +636,7 @@ if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWo
     }
    }
    area.replaceChildren();
-   scanAdd(area,'p','Recent regular-season box scores · up to 5 games per team from the past 18 days. Averages are descriptive, not betting predictions. Roster membership and availability are not confirmed.','muted');
+   scanAdd(area,'p','Recent regular-season box scores · up to 5 team games from the past 18 days. Blank stats, DNPs and zero-minute records are excluded, not counted as zero. Averages are descriptive, not betting predictions.','muted');
    for(const t of teams){
     const section=scanAdd(area,'div','','stat-tile'),id=String(t?.team?.id||''),players=[...(byTeam.get(id)?.values()||[])].sort((a,b)=>b.games.length-a.games.length||a.name.localeCompare(b.name));
     scanAdd(section,'strong',t?.team?.displayName||'Team');
