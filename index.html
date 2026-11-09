@@ -293,6 +293,8 @@ main{width:100%;min-width:0}
   <div class="row"><button id="detailedPropsBtn" type="button" class="mini">Test detailed NBA player props</button><span id="detailedPropsStatus" class="muted">Up to 2 OddsPapi requests; cached for 30 minutes.</span></div><div id="detailedPropsResult" class="muted"></div>
   <div class="row"><button id="marketCatalogBtn" type="button" class="mini">Identify NBA prop markets</button><span id="marketCatalogStatus" class="muted">One manual OddsPapi request. Resolves market IDs and betting lines from the official catalogue.</span></div><div id="marketCatalogResult" class="muted"></div>
   <div class="row"><button id="verifiedPropsBtn" type="button" class="mini">Preview verified Betano props</button><span id="verifiedPropsStatus" class="muted">Manual test · up to 2 OddsPapi requests · full game including overtime · no betting predictions.</span></div><div id="verifiedPropsResult" class="muted"></div>
+  <div class="row" style="margin-top:12px"><input id="espnIdentityName" type="text" placeholder="OddsPapi player name, e.g. Doncic, Luka" aria-label="OddsPapi player name" style="min-width:260px"><select id="espnIdentityTeam" aria-label="ESPN team for identity check"><option value="">Choose NBA team</option></select><button id="espnIdentityBtn" type="button" class="mini">Check ESPN roster match</button></div>
+  <p id="espnIdentityStatus" class="muted" role="status">Name matching only. Checks one selected team's official ESPN roster manually; no OddsPapi requests or automatic player linking.</p>
  </div></details>
 </section><div id="gamesTab" hidden><section class="panel" aria-label="NBA games dashboard"><div class="dashboard-head"><div><h2 style="margin:0">🏀 Today's NBA Games</h2><p class="muted" style="margin:5px 0 0">NBA schedule date (US Eastern Time) · Times shown on your device</p></div><button id="refreshGames" class="mini" type="button">↻ Refresh</button></div><div class="game-filters" role="group" aria-label="Filter NBA games"><button type="button" class="game-filter" data-game-filter="all" aria-pressed="true">All <span data-game-count="all">0</span></button><button type="button" class="game-filter" data-game-filter="pre" aria-pressed="false">Upcoming <span data-game-count="pre">0</span></button><button type="button" class="game-filter" data-game-filter="in" aria-pressed="false">Live <span data-game-count="in">0</span></button><button type="button" class="game-filter" data-game-filter="post" aria-pressed="false">Final <span data-game-count="post">0</span></button></div><div class="game-search"><input id="gameTeamSearch" type="search" placeholder="Search NBA teams…" aria-label="Search NBA games by team" autocomplete="off"><button id="clearGameSearch" type="button" class="mini" hidden>Clear</button></div><div id="gamesMessage" class="muted" role="status">Loading games…</div><div id="gamesList"></div><p id="gamesFilterEmpty" class="muted" hidden>No games match this filter.</p><p class="muted notice">Game data is provided by a free public ESPN endpoint and may be delayed or temporarily unavailable. Tap a completed game to view individual player box-score statistics. Tap a game to see available game details and player box scores.</p></section></div><section id="analyzerTab" class="panel" hidden><header class="prop-hero"><span class="prop-eyebrow">PLAYER RESEARCH · ESPN DATA</span><h2>📊 Props Analyzer</h2><p class="muted">Explore recent performance, historical hit rates and consistency.</p></header><div class="prop-info-banner"><strong>Historical analysis only</strong><span>Completed NBA games · Hit rates are not predicted probabilities or betting recommendations.</span></div><h3 class="prop-form-title">Build your analysis</h3><div class="prop-controls"><label class="prop-field"><span>Team</span><select id="propTeam" aria-label="Player team"><option value="">Choose team</option></select></label><label class="prop-field"><span>Player</span><select id="propPlayer" aria-label="Player"><option value="">Choose player</option></select></label><label class="prop-field"><span>Market</span><select id="propMarket" aria-label="Prop market"><option value="PTS">Points</option><option value="REB">Rebounds</option><option value="AST">Assists</option><option value="3PT">3-pointers made</option><option value="PRA">Points + Rebounds + Assists (PRA)</option><option value="PR">Points + Rebounds (PR)</option><option value="PA">Points + Assists (PA)</option><option value="RA">Rebounds + Assists (RA)</option></select></label><label class="prop-field"><span>Recent games</span><select id="propWindow" aria-label="Number of games"><option value="5">Last 5</option><option value="10" selected>Last 10</option><option value="20">Last 20</option></select></label><label class="prop-field"><span>Betting line</span><input id="propLine" type="number" step="0.5" min="0" placeholder="Betting line (e.g. 24.5)" aria-label="Betting line"></label></div><div class="prop-actions"><button class="primary" id="analyzeProp" type="button">Analyze player →</button></div><p id="propMessage" class="muted prop-status" role="status">Select a team and player to begin.</p><div id="propResults" class="prop-results"></div></section><div id="checklistTab"><header class="checklist-hero"><span class="checklist-eyebrow">DAILY WORKSPACE · CLOUD SYNC</span><h2>✅ Player Checklist</h2><p class="muted">Organise your NBA player research and track today’s checks.</p></header><div class="panel checklist-summary"><div class="stats"><strong><span id="marked">0</span> checked today</strong><span id="count" class="muted"></span><span id="date" class="muted"></span></div><div id="status" class="muted">Connecting…</div></div><section class="panel" id="setup" hidden><h2>Import your saved roster</h2><p class="notice">Your cloud checklist is empty. Import your exported JSON backup to preserve your team assignments and checked players. This will replace the empty cloud list.</p><button class="primary" id="importFirst">Import backup JSON</button></section><div class="panel checklist-filters"><h3>Find players</h3><div class="controls"><input id="search" type="text" placeholder="Search players or teams" aria-label="Search players"><select id="team" aria-label="Filter by team"><option value="">All teams</option></select><select id="filter" aria-label="Filter status"><option value="all">All players</option><option value="open">Not checked</option><option value="done">Checked</option></select></div><div class="row" style="margin-top:12px"><button id="export">Export backup</button><button id="import">Import backup</button><button id="reset">Reset today's checks</button></div></div><details class="panel fold checklist-add" id="addPanel"><summary>＋ Add player ▾</summary><div class="row"><input id="newName" type="text" placeholder="Player name"><select id="newTeam" aria-label="Team"></select><button class="primary" id="add">Add</button></div></details><div class="checklist-list-head"><h3>Team rosters</h3><span class="muted">Tap a team to expand</span></div><div id="list"></div><p class="muted notice">Changes save to your private Firebase account. Keep a separate exported backup. Your original roster is never automatically modified.</p></div></div><input id="file" type="file" accept=".json,application/json"></main><script>
 /* Layout preference is local to this device. Wide by default: desktop-width page
@@ -377,6 +379,69 @@ document.getElementById('marketCatalogBtn')?.addEventListener('click',async()=>{
  finally{btn.disabled=false}
 });
 
+
+// Update 33.4 — exact, team-scoped player identity checks without OddsPapi calls.
+// Names such as "Doncic, Luka" normalize to "luka doncic"; accents and
+// punctuation are standardized, but fuzzy matching is deliberately forbidden.
+function canonicalPlayerName(name){
+ const input=String(name||"").trim();
+ const comma=input.indexOf(",");
+ const ordered=comma>=0
+  ?input.slice(comma+1).trim()+" "+input.slice(0,comma).trim()
+  :input;
+ return ordered.normalize("NFKD").replace(/[\u0300-\u036f]/g,"")
+  .toLocaleLowerCase("en-US").replace(/[^a-z0-9]+/g," ").trim().replace(/\s+/g," ");
+}
+const espnIdLookupCache=new Map();
+async function readEspnIdentity(url){
+ const saved=espnIdLookupCache.get(url);
+ if(saved&&Date.now()-saved.at<30*60*1000)return saved.data;
+ const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),12000);
+ try{
+  const response=await fetch(url,{signal:controller.signal});
+  if(!response.ok)throw Error("ESPN HTTP "+response.status);
+  const result=await response.json();
+  espnIdLookupCache.set(url,{at:Date.now(),data:result});
+  return result;
+ }finally{clearTimeout(timeout)}
+}
+const espnIdentityTeam=document.getElementById("espnIdentityTeam");
+for(const team of TEAM_NAMES)espnIdentityTeam.add(new Option(team,team));
+document.getElementById("espnIdentityBtn")?.addEventListener("click",async()=>{
+ const button=document.getElementById("espnIdentityBtn"),
+  status=document.getElementById("espnIdentityStatus"),
+  player=document.getElementById("espnIdentityName").value.trim(),
+  teamName=espnIdentityTeam.value;
+ if(!player||!teamName){status.textContent="Enter the OddsPapi player name and choose an NBA team.";return}
+ button.disabled=true;status.textContent="Checking ESPN's NBA team directory and roster…";
+ try{
+  const directory=await readEspnIdentity("https://site.api.espn.com/apis/site/v2/sports/basketball/nba/teams");
+  const teams=(directory.sports||[]).flatMap(s=>(s.leagues||[]).flatMap(l=>(l.teams||[]).map(x=>x.team||x)));
+  const matches=teams.filter(x=>canonicalPlayerName(x?.displayName)===canonicalPlayerName(teamName));
+  if(matches.length!==1||!matches[0].id)throw Error("Unable to uniquely identify this team on ESPN.");
+  const roster=await readEspnIdentity("https://site.api.espn.com/apis/site/v2/sports/basketball/nba/teams/"+encodeURIComponent(matches[0].id)+"/roster");
+  const people=(roster.athletes||[]).flatMap(x=>Array.isArray(x?.items)?x.items:[x])
+   .filter(x=>x?.id&&x?.displayName);
+  const lookup=canonicalPlayerName(player);
+  const found=new Map(people.filter(x=>canonicalPlayerName(x.displayName)===lookup)
+    .map(x=>[String(x.id),x]));
+  if(found.size===1){
+   const athlete=[...found.values()][0];
+   status.textContent="ESPN roster match: "+athlete.displayName+" · "+teamName+
+    " · ESPN athlete ID "+athlete.id+" · Name matched exactly after format normalization. Availability not confirmed.";
+  }else if(found.size===0){
+   status.textContent="No exact ESPN roster match for “"+player+"” on "+teamName+
+    ". This player will NOT be linked automatically.";
+  }else{
+   status.textContent="Ambiguous ESPN roster identity for “"+player+"” on "+teamName+
+    ". Multiple ESPN athlete IDs found; automatic linking blocked.";
+  }
+ }catch(error){
+  status.textContent="ESPN identity check unavailable: "+(error.message||String(error))+
+   ". No player was linked.";
+ }finally{button.disabled=false}
+});
+
 document.getElementById('verifiedPropsBtn')?.addEventListener('click',async()=>{
  const btn=document.getElementById('verifiedPropsBtn'),status=document.getElementById('verifiedPropsStatus'),out=document.getElementById('verifiedPropsResult');
  if(!auth.currentUser){status.textContent='Sign in first.';return}
@@ -400,20 +465,20 @@ document.getElementById('verifiedPropsBtn')?.addEventListener('click',async()=>{
   if(!(data.samples||[]).length){line('No active, verified full-game player-prop prices were returned.','warning');return}
   const wrap=document.createElement('div');wrap.className='boxscore';const table=document.createElement('table');
   const thead=document.createElement('thead'),heading=document.createElement('tr');
-  for(const label of ['Player (OddsPapi)','Market','Line','Side','Betano odds','Main line']){
+  for(const label of ['Player (OddsPapi)','Market','Line','Side','Betano odds','Provider main line']){
    const th=document.createElement('th');th.textContent=label;heading.append(th);
   }
   thead.append(heading);table.append(thead);
   const body=document.createElement('tbody');
   for(const x of data.samples){
    const tr=document.createElement('tr');
-   for(const value of [x.player,x.family,x.line,x.selection,Number(x.price).toFixed(2),x.mainLine?'Yes':'No']){
+   for(const value of [x.player,x.family,x.line,x.selection,Number(x.price).toFixed(2),x.mainLine?'Yes':'Not flagged']){
     const td=document.createElement('td');td.textContent=String(value);tr.append(td);
    }
    body.append(tr);
   }
   table.append(body);wrap.append(table);out.append(wrap);
-  line('Small sample of active offers only; actual prices can change. Player identities have not yet been checked against ESPN. No projected probabilities or picks.', 'warning');
+  line('Main-line flag: “Not flagged” means OddsPapi did not mark this selection as primary; it does not invalidate an active price. Small sample only. Player identities still require ESPN roster checks. No picks.', 'warning');
  }catch(e){status.textContent='Verified props preview failed: '+(e.code||'unknown')+' — '+(e.message||'See function logs.')}
  finally{btn.disabled=false}
 });
