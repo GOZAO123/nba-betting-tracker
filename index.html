@@ -267,6 +267,8 @@ main{width:100%;min-width:0}
 
 /* Safety Update 32.3 — verified athlete/team identity for all displayed player stats. */
 .prop-verified-identity{border:1px solid #31795f;background:#14392f;color:#b5f0d5;border-radius:11px;padding:11px 14px;font-weight:700;font-size:.85rem;overflow-wrap:anywhere}
+/* Safety Update 32.4 — current NBA schedule date and freshness warnings. */
+.prop-source-warning{background:#4a3027;border:1px solid #bb7954;border-radius:11px;color:#ffe3cd;font-weight:700;font-size:.88rem;line-height:1.5;padding:12px 14px}
 </style></head><body><main><div class="bar"><div><h1>🏀 NBA Betting Tracker</h1><p>One player, one check — synced across devices</p></div><div class="header-actions"><button id="layoutModeToggle" type="button" class="mini" aria-label="Switch between wide and mobile layouts">📱 Mobile view</button><button id="signout" hidden>Sign out</button></div></div><section class="panel" id="login"><h2>Sign in</h2><p>Use the same Google account on Android and PC to see the same checklist.</p><button class="primary" id="signin">Continue with Google</button><p class="muted" id="loginmsg"></p></section><div id="app"><nav class="tabs" aria-label="App sections"><button type="button" data-tab="scanner" aria-selected="true">🤖 AI Scanner</button><button type="button" data-tab="games" aria-selected="false">🏀 NBA Games</button><button type="button" data-tab="analyzer" aria-selected="false">📊 Props Analyzer</button><button type="button" data-tab="checklist" aria-selected="false">✅ Checklist</button></nav><section id="scannerTab" class="panel scanner-panel">
  <header class="scanner-hero"><div><span class="scanner-eyebrow">NBA ANALYTICS · BETANO PT</span><h2>🤖 AI Scanner</h2><p class="muted">Your workspace for NBA player-prop research.</p></div><span class="scanner-badge">● Manual mode</span></header>
  <div class="scanner-overview" aria-label="Scanner overview">
@@ -731,9 +733,38 @@ if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWo
  }
  window.addEventListener('tracker-roster-updated',event=>{rosterPlayers=event.detail||[];updatePropPlayers()});
  $('propTeam').addEventListener('change',updatePropPlayers);
- const cache=new Map();
- async function json(url){if(cache.has(url))return cache.get(url);const ctl=new AbortController(),timer=setTimeout(()=>ctl.abort(),14000);try{const r=await fetch(url,{signal:ctl.signal});if(!r.ok)throw Error('ESPN HTTP '+r.status);const j=await r.json();cache.set(url,j);return j}finally{clearTimeout(timer)}}
+ const cache=new Map(),MINUTE=60000,DAY=86400000;
  const dateKey=d=>d.toISOString().slice(0,10).replaceAll('-','');
+ // NBA schedule dates are US Eastern, even when games finish after midnight in Lisbon.
+ const nbaEasternDate=(time=new Date())=>{
+  const parts=new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(time);
+  const part=t=>Number(parts.find(p=>p.type===t).value);
+  return new Date(Date.UTC(part('year'),part('month')-1,part('day'),12));
+ };
+ function recentScoreboard(url,now=new Date()){
+  const match=url.match(/[?&]dates=(\d{4})(\d{2})(\d{2})(?:&|$)/);
+  if(!match)return false;
+  const requested=Date.UTC(Number(match[1]),Number(match[2])-1,Number(match[3]),12);
+  const days=(nbaEasternDate(now).getTime()-requested)/DAY;
+  return days>=0&&days<=2;
+ }
+ async function json(url,{recent=false}={}){
+  // Current and previous 2 NBA schedule dates: 5-minute TTL.
+  // Older date responses: 24-hour TTL. Recent box scores: 5-minute TTL.
+  // Requests happen only when the user manually runs an analysis.
+  const ttl=recent||recentScoreboard(url)?5*MINUTE:24*60*MINUTE;
+  const saved=cache.get(url);
+  if(saved&&Date.now()-saved.at<ttl)return saved.data;
+  const ctl=new AbortController(),timer=setTimeout(()=>ctl.abort(),14000);
+  try{
+   const response=await fetch(url,{signal:ctl.signal,cache:ttl===5*MINUTE?'no-store':'default'});
+   if(!response.ok)throw Error('ESPN HTTP '+response.status);
+   const payload=await response.json();
+   if(cache.size>=400&&!cache.has(url))cache.delete(cache.keys().next().value);
+   cache.set(url,{data:payload,at:Date.now()});
+   return payload;
+  }finally{clearTimeout(timer)}
+ }
  const base='https://site.api.espn.com/apis/site/v2/sports/basketball/nba/';
  const val=(labels,stats,keys)=>{const i=labels.findIndex(x=>keys.includes(String(x).toUpperCase()));if(i<0)return null;const raw=stats[i];if(raw===undefined||raw===null||String(raw).trim()==='')return null;if(keys.includes('MIN')&&/^\d+:\d{1,2}$/.test(String(raw))){const [m,sec]=String(raw).split(':').map(Number);return m+sec/60}if(/^\d+\s*-\s*\d+$/.test(String(raw).trim()))return Number(String(raw).split('-')[0].trim());const n=Number(raw);return Number.isFinite(n)?n:null};
  // Verify both the ESPN team and the individual athlete ID.
@@ -773,16 +804,22 @@ if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWo
    const now=new Date(),seasonYear=now.getUTCMonth()>=6?now.getUTCFullYear():now.getUTCFullYear()-1;
    const seasonStart=new Date(Date.UTC(seasonYear,9,1)),seen=new Set(),rows=[];
    let days=0,teamGames=0,missingBoxScores=0,missingAppearances=0;
-   const skippedAppearances=[];
+   const skippedAppearances=[],missingRecentScoreboards=[];
    let matchedAthleteId=null;
+   const easternToday=nbaEasternDate(now);
    // Continue past team games the player missed; only count actual appearances.
    // Keep requests within the current NBA season and a bounded search window.
    while(days<120&&rows.length<count){
     const jobs=[];
     for(let k=0;k<7&&days<120;k++,days++){
-     const d=new Date(now);d.setUTCHours(12,0,0,0);d.setUTCDate(d.getUTCDate()-days-1);
+     // Start from the current US Eastern schedule day, not yesterday.
+     const d=new Date(easternToday);d.setUTCDate(d.getUTCDate()-days);
      if(d<seasonStart)break;
-     jobs.push(json(base+'scoreboard?dates='+dateKey(d)).catch(()=>null));
+     const key=dateKey(d),isLatest=days<=1;
+     jobs.push(json(base+'scoreboard?dates='+key).catch(()=>{
+      if(isLatest)missingRecentScoreboards.push(key);
+      return null;
+     }));
     }
     if(!jobs.length)break;
     const batches=await Promise.all(jobs),events=[];
@@ -801,7 +838,8 @@ if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWo
      teamGames++;
      $('propMessage').textContent='Checking player appearances… '+rows.length+'/'+count+' games found · '+days+' days searched';
      try{
-      const box=await json(base+'summary?event='+encodeURIComponent(ev.id));
+      const recentGame=new Date(ev.date).getTime()>Date.now()-48*60*MINUTE;
+      const box=await json(base+'summary?event='+encodeURIComponent(ev.id),{recent:recentGame});
       const sides=ev.competitions?.[0]?.competitors||[];
       const own=sides.find(x=>normal(x.team?.displayName)===normal(team));
       const values=extract(box,player,own?.team?.id,matchedAthleteId);
@@ -827,6 +865,12 @@ if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWo
     const median=sorted.length%2?sorted[mid]:(sorted[mid-1]+sorted[mid])/2;
     const lastFive=rows.slice(0,5),lastFiveOver=hasLine?lastFive.filter(r=>r.value>line).length:0;
    const wrap=$('propResults');
+   if(missingRecentScoreboards.length){
+    const alert=document.createElement('div');alert.className='prop-source-warning';
+    alert.textContent='⚠️ Latest ESPN results may be incomplete. Could not retrieve US Eastern schedule date(s): '+
+      [...new Set(missingRecentScoreboards)].join(', ')+'. Do not treat this as a complete recent-game sample.';
+    wrap.append(alert);
+   }
    const identity=document.createElement('div');identity.className='prop-verified-identity';
    identity.textContent='Verified ESPN player: '+player+' · Athlete ID '+matchedAthleteId+' · Team: '+team+' (ID checked for each game)';
    wrap.append(identity);
@@ -985,12 +1029,12 @@ if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWo
    try{
     // Build season statistics from actual player appearances, never ESPN career totals.
     const allEvents=new Map(),today=new Date();
-    const endDay=new Date(today);endDay.setUTCHours(12,0,0,0);
+    const endDay=nbaEasternDate(today);
     const daysToScan=Math.min(210,Math.max(0,Math.ceil((endDay-seasonStart)/86400000)));
     for(let offset=0;offset<daysToScan;offset+=7){
      const jobs=[];
      for(let j=0;j<7&&offset+j<daysToScan;j++){
-      const d=new Date(endDay);d.setUTCDate(d.getUTCDate()-offset-j-1);
+      const d=new Date(endDay);d.setUTCDate(d.getUTCDate()-offset-j);
       if(d<seasonStart)continue;
       jobs.push(json(base+'scoreboard?dates='+dateKey(d)).catch(()=>null));
      }
@@ -1011,7 +1055,8 @@ if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWo
      const batch=seasonEvents.slice(i,i+5);
      const results=await Promise.all(batch.map(async ev=>{
       try{
-       const box=await json(base+'summary?event='+encodeURIComponent(ev.id));
+       const recentGame=new Date(ev.date).getTime()>Date.now()-48*60*MINUTE;
+       const box=await json(base+'summary?event='+encodeURIComponent(ev.id),{recent:recentGame});
        const seasonType=box.header?.competitions?.[0]?.type?.id||box.header?.season?.type;
        if(seasonType!==undefined&&Number(seasonType)!==2)return {excluded:true};
        const expectedTeam=ev.competitions?.[0]?.competitors?.find(c=>normal(c.team?.displayName)===normal(team));
@@ -1336,7 +1381,7 @@ if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWo
      jumpItems.append(button);
    }
    if(!jumpItems.children.length)jumpNav.remove();
-   $('propMessage').textContent='Verified ESPN athlete ID '+matchedAthleteId+' · Regular-season player appearances: '+rows.length+'/'+count+' · Team games checked: '+teamGames+' · Games without a matching player stat: '+missingAppearances+' · Box scores unavailable: '+missingBoxScores+'. Excluded games are not treated as Unders.';
+   $('propMessage').textContent=(missingRecentScoreboards.length?'⚠️ Some recent ESPN dates unavailable · ':'')+'Verified ESPN athlete ID '+matchedAthleteId+' · Regular-season player appearances: '+rows.length+'/'+count+' · Team games checked: '+teamGames+' · Games without a matching player stat: '+missingAppearances+' · Box scores unavailable: '+missingBoxScores+'. Excluded games are not treated as Unders.';
   }catch(e){$('propMessage').textContent='Unable to analyze: '+e.message}
   finally{running=false;$('analyzeProp').disabled=false}
  });
