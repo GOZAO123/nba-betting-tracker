@@ -222,6 +222,21 @@ main{width:100%;min-width:0}
 #scanGames .scanner-sort-btn:focus-visible{color:#9bf0d1}
 #scanGames .scanner-stats th[aria-sort="ascending"] .scanner-sort-btn:after{content:" ▲";color:#88dbbd}
 #scanGames .scanner-stats th[aria-sort="descending"] .scanner-sort-btn:after{content:" ▼";color:#88dbbd}
+
+/* Update 30.9 — local Line Explorer: compare alternative historical thresholds. */
+.prop-line-explorer{background:#14273a;border:1px solid #37536c;border-radius:12px;padding:15px;min-width:0}
+.prop-line-explorer>p:first-child{margin:0 0 12px;line-height:1.5}
+.prop-line-tools{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+.prop-line-tools label{font-weight:700;font-size:.88rem;color:#d4e8f5}
+.prop-line-tools input{width:115px;min-width:90px;flex:none}
+.prop-line-tools .muted{font-size:.78rem}
+#propResults .prop-line-table{border:0;margin-top:10px}
+#propResults .prop-line-table table{width:100%;min-width:525px;white-space:nowrap;font-size:.88rem}
+#propResults .prop-line-table th,#propResults .prop-line-table td{padding:11px 8px}
+#propResults .prop-line-table th:first-child,#propResults .prop-line-table td:first-child{text-align:left}
+#propResults .prop-line-selected{background:#173f3a;color:#ddfff1}
+#propResults .prop-line-selected th:first-child{background:#173f3a}
+#propResults .prop-line-note{font-size:.79rem;line-height:1.5;margin:12px 0 0}
 </style></head><body><main><div class="bar"><div><h1>🏀 NBA Betting Tracker</h1><p>One player, one check — synced across devices</p></div><div class="header-actions"><button id="layoutModeToggle" type="button" class="mini" aria-label="Switch between wide and mobile layouts">📱 Mobile view</button><button id="signout" hidden>Sign out</button></div></div><section class="panel" id="login"><h2>Sign in</h2><p>Use the same Google account on Android and PC to see the same checklist.</p><button class="primary" id="signin">Continue with Google</button><p class="muted" id="loginmsg"></p></section><div id="app"><nav class="tabs" aria-label="App sections"><button type="button" data-tab="scanner" aria-selected="true">🤖 AI Scanner</button><button type="button" data-tab="games" aria-selected="false">🏀 NBA Games</button><button type="button" data-tab="analyzer" aria-selected="false">📊 Props Analyzer</button><button type="button" data-tab="checklist" aria-selected="false">✅ Checklist</button></nav><section id="scannerTab" class="panel scanner-panel">
  <header class="scanner-hero"><div><span class="scanner-eyebrow">NBA ANALYTICS · BETANO PT</span><h2>🤖 AI Scanner</h2><p class="muted">Your workspace for NBA player-prop research.</p></div><span class="scanner-badge">● Manual mode</span></header>
  <div class="scanner-overview" aria-label="Scanner overview">
@@ -648,6 +663,67 @@ if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWo
    const grid=document.createElement('div');grid.className='analyzer-grid';
    for(const [label,value] of [['Games found',rows.length+' / '+count],['Average '+market,avg.toFixed(1)],['Median '+market,median.toFixed(1)],['Range '+market,sorted[0]+'–'+sorted[sorted.length-1]],['Over '+(hasLine?line:'—'),hasLine?over+' / '+rows.length+' ('+(100*over/rows.length).toFixed(0)+'%)':'Enter a line'],['Last '+lastFive.length+' over',hasLine?lastFiveOver+' / '+lastFive.length:'Enter a line']]){const tile=document.createElement('div');tile.className='stat-tile';const t=document.createElement('span');t.className='muted';t.textContent=label;const v=document.createElement('strong');v.textContent=value;tile.append(t,v);grid.append(tile)}wrap.append(grid);
 
+   // Compare nearby historical betting lines using already-loaded game results only.
+   // This is a local what-if tool: it does not edit the original analysis or fetch odds.
+   const lineExplorerTitle=document.createElement('h3');
+   lineExplorerTitle.textContent='Line Explorer';
+   wrap.append(lineExplorerTitle);
+   const explorer=document.createElement('div');explorer.className='prop-line-explorer';wrap.append(explorer);
+   const explorerHelp=document.createElement('p');explorerHelp.className='muted';
+   explorerHelp.textContent='Compare how often this player finished above or below nearby lines. Historical sample only — not live Betano lines, predictions or probabilities for the next game.';
+   explorer.append(explorerHelp);
+   const explorerTools=document.createElement('div');explorerTools.className='prop-line-tools';explorer.append(explorerTools);
+   const explorerLabel=document.createElement('label');explorerLabel.textContent='Compare around line';explorerLabel.setAttribute('for','explorerLine');explorerTools.append(explorerLabel);
+   const explorerInput=document.createElement('input');
+   explorerInput.id='explorerLine';explorerInput.type='number';explorerInput.min='0';explorerInput.step='0.5';explorerInput.inputMode='decimal';
+   explorerInput.value=hasLine?String(line):String(Math.floor(median)+0.5);
+   explorerInput.setAttribute('aria-label','Line comparison center');
+   explorerTools.append(explorerInput);
+   const explorerSource=document.createElement('span');explorerSource.className='muted';
+   explorerSource.textContent=hasLine?'Based on your entered line':'Illustrative starting line (not from a bookmaker)';
+   explorerTools.append(explorerSource);
+   const explorerTable=document.createElement('div');explorerTable.className='boxscore prop-line-table';explorer.append(explorerTable);
+   const explorerNote=document.createElement('p');explorerNote.className='muted prop-line-note';
+   explorerNote.textContent='Over = result above the line; Under = below; Push = equal. Percentages use all recorded appearances, including pushes. Changing this value does not update the main report above.';
+   explorer.append(explorerNote);
+   const renderLineExplorer=()=>{
+     explorerTable.replaceChildren();
+     const center=Number(explorerInput.value);
+     if(!explorerInput.value.trim()||!Number.isFinite(center)||center<0){
+       const warning=document.createElement('p');warning.className='warning';warning.textContent='Enter a valid nonnegative line.';explorerTable.append(warning);return;
+     }
+     const candidates=[...new Set([-2,-1,0,1,2].map(offset=>Math.round((center+offset)*2)/2).filter(n=>n>=0))].sort((a,b)=>a-b);
+     const table=document.createElement('table');
+     const thead=document.createElement('thead');const head=document.createElement('tr');
+     for(const name of ['Line','Over','Under','Push','Last 5 over']){
+       const th=document.createElement('th');th.scope='col';th.textContent=name;head.append(th);
+     }
+     thead.append(head);table.append(thead);
+     const tbody=document.createElement('tbody');
+     for(const candidate of candidates){
+       const above=rows.filter(r=>r.value>candidate).length;
+       const below=rows.filter(r=>r.value<candidate).length;
+       const pushes=rows.length-above-below;
+       const lastAbove=lastFive.filter(r=>r.value>candidate).length;
+       const record=[
+         candidate.toFixed(1),
+         above+'/'+rows.length+' ('+Math.round(100*above/rows.length)+'%)',
+         below+'/'+rows.length+' ('+Math.round(100*below/rows.length)+'%)',
+         String(pushes),
+         lastAbove+'/'+lastFive.length+' ('+Math.round(100*lastAbove/lastFive.length)+'%)'
+       ];
+       const tr=document.createElement('tr');if(Math.abs(candidate-center)<0.001)tr.className='prop-line-selected';
+       for(const [index,value] of record.entries()){
+         const cell=document.createElement(index===0?'th':'td');
+         if(index===0)cell.scope='row';
+         cell.textContent=value;tr.append(cell);
+       }
+       tbody.append(tr);
+     }
+     table.append(tbody);explorerTable.append(table);
+   };
+   explorerInput.addEventListener('input',renderLineExplorer);
+   renderLineExplorer();
 
    let seasonReport=null,defenseReport=null,positionReport=null,matchupReport=null;
    const seasonTitle=document.createElement('h3');seasonTitle.textContent='Season Statistics';wrap.append(seasonTitle);
@@ -959,7 +1035,7 @@ if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWo
    const h=document.createElement('h3');h.textContent='Recent game results';wrap.append(h);
    for(const r of rows){const p=document.createElement('div');p.className='player';p.textContent=new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Lisbon',day:'2-digit',month:'short',year:'numeric'}).format(new Date(r.date))+' · '+(r.venue==='Home'?'vs ':r.venue==='Away'?'@ ':'vs ') +r.opponent+' · '+market+': '+r.value+(hasLine?(r.value>line?' · OVER':r.value<line?' · UNDER':' · PUSH'):'');if(hasLine)p.classList.add(r.value>line?'good':r.value<line?'muted':'warning');wrap.append(p)}
    // Build quick navigation from sections already rendered; no new data requests.
-   const sections=[['Overview',grid],['Consistency','Consistency'],['Minutes','Minutes & Playing Time'],['Home/Away','Home vs Away'],['Opponent','Against Opponent'],['Game log',logTitle],['Recent results',h]];
+   const sections=[['Overview',grid],['Line explorer',lineExplorerTitle],['Consistency','Consistency'],['Minutes','Minutes & Playing Time'],['Home/Away','Home vs Away'],['Opponent','Against Opponent'],['Game log',logTitle],['Recent results',h]];
    const headings=[...wrap.querySelectorAll('h3')];
    for(const [label,section] of sections){
      const target=typeof section==='string'?headings.find(el=>el.textContent.trim()===section):section;
