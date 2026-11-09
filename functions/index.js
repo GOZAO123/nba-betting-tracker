@@ -351,3 +351,91 @@ exports.oddsPapiDetailedPropsProbe = onCall(
     finally { detailedProbeCache.pending = null; }
   }
 );
+
+/**
+ * Manual-only OddsPapi market catalogue diagnostic (1 external request maximum).
+ * The live odds endpoint exposes market IDs, while /v4/markets gives their official
+ * market names, handicap lines, playerProp flags, and Over/Under outcome names.
+ * No odds, secrets, or raw global catalogue are returned to the browser.
+ */
+const marketCatalogCache = { at: 0, data: null, pending: null };
+exports.oddsPapiMarketCatalogProbe = onCall(
+  {
+    region: "europe-west1", secrets: [oddsPapiKey],
+    maxInstances: 1, concurrency: 1, timeoutSeconds: 60,
+    memory: "512MiB", enforceAppCheck: false
+  },
+  async (request) => {
+    if (!request.auth || request.auth.uid !== "I6ZhMcObXxNVdfv2AqapDxwIaet1" || !request.auth.token.email_verified) {
+      throw new HttpsError("permission-denied", "Only the authorised account can identify NBA markets.");
+    }
+    // Market definitions are static enough to reuse during the same server session.
+    if (marketCatalogCache.data && Date.now() - marketCatalogCache.at < 12 * 60 * 60 * 1000) {
+      return { ...marketCatalogCache.data, cached: true };
+    }
+    if (marketCatalogCache.pending) return marketCatalogCache.pending;
+    const run = async () => {
+      const key = oddsPapiKey.value();
+      if (!key) throw new HttpsError("failed-precondition", "OddsPapi key is unavailable.");
+      await reserveDiagnosticRequests(1);
+      const url = new URL("https://api.oddspapi.io/v4/markets");
+      url.searchParams.set("language", "en");
+      url.searchParams.set("apiKey", key);
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 35000);
+      try {
+        const response = await fetch(url, { signal: controller.signal, headers: { Accept: "application/json" } });
+        if (!response.ok) throw new HttpsError("unavailable", "OddsPapi markets endpoint returned HTTP " + response.status);
+        const payload = await response.json();
+        const markets = Array.isArray(payload) ? payload : Array.isArray(payload?.data) ? payload.data : [];
+        if (!markets.length) throw new HttpsError("unavailable", "OddsPapi market catalogue did not contain the expected market array.");
+        const knownIds = ["111680", "111682", "111684"];
+        const byId = new Map(markets.map(m => [String(m.marketId), m]));
+        const compact = m => m ? {
+          marketId: String(m.marketId),
+          marketName: String(m.marketName || "").slice(0, 130),
+          handicap: Number.isFinite(Number(m.handicap)) ? Number(m.handicap) : null,
+          playerProp: m.playerProp === true,
+          sportId: m.sportId,
+          period: String(m.period || "").slice(0, 40),
+          marketType: String(m.marketType || "").slice(0, 60),
+          outcomes: Array.isArray(m.outcomes)
+            ? m.outcomes.slice(0, 6).map(o => ({
+              id: String(o.outcomeId || "").slice(0, 30),
+              name: String(o.outcomeName || "").slice(0, 50)
+            })) : []
+        } : null;
+        const officialSamples = knownIds.map(id => ({ id, market: compact(byId.get(id)) }));
+        const playerMarkets = markets.filter(m => Number(m.sportId) === 11 && m.playerProp === true);
+        const categories = new Map();
+        for (const market of playerMarkets) {
+          const name = String(market.marketName || "").trim();
+          if (!name || !/(point|rebound|assist|3.point|three.point|three.pointer)/i.test(name)) continue;
+          const item = categories.get(name) || { marketName: name.slice(0, 100), marketCount: 0, example: null };
+          item.marketCount++;
+          if (!item.example) item.example = compact(market);
+          categories.set(name, item);
+        }
+        const result = {
+          diagnosticVersion: "33.2",
+          totalDefinitions: markets.length, nbaPlayerPropDefinitions: playerMarkets.length,
+          sampleIds: officialSamples,
+          categorySamples: [...categories.values()].sort((a, b) => b.marketCount - a.marketCount).slice(0, 18),
+          requestsUsed: 1, cached: false,
+          note: "Verified OddsPapi market catalogue metadata only. Betting availability, player identity and live Betano PT odds require separate validation."
+        };
+        marketCatalogCache.data = result;
+        marketCatalogCache.at = Date.now();
+        return result;
+      } catch (error) {
+        if (error instanceof HttpsError) throw error;
+        throw new HttpsError("unavailable", "Could not retrieve market definitions. Check Firebase logs.");
+      } finally {
+        clearTimeout(timer);
+      }
+    };
+    marketCatalogCache.pending = run();
+    try { return await marketCatalogCache.pending; }
+    finally { marketCatalogCache.pending = null; }
+  }
+);
