@@ -237,6 +237,13 @@ main{width:100%;min-width:0}
 #propResults .prop-line-selected{background:#173f3a;color:#ddfff1}
 #propResults .prop-line-selected th:first-child{background:#173f3a}
 #propResults .prop-line-note{font-size:.79rem;line-height:1.5;margin:12px 0 0}
+
+/* UI Update 31.0 — toggle completed-game rolling averages, no extra requests. */
+.prop-trend-controls{display:flex;gap:10px;flex-wrap:wrap;align-items:center;min-width:0}
+.prop-trend-toggle{min-height:40px;padding:8px 13px;border:1px solid #4e657d;background:#21364c;font-size:.86rem;font-weight:700}
+.prop-trend-toggle[aria-pressed="true"]{border-color:var(--trend-color);background:#20463f;color:#fff}
+.prop-trend-toggle::before{content:"";display:inline-block;width:15px;height:3px;vertical-align:middle;border-radius:6px;margin-right:8px;background:var(--trend-color)}
+.prop-trend-summary{font-size:.84rem;line-height:1.5;margin:0}
 </style></head><body><main><div class="bar"><div><h1>🏀 NBA Betting Tracker</h1><p>One player, one check — synced across devices</p></div><div class="header-actions"><button id="layoutModeToggle" type="button" class="mini" aria-label="Switch between wide and mobile layouts">📱 Mobile view</button><button id="signout" hidden>Sign out</button></div></div><section class="panel" id="login"><h2>Sign in</h2><p>Use the same Google account on Android and PC to see the same checklist.</p><button class="primary" id="signin">Continue with Google</button><p class="muted" id="loginmsg"></p></section><div id="app"><nav class="tabs" aria-label="App sections"><button type="button" data-tab="scanner" aria-selected="true">🤖 AI Scanner</button><button type="button" data-tab="games" aria-selected="false">🏀 NBA Games</button><button type="button" data-tab="analyzer" aria-selected="false">📊 Props Analyzer</button><button type="button" data-tab="checklist" aria-selected="false">✅ Checklist</button></nav><section id="scannerTab" class="panel scanner-panel">
  <header class="scanner-hero"><div><span class="scanner-eyebrow">NBA ANALYTICS · BETANO PT</span><h2>🤖 AI Scanner</h2><p class="muted">Your workspace for NBA player-prop research.</p></div><span class="scanner-badge">● Manual mode</span></header>
  <div class="scanner-overview" aria-label="Scanner overview">
@@ -840,7 +847,10 @@ if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWo
    
 
    const chartTitle=document.createElement('h3');chartTitle.textContent=market+' · Recent performance';wrap.append(chartTitle);
-   const chartNote=document.createElement('p');chartNote.className='muted';chartNote.textContent='Oldest to newest · Tap or focus a point for game details.';wrap.append(chartNote);
+   const chartNote=document.createElement('p');chartNote.className='muted';
+   chartNote.textContent='Blue = individual game values. Toggle moving-average lines to see short-term trends. Averages use completed appearances only, without projecting future results.';
+   wrap.append(chartNote);
+   const trendControls=document.createElement('div');trendControls.className='prop-trend-controls';trendControls.setAttribute('role','group');trendControls.setAttribute('aria-label','Chart moving averages');wrap.append(trendControls);
    const chartHost=document.createElement('div');chartHost.className='boxscore';chartHost.style.overflowX='auto';wrap.append(chartHost);
    const svgNS='http://www.w3.org/2000/svg',width=Math.max(520,rows.length*48+90),height=270;
    const svg=document.createElementNS(svgNS,'svg');svg.setAttribute('viewBox','0 0 '+width+' '+height);svg.setAttribute('role','img');svg.setAttribute('aria-label',market+' game performance chart'+(hasLine?' with betting line '+line:''));
@@ -854,6 +864,35 @@ if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWo
    for(let i=0;i<=4;i++){const v=ceiling*i/4,y=yAt(v);draw('line',{x1:left,y1:y,x2:right,y2:y,stroke:'#344b67','stroke-width':1});draw('text',{x:left-8,y:y+4,fill:'#b2c5dc','font-size':11,'text-anchor':'end'},Number(v.toFixed(1)))}
    if(hasLine){const y=yAt(line);draw('line',{x1:left,y1:y,x2:right,y2:y,stroke:'#ffca81','stroke-width':2,'stroke-dasharray':'7 5'});draw('text',{x:right,y:y-7,fill:'#ffca81','font-size':12,'text-anchor':'end'},'Line '+line)}
    draw('polyline',{points:chronological.map((r,i)=>xAt(i)+','+yAt(r.value)).join(' '),fill:'none',stroke:'#70d9ff','stroke-width':2.5,'stroke-linejoin':'round','stroke-linecap':'round'});
+   // Moving averages are calculated from existing completed games, oldest to newest.
+   // Only plot a value after a full period of 3 or 5 games is available.
+   const trendDetails=[];
+   for(const [period,color,label,enabled] of [[3,'#6de4b2','3-game avg',true],[5,'#ffca81','5-game avg',false]]){
+     if(chronological.length<period)continue;
+     const points=[];
+     for(let i=period-1;i<chronological.length;i++){
+       const sample=chronological.slice(i-period+1,i+1);
+       const movingMean=sample.reduce((sum,r)=>sum+r.value,0)/period;
+       points.push(xAt(i)+','+yAt(movingMean));
+     }
+     const trendLine=draw('polyline',{points:points.join(' '),fill:'none',stroke:color,'stroke-width':3,'stroke-dasharray':period===5?'7 4':'none','stroke-linecap':'round','stroke-linejoin':'round','pointer-events':'none'});
+     trendLine.style.display=enabled?'':'none';
+     const latest=chronological.slice(-period).reduce((sum,r)=>sum+r.value,0)/period;
+     trendDetails.push(label+': '+latest.toFixed(1));
+     const toggle=document.createElement('button');toggle.type='button';toggle.className='prop-trend-toggle';
+     toggle.style.setProperty('--trend-color',color);
+     toggle.textContent=label;toggle.setAttribute('aria-pressed',String(enabled));
+     toggle.addEventListener('click',()=>{
+       const active=toggle.getAttribute('aria-pressed')!=='true';
+       toggle.setAttribute('aria-pressed',String(active));
+       trendLine.style.display=active?'':'none';
+     });
+     trendControls.append(toggle);
+   }
+   if(!trendControls.children.length){
+     const notice=document.createElement('span');notice.className='muted';
+     notice.textContent='At least 3 completed games are required for moving averages.';trendControls.append(notice);
+   }
    const detail=document.createElement('p');detail.className='muted';detail.setAttribute('aria-live','polite');detail.textContent='Select a point to inspect that game.';
    for(let i=0;i<chronological.length;i++){const r=chronological[i],x=xAt(i),y=yAt(r.value),color=hasLine?(r.value>line?'#6de4b2':r.value<line?'#ff9d9d':'#ffca81'):'#70d9ff';
     const circle=draw('circle',{cx:x,cy:y,r:6,fill:color,stroke:'#0b1220','stroke-width':2,tabindex:0,role:'button','aria-label':'Game '+(i+1)+': '+r.value+' '+market+' against '+r.opponent});
@@ -863,6 +902,11 @@ if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWo
     draw('text',{x,y:height-18,fill:'#b2c5dc','font-size':10,'text-anchor':'middle'},String(i+1));
    }
    chartHost.append(svg,detail);
+   if(trendDetails.length){
+     const latestTrend=document.createElement('p');latestTrend.className='muted prop-trend-summary';
+     latestTrend.textContent='Latest rolling values · '+trendDetails.join('  |  ')+'. These are descriptive averages, not next-game estimates.';
+     wrap.append(latestTrend);
+   }
 
    const matchupTitle=document.createElement('h3');matchupTitle.textContent='Upcoming Matchup';wrap.append(matchupTitle);
    const matchupPanel=document.createElement('div');matchupPanel.className='stat-tile';
@@ -1035,7 +1079,7 @@ if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWo
    const h=document.createElement('h3');h.textContent='Recent game results';wrap.append(h);
    for(const r of rows){const p=document.createElement('div');p.className='player';p.textContent=new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Lisbon',day:'2-digit',month:'short',year:'numeric'}).format(new Date(r.date))+' · '+(r.venue==='Home'?'vs ':r.venue==='Away'?'@ ':'vs ') +r.opponent+' · '+market+': '+r.value+(hasLine?(r.value>line?' · OVER':r.value<line?' · UNDER':' · PUSH'):'');if(hasLine)p.classList.add(r.value>line?'good':r.value<line?'muted':'warning');wrap.append(p)}
    // Build quick navigation from sections already rendered; no new data requests.
-   const sections=[['Overview',grid],['Line explorer',lineExplorerTitle],['Consistency','Consistency'],['Minutes','Minutes & Playing Time'],['Home/Away','Home vs Away'],['Opponent','Against Opponent'],['Game log',logTitle],['Recent results',h]];
+   const sections=[['Overview',grid],['Line explorer',lineExplorerTitle],['Consistency','Consistency'],['Minutes','Minutes & Playing Time'],['Home/Away','Home vs Away'],['Opponent','Against Opponent'],['Trend chart',chartTitle],['Game log',logTitle],['Recent results',h]];
    const headings=[...wrap.querySelectorAll('h3')];
    for(const [label,section] of sections){
      const target=typeof section==='string'?headings.find(el=>el.textContent.trim()===section):section;
