@@ -257,6 +257,13 @@ main{width:100%;min-width:0}
 .prop-form-under{background:#442c36;border-color:#765066;color:#ffc2c9}
 .prop-form-push{background:#423b28;border-color:#75663d;color:#ffe1a2}
 .prop-form-no-line{border:1px dashed #47627c;border-radius:10px;padding:11px 13px;margin:0}
+
+/* Update 31.2 — clarify DNP/unavailable games and exclude preseason from prop samples. */
+.prop-missing-games{padding:13px 15px;border:1px solid #826543;background:#352b24;border-radius:12px;min-width:0}
+.prop-missing-games>strong{display:block;color:#ffe1a2;font-size:.94rem}
+.prop-missing-games p{font-size:.86rem;line-height:1.5;margin:9px 0}
+.prop-missing-list{display:flex;flex-wrap:wrap;gap:7px}
+.prop-missing-entry{display:inline-block;padding:6px 9px;font-size:.78rem;color:#ffe8c5;border-radius:8px;background:#503a2b;border:1px solid #85644c}
 </style></head><body><main><div class="bar"><div><h1>🏀 NBA Betting Tracker</h1><p>One player, one check — synced across devices</p></div><div class="header-actions"><button id="layoutModeToggle" type="button" class="mini" aria-label="Switch between wide and mobile layouts">📱 Mobile view</button><button id="signout" hidden>Sign out</button></div></div><section class="panel" id="login"><h2>Sign in</h2><p>Use the same Google account on Android and PC to see the same checklist.</p><button class="primary" id="signin">Continue with Google</button><p class="muted" id="loginmsg"></p></section><div id="app"><nav class="tabs" aria-label="App sections"><button type="button" data-tab="scanner" aria-selected="true">🤖 AI Scanner</button><button type="button" data-tab="games" aria-selected="false">🏀 NBA Games</button><button type="button" data-tab="analyzer" aria-selected="false">📊 Props Analyzer</button><button type="button" data-tab="checklist" aria-selected="false">✅ Checklist</button></nav><section id="scannerTab" class="panel scanner-panel">
  <header class="scanner-hero"><div><span class="scanner-eyebrow">NBA ANALYTICS · BETANO PT</span><h2>🤖 AI Scanner</h2><p class="muted">Your workspace for NBA player-prop research.</p></div><span class="scanner-badge">● Manual mode</span></header>
  <div class="scanner-overview" aria-label="Scanner overview">
@@ -639,6 +646,7 @@ if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWo
    const now=new Date(),seasonYear=now.getUTCMonth()>=6?now.getUTCFullYear():now.getUTCFullYear()-1;
    const seasonStart=new Date(Date.UTC(seasonYear,9,1)),seen=new Set(),rows=[];
    let days=0,teamGames=0,missingBoxScores=0,missingAppearances=0;
+   const skippedAppearances=[];
    // Continue past team games the player missed; only count actual appearances.
    // Keep requests within the current NBA season and a bounded search window.
    while(days<120&&rows.length<count){
@@ -652,6 +660,9 @@ if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWo
     const batches=await Promise.all(jobs),events=[];
     for(const b of batches)for(const ev of b?.events||[]){
      if(ev.status?.type?.state!=='post'||!ev.id||seen.has(ev.id))continue;
+     // Only regular-season appearances count toward the last N games.
+     // ESPN uses season.type 1 for preseason and 2 for regular season.
+     if(ev.season?.type!==undefined&&Number(ev.season.type)!==2)continue;
      const sides=ev.competitions?.[0]?.competitors||[];
      if(!sides.some(x=>normal(x.team?.displayName)===normal(team)))continue;
      seen.add(ev.id);events.push(ev);
@@ -663,7 +674,15 @@ if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWo
      $('propMessage').textContent='Checking player appearances… '+rows.length+'/'+count+' games found · '+days+' days searched';
      try{
       const box=await json(base+'summary?event='+encodeURIComponent(ev.id)),values=extract(box,player);
-      if(!values||values[market]===null){missingAppearances++;continue}
+      if(!values||values[market]===null){
+       missingAppearances++;
+       if(skippedAppearances.length<8){
+        const sides=ev.competitions?.[0]?.competitors||[];
+        const other=sides.find(x=>normal(x.team?.displayName)!==normal(team));
+        skippedAppearances.push({date:ev.date,opponent:other?.team?.abbreviation||other?.team?.displayName||'Unknown'});
+       }
+       continue;
+      }
       const sides=ev.competitions?.[0]?.competitors||[],own=sides.find(x=>normal(x.team?.displayName)===normal(team)),opponent=sides.find(x=>normal(x.team?.displayName)!==normal(team));
       rows.push({date:ev.date,value:values[market],stats:values,athleteId:values.athleteId,venue:own?.homeAway==='home'?'Home':own?.homeAway==='away'?'Away':'Unknown',opponent:opponent?.team?.abbreviation||'—',opponentName:opponent?.team?.displayName||'Unknown'});
      }catch(e){missingBoxScores++}
@@ -682,6 +701,31 @@ if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWo
    wrap.append(jumpNav);
    const grid=document.createElement('div');grid.className='analyzer-grid';
    for(const [label,value] of [['Games found',rows.length+' / '+count],['Average '+market,avg.toFixed(1)],['Median '+market,median.toFixed(1)],['Range '+market,sorted[0]+'–'+sorted[sorted.length-1]],['Over '+(hasLine?line:'—'),hasLine?over+' / '+rows.length+' ('+(100*over/rows.length).toFixed(0)+'%)':'Enter a line'],['Last '+lastFive.length+' over',hasLine?lastFiveOver+' / '+lastFive.length:'Enter a line']]){const tile=document.createElement('div');tile.className='stat-tile';const t=document.createElement('span');t.className='muted';t.textContent=label;const v=document.createElement('strong');v.textContent=value;tile.append(t,v);grid.append(tile)}wrap.append(grid);
+
+   // Transparent accounting: team games with no usable player line are excluded
+   // from prop hit rates, rather than incorrectly treated as zero-point games.
+   if(missingAppearances||missingBoxScores){
+     const note=document.createElement('div');note.className='prop-missing-games';
+     const heading=document.createElement('strong');
+     heading.textContent='Team games excluded from this player sample';
+     note.append(heading);
+     const message=document.createElement('p');message.className='muted';
+     message.textContent=missingAppearances+' game(s) without recorded '+market+' stats for '+player+
+       (missingBoxScores?' · '+missingBoxScores+' game(s) with unavailable box scores':'')+
+       '. This can happen when a player was inactive, did not play or source statistics were unavailable. These games do not count as Unders.';
+     note.append(message);
+     if(skippedAppearances.length){
+       const entries=document.createElement('div');entries.className='prop-missing-list';
+       for(const missed of skippedAppearances){
+         const entry=document.createElement('span');entry.className='prop-missing-entry';
+         const when=new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Lisbon',day:'2-digit',month:'short'}).format(new Date(missed.date));
+         entry.textContent=when+' · vs '+missed.opponent+' · No player stats';
+         entries.append(entry);
+       }
+       note.append(entries);
+     }
+     wrap.append(note);
+   }
 
    // Update 31.1: recent form uses the same already-loaded player appearances.
    // Rows are newest-first. No extra ESPN, Firebase or odds requests.
@@ -1137,7 +1181,7 @@ if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWo
    const logTitle=document.createElement('h3');logTitle.textContent='Game log';wrap.append(logTitle);
    const log=document.createElement('div');log.className='boxscore';
    const table=document.createElement('table'),thead=document.createElement('thead'),headRow=document.createElement('tr');
-   for(const heading of ['Date','Opponent','H/A','MIN','PTS','REB','AST','3PM','PRA','PR','PA','RA',...(hasLine?['Result']:[])]){const th=document.createElement('th');th.textContent=heading;headRow.append(th)}
+   for(const heading of ['Date (Lisbon)','Opponent','H/A','MIN','PTS','REB','AST','3PM','PRA','PR','PA','RA',...(hasLine?['Result']:[])]){const th=document.createElement('th');th.textContent=heading;headRow.append(th)}
    thead.append(headRow);table.append(thead);const tbody=document.createElement('tbody');
    for(const r of rows){const tr=document.createElement('tr');
     const values=[new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Lisbon',day:'2-digit',month:'short'}).format(new Date(r.date)),r.opponent,r.venue==='Home'?'H':r.venue==='Away'?'A':'—',...['MIN','PTS','REB','AST','3PT','PRA','PR','PA','RA'].map(k=>r.stats[k]??'—'),...(hasLine?[r.value>line?'OVER':r.value<line?'UNDER':'PUSH']:[])];
@@ -1156,7 +1200,7 @@ if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWo
      jumpItems.append(button);
    }
    if(!jumpItems.children.length)jumpNav.remove();
-   $('propMessage').textContent='Player appearances: '+rows.length+'/'+count+' · Team games checked: '+teamGames+' · Games without a matching player stat: '+missingAppearances+' · Box scores unavailable: '+missingBoxScores+'. Search limited to the current season.';
+   $('propMessage').textContent='Regular-season player appearances: '+rows.length+'/'+count+' · Team games checked: '+teamGames+' · Games without a matching player stat: '+missingAppearances+' · Box scores unavailable: '+missingBoxScores+'. Excluded games are not treated as Unders.';
   }catch(e){$('propMessage').textContent='Unable to analyze: '+e.message}
   finally{running=false;$('analyzeProp').disabled=false}
  });
