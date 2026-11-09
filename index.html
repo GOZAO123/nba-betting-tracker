@@ -269,6 +269,7 @@ main{width:100%;min-width:0}
 .prop-verified-identity{border:1px solid #31795f;background:#14392f;color:#b5f0d5;border-radius:11px;padding:11px 14px;font-weight:700;font-size:.85rem;overflow-wrap:anywhere}
 /* Safety Update 32.4 — current NBA schedule date and freshness warnings. */
 .prop-source-warning{background:#4a3027;border:1px solid #bb7954;border-radius:11px;color:#ffe3cd;font-weight:700;font-size:.88rem;line-height:1.5;padding:12px 14px}
+/* Update 32.7: midnight safety is logic-only; no layout changes. */
 </style></head><body><main><div class="bar"><div><h1>🏀 NBA Betting Tracker</h1><p>One player, one check — synced across devices</p></div><div class="header-actions"><button id="layoutModeToggle" type="button" class="mini" aria-label="Switch between wide and mobile layouts">📱 Mobile view</button><button id="signout" hidden>Sign out</button></div></div><section class="panel" id="login"><h2>Sign in</h2><p>Use the same Google account on Android and PC to see the same checklist.</p><button class="primary" id="signin">Continue with Google</button><p class="muted" id="loginmsg"></p></section><div id="app"><nav class="tabs" aria-label="App sections"><button type="button" data-tab="scanner" aria-selected="true">🤖 AI Scanner</button><button type="button" data-tab="games" aria-selected="false">🏀 NBA Games</button><button type="button" data-tab="analyzer" aria-selected="false">📊 Props Analyzer</button><button type="button" data-tab="checklist" aria-selected="false">✅ Checklist</button></nav><section id="scannerTab" class="panel scanner-panel">
  <header class="scanner-hero"><div><span class="scanner-eyebrow">NBA ANALYTICS · BETANO PT</span><h2>🤖 AI Scanner</h2><p class="muted">Your workspace for NBA player-prop research.</p></div><span class="scanner-badge">● Manual mode</span></header>
  <div class="scanner-overview" aria-label="Scanner overview">
@@ -429,15 +430,42 @@ function finishChecklistSync(){
  if(pendingWrites||!ready)return;
  const best=latestCloud&&(!lastCommitted||latestCloud.revision>=lastCommitted.revision)?latestCloud:lastCommitted;
  if(best){data=structuredClone(best);render()}
- if(data.date!==TODAY()){dayReset();return}
+ if(data.date<TODAY()){dayReset();return}
  if(syncError)msg('Sync failed: '+syncError,true);
  else msg('✓ Synced');
 }
 function dayReset(){
- if(!ready||data.date===TODAY())return;
- const day=TODAY();data.date=day;data.checked={};
+ // Older dates are reset once. Never try to roll back a future cloud date
+ // (for example, when a device clock or time zone is ahead).
+ const day=TODAY();
+ if(!user||!ready||data.date>=day)return;
+ data.date=day;data.checked={};
+ render();
  persist({type:'dayReset',day});
 }
+// One local-midnight timer, not periodic polling. Android may suspend timers:
+// visibility/focus rechecks the calendar day after the app is reopened.
+let midnightTimer=null;
+function nextLocalMidnightDelay(now=new Date()){
+ const midnight=new Date(now.getFullYear(),now.getMonth(),now.getDate()+1,0,0,2);
+ return Math.max(1000,midnight.getTime()-now.getTime());
+}
+function scheduleDailyCheck(){
+ if(midnightTimer!==null){clearTimeout(midnightTimer);midnightTimer=null}
+ if(!user)return;
+ midnightTimer=setTimeout(()=>{
+  midnightTimer=null;
+  checkCalendarDay();
+ },nextLocalMidnightDelay());
+}
+function checkCalendarDay(){
+ if(user&&ready&&data.date<TODAY())dayReset();
+ scheduleDailyCheck();
+}
+document.addEventListener('visibilitychange',()=>{
+ if(!document.hidden)checkCalendarDay();
+});
+window.addEventListener('focus',checkCalendarDay);
 function persist(change){
  if(!user||!ready)return;
  // Serialize changes, and rebase each one on the latest server document.
@@ -497,6 +525,7 @@ onAuthStateChanged(auth,u=>{
  authSession++;writeQueue=Promise.resolve();pendingWrites=0;latestCloud=null;lastCommitted=null;syncError=null;
  if(unsubscribe){unsubscribe();unsubscribe=null}
  user=u;ready=false;$('login').hidden=!!u;$('app').style.display=u?'block':'none';$('signout').hidden=!u;
+ scheduleDailyCheck();
  if(!u)return;
  msg('Loading cloud checklist…');
  const listenerSession=authSession,listenerUid=u.uid;
@@ -507,7 +536,7 @@ onAuthStateChanged(auth,u=>{
   if(!latestCloud||remote.revision>=latestCloud.revision)latestCloud=remote;
   if(!ready){
    data=structuredClone(remote);ready=true;
-   if(data.date!==TODAY())dayReset();
+   if(data.date<TODAY())dayReset();
    render();
    if(!pendingWrites)msg(snap.exists()?'✓ Synced':'Cloud checklist empty — import your backup');
    return;
