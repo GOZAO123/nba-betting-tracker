@@ -104,7 +104,7 @@ exports.oddsPapiNbaOddsProbe = onCall(
         const payload = await response.json();
         const fixtures = Array.isArray(payload) ? payload : Array.isArray(payload?.data) ? payload.data : Array.isArray(payload?.fixtures) ? payload.fixtures : [];
         const result = {
-          diagnosticVersion: "25.1",
+          diagnosticVersion: "26.1",
           tournamentId: 132, requestedBookmaker: "betano.pt",
           fixtures: fixtures.length, withOdds: 0, marketCount: 0, playerEntries: 0,
           namedPlayerEntries: 0, bookmakerSlugs: [], samples: [], cached: false,
@@ -151,7 +151,16 @@ exports.oddsPapiNbaOddsProbe = onCall(
                 outcomeId: String(outcomeId).slice(0, 70),
                 keys: Object.keys(outcome || {}).slice(0, 16),
                 playersType: Array.isArray(outcome?.players) ? "array" : typeof outcome?.players,
-                playersCount: Object.keys(outcome?.players || {}).length
+                playersCount: Object.keys(outcome?.players || {}).length,
+                playerEntryShapes: Object.entries(outcome?.players || {}).slice(0, 2).map(([entryId, entry]) => ({
+                  entryId: String(entryId).slice(0, 50),
+                  keys: entry && typeof entry === "object" ? Object.keys(entry).slice(0, 20) : [],
+                  nameFields: entry && typeof entry === "object" ? {
+                    playerName: typeof entry.playerName === "string" ? entry.playerName.slice(0, 70) : null,
+                    name: typeof entry.name === "string" ? entry.name.slice(0, 70) : null,
+                    participantName: typeof entry.participantName === "string" ? entry.participantName.slice(0, 70) : null
+                  } : null
+                }))
               }))
             });
             if (result.marketDiagnostics.length >= 12) break;
