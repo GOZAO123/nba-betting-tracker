@@ -210,6 +210,18 @@ main{width:100%;min-width:0}
 #layoutModeToggle[aria-pressed="true"]{border-color:#2b8979;background:#163c3c}
 #scanGames .scanner-stats .boxscore{overflow-x:auto;max-width:100%}
 #scanGames .scanner-stats .boxscore table{width:100%;min-width:580px;max-width:none}
+
+/* Update 30.8 — sortable and searchable AI Scanner player tables (local only). */
+#scanGames .scanner-player-tools{display:flex;align-items:center;gap:11px;flex-wrap:wrap;margin:12px 0 9px}
+#scanGames .scanner-player-tools input{min-width:190px;flex:1;max-width:460px;background:#1b3047}
+#scanGames .scanner-player-count{white-space:nowrap}
+#scanGames .scanner-player-empty[hidden],
+#scanGames .scanner-stats tbody tr[hidden]{display:none!important}
+#scanGames .scanner-sort-btn{background:none;border:0;border-radius:5px;font-weight:750;color:#e8f4ff;padding:6px 3px;white-space:nowrap;font-size:inherit}
+#scanGames .scanner-sort-btn:hover,
+#scanGames .scanner-sort-btn:focus-visible{color:#9bf0d1}
+#scanGames .scanner-stats th[aria-sort="ascending"] .scanner-sort-btn:after{content:" ▲";color:#88dbbd}
+#scanGames .scanner-stats th[aria-sort="descending"] .scanner-sort-btn:after{content:" ▼";color:#88dbbd}
 </style></head><body><main><div class="bar"><div><h1>🏀 NBA Betting Tracker</h1><p>One player, one check — synced across devices</p></div><div class="header-actions"><button id="layoutModeToggle" type="button" class="mini" aria-label="Switch between wide and mobile layouts">📱 Mobile view</button><button id="signout" hidden>Sign out</button></div></div><section class="panel" id="login"><h2>Sign in</h2><p>Use the same Google account on Android and PC to see the same checklist.</p><button class="primary" id="signin">Continue with Google</button><p class="muted" id="loginmsg"></p></section><div id="app"><nav class="tabs" aria-label="App sections"><button type="button" data-tab="scanner" aria-selected="true">🤖 AI Scanner</button><button type="button" data-tab="games" aria-selected="false">🏀 NBA Games</button><button type="button" data-tab="analyzer" aria-selected="false">📊 Props Analyzer</button><button type="button" data-tab="checklist" aria-selected="false">✅ Checklist</button></nav><section id="scannerTab" class="panel scanner-panel">
  <header class="scanner-hero"><div><span class="scanner-eyebrow">NBA ANALYTICS · BETANO PT</span><h2>🤖 AI Scanner</h2><p class="muted">Your workspace for NBA player-prop research.</p></div><span class="scanner-badge">● Manual mode</span></header>
  <div class="scanner-overview" aria-label="Scanner overview">
@@ -471,16 +483,54 @@ if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWo
     const section=scanAdd(area,'div','','stat-tile'),id=String(t?.team?.id||''),players=[...(byTeam.get(id)?.values()||[])].sort((a,b)=>b.games.length-a.games.length||a.name.localeCompare(b.name));
     scanAdd(section,'strong',t?.team?.displayName||'Team');
     if(!players.length){scanAdd(section,'p','No usable recent player box scores found.','warning');continue}
+    // Local roster tools: filters and sorts the already loaded box scores; no new ESPN calls.
+    const tools=scanAdd(section,'div','','scanner-player-tools');
+    const search=document.createElement('input');search.type='search';search.placeholder='Find a player…';
+    search.setAttribute('aria-label','Filter players for '+(t?.team?.displayName||'this team'));
+    tools.append(search);
+    const found=scanAdd(tools,'span',players.length+' players','muted scanner-player-count');
     const scroller=scanAdd(section,'div','','boxscore'),table=document.createElement('table'),head=document.createElement('tr');
-    for(const h of ['Player','GP','MIN','PTS','REB','AST'])scanAdd(head,'th',h);
+    const columns=['Player','GP','MIN','PTS','REB','AST'],headers=[];
+    let sortIndex=1,descending=true;
     const thead=document.createElement('thead');thead.append(head);table.append(thead);
     const body=document.createElement('tbody');
+    const empty=scanAdd(section,'p','No players match your search.','muted scanner-player-empty');empty.hidden=true;
+    function applyPlayerTable(){
+     const q=search.value.trim().toLocaleLowerCase();
+     const rows=[...body.rows];
+     rows.sort((a,b)=>{
+      const cmp=sortIndex===0?a.cells[0].textContent.localeCompare(b.cells[0].textContent):
+       Number(a.cells[sortIndex].textContent)-Number(b.cells[sortIndex].textContent);
+      return (descending?-cmp:cmp)||a.cells[0].textContent.localeCompare(b.cells[0].textContent);
+     });
+     let shown=0;
+     for(const row of rows){
+      row.hidden=!!q&&!row.cells[0].textContent.toLocaleLowerCase().includes(q);
+      if(!row.hidden)shown++;
+      body.append(row);
+     }
+     found.textContent=shown+' / '+rows.length+' players';
+     empty.hidden=shown!==0;
+     headers.forEach((th,i)=>th.setAttribute('aria-sort',i===sortIndex?(descending?'descending':'ascending'):'none'));
+    }
+    for(const [i,label] of columns.entries()){
+     const th=document.createElement('th');th.scope='col';
+     const btn=document.createElement('button');btn.type='button';btn.className='scanner-sort-btn';btn.textContent=label;
+     btn.setAttribute('aria-label','Sort by '+(label==='GP'?'games played':label));
+     btn.addEventListener('click',()=>{
+      if(sortIndex===i)descending=!descending;else{sortIndex=i;descending=i!==0}
+      applyPlayerTable();
+     });
+     th.append(btn);head.append(th);headers.push(th);
+    }
     for(const p of players){
      const row=document.createElement('tr');scanAdd(row,'td',p.name);scanAdd(row,'td',String(p.games.length));
      for(const k of ['MIN','PTS','REB','AST'])scanAdd(row,'td',(p.games.reduce((n,g)=>n+g[k],0)/p.games.length).toFixed(1));
      body.append(row);
     }
     table.append(body);scroller.append(table);
+    search.addEventListener('input',applyPlayerTable);
+    applyPlayerTable();
    }
    scanAdd(area,'p',usableGames+' box-score responses loaded. Missing or incomplete games may reduce sample sizes.','muted');
    area.dataset.loaded=usableGames>0?'true':'false';
