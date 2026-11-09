@@ -270,7 +270,9 @@ main{width:100%;min-width:0}
 /* Safety Update 32.4 — current NBA schedule date and freshness warnings. */
 .prop-source-warning{background:#4a3027;border:1px solid #bb7954;border-radius:11px;color:#ffe3cd;font-weight:700;font-size:.88rem;line-height:1.5;padding:12px 14px}
 /* Update 32.8: checklist day rolls over at 06:00 Europe/Lisbon, DST aware. */
-</style></head><body><main><div class="bar"><div><h1>🏀 NBA Betting Tracker</h1><p>One player, one check — synced across devices</p></div><div class="header-actions"><button id="layoutModeToggle" type="button" class="mini" aria-label="Switch between wide and mobile layouts">📱 Mobile view</button><button id="signout" hidden>Sign out</button></div></div><section class="panel" id="login"><h2>Sign in</h2><p>Use the same Google account on Android and PC to see the same checklist.</p><button class="primary" id="signin">Continue with Google</button><p class="muted" id="loginmsg"></p></section><div id="app"><nav class="tabs" aria-label="App sections"><button type="button" data-tab="scanner" aria-selected="true">🤖 AI Scanner</button><button type="button" data-tab="games" aria-selected="false">🏀 NBA Games</button><button type="button" data-tab="analyzer" aria-selected="false">📊 Props Analyzer</button><button type="button" data-tab="checklist" aria-selected="false">✅ Checklist</button></nav><section id="scannerTab" class="panel scanner-panel">
+/* Safety Update 33.1 — optional manual app refresh, preserving 800px layout. */
+#updateAppButton{white-space:nowrap;font-size:.85rem;border-color:#4e7288;background:#203951}
+</style></head><body><main><div class="bar"><div><h1>🏀 NBA Betting Tracker</h1><p>One player, one check — synced across devices</p></div><div class="header-actions"><button id="layoutModeToggle" type="button" class="mini" aria-label="Switch between wide and mobile layouts">📱 Mobile view</button><button id="updateAppButton" type="button" class="mini" title="Load the newest app version from GitHub Pages">↻ Update app</button><button id="signout" hidden>Sign out</button></div></div><section class="panel" id="login"><h2>Sign in</h2><p>Use the same Google account on Android and PC to see the same checklist.</p><button class="primary" id="signin">Continue with Google</button><p class="muted" id="loginmsg"></p></section><div id="app"><nav class="tabs" aria-label="App sections"><button type="button" data-tab="scanner" aria-selected="true">🤖 AI Scanner</button><button type="button" data-tab="games" aria-selected="false">🏀 NBA Games</button><button type="button" data-tab="analyzer" aria-selected="false">📊 Props Analyzer</button><button type="button" data-tab="checklist" aria-selected="false">✅ Checklist</button></nav><section id="scannerTab" class="panel scanner-panel">
  <header class="scanner-hero"><div><span class="scanner-eyebrow">NBA ANALYTICS · BETANO PT</span><h2>🤖 AI Scanner</h2><p class="muted">Your workspace for NBA player-prop research.</p></div><span class="scanner-badge">● Manual mode</span></header>
  <div class="scanner-overview" aria-label="Scanner overview">
   <div class="scanner-tile"><span>Scan mode</span><strong>Manual</strong><small>No background polling</small></div>
@@ -576,6 +578,28 @@ $('search').oninput=render;$('team').onchange=render;$('filter').onchange=render
 $('export').onclick=()=>{const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='nba-checklist-backup-'+TODAY()+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),2000)};
 function openImport(){$('file').click()}$('import').onclick=openImport;$('importFirst').onclick=openImport;
 $('file').onchange=async e=>{const f=e.target.files?.[0];if(!f)return;try{const parsed=normalize(JSON.parse(await f.text()));if(!confirm(`Import ${parsed.players.length} roster entries? This REPLACES your current cloud checklist.`))return;const baselineRevision=data.revision;data=parsed;data.revision=baselineRevision;if(data.date!==TODAY()){data.date=TODAY();data.checked={}}persist({type:'import',baselineRevision,backup:structuredClone(data)});render();alert('Backup import queued. Wait until the status says “Synced” before switching devices.')}catch(err){alert('Could not import: '+err.message)}finally{e.target.value=''}};
+// Manual-only app refresh. Never reload while local checklist changes are pending.
+$('updateAppButton').addEventListener('click',async()=>{
+ const button=$('updateAppButton');
+ if(pendingWrites>0||syncError){
+  alert('Your checklist has unsynced changes. Wait for ✓ Synced (or export a backup) before updating the app.');
+  return;
+ }
+ button.disabled=true;button.textContent='Checking…';
+ try{
+  if('serviceWorker' in navigator){
+   const registration=await navigator.serviceWorker.getRegistration('./');
+   if(registration)await registration.update();
+  }
+  // Cache-busting is only used on demand; no automatic refresh or polling.
+  const next=new URL(window.location.href);
+  next.searchParams.set('_app_refresh',String(Date.now()));
+  window.location.replace(next.href);
+ }catch(error){
+  button.disabled=false;button.textContent='↻ Update app';
+  alert('Could not check for an app update. Check your internet connection and try again.');
+ }
+});
 if('serviceWorker'in navigator&&location.protocol==='https:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
 </script><script>
 // Tabs and read-only player props analyzer. The Firebase checklist is untouched.
