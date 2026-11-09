@@ -272,6 +272,9 @@ main{width:100%;min-width:0}
 /* Update 32.8: checklist day rolls over at 06:00 Europe/Lisbon, DST aware. */
 /* Safety Update 33.1 — optional manual app refresh, preserving 800px layout. */
 #updateAppButton{white-space:nowrap;font-size:.85rem;border-color:#4e7288;background:#203951}
+/* Update 33.5: manual transfer from an OddsPapi preview to the ESPN identity checker. */
+.odds-player-choose{border:0;background:transparent;padding:2px 0;color:#9cd6ff;font:inherit;text-align:left;text-decoration:underline;text-underline-offset:3px;cursor:pointer}
+.odds-player-choose:hover,.odds-player-choose:focus-visible{color:#e0f5ff}
 </style></head><body><main><div class="bar"><div><h1>🏀 NBA Betting Tracker</h1><p>One player, one check — synced across devices</p></div><div class="header-actions"><button id="layoutModeToggle" type="button" class="mini" aria-label="Switch between wide and mobile layouts">📱 Mobile view</button><button id="updateAppButton" type="button" class="mini" title="Load the newest app version from GitHub Pages">↻ Update app</button><button id="signout" hidden>Sign out</button></div></div><section class="panel" id="login"><h2>Sign in</h2><p>Use the same Google account on Android and PC to see the same checklist.</p><button class="primary" id="signin">Continue with Google</button><p class="muted" id="loginmsg"></p></section><div id="app"><nav class="tabs" aria-label="App sections"><button type="button" data-tab="scanner" aria-selected="true">🤖 AI Scanner</button><button type="button" data-tab="games" aria-selected="false">🏀 NBA Games</button><button type="button" data-tab="analyzer" aria-selected="false">📊 Props Analyzer</button><button type="button" data-tab="checklist" aria-selected="false">✅ Checklist</button></nav><section id="scannerTab" class="panel scanner-panel">
  <header class="scanner-hero"><div><span class="scanner-eyebrow">NBA ANALYTICS · BETANO PT</span><h2>🤖 AI Scanner</h2><p class="muted">Your workspace for NBA player-prop research.</p></div><span class="scanner-badge">● Manual mode</span></header>
  <div class="scanner-overview" aria-label="Scanner overview">
@@ -487,7 +490,22 @@ document.getElementById('verifiedPropsBtn')?.addEventListener('click',async()=>{
   const body=document.createElement('tbody');
   for(const x of data.samples){
    const tr=document.createElement('tr');
-   for(const value of [x.player,x.family,x.line,x.selection,Number(x.price).toFixed(2),x.mainLine?'Yes':'Not flagged']){
+   // Selecting a preview player only fills the name; identity remains unverified.
+   const playerCell=document.createElement('td'),choose=document.createElement('button');
+   choose.type='button';choose.className='odds-player-choose';
+   choose.textContent=x.player;
+   choose.setAttribute('aria-label','Check ESPN roster identity for '+x.player);
+   choose.addEventListener('click',()=>{
+    document.getElementById('espnIdentityName').value=x.player;
+    const select=document.getElementById('espnIdentityTeam');
+    select.value=''; // Never retain the team selected for a different player.
+    document.getElementById('espnIdentityStatus').textContent=
+      'Selected '+x.player+' from OddsPapi. Choose the correct team and click Check ESPN roster match.';
+    select.scrollIntoView({behavior:'smooth',block:'center'});
+    select.focus({preventScroll:true});
+   });
+   playerCell.append(choose);tr.append(playerCell);
+   for(const value of [x.family,x.line,x.selection,Number(x.price).toFixed(2),x.mainLine?'Yes':'Not flagged']){
     const td=document.createElement('td');td.textContent=String(value);tr.append(td);
    }
    body.append(tr);
