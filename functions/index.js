@@ -133,6 +133,30 @@ exports.oddsPapiNbaOddsProbe = onCall(
             }
           }
         }
+        // Summarise the structure without returning raw bookmaker payloads or credentials.
+        result.marketDiagnostics = [];
+        for (const fixture of fixtures.slice(0, 3)) {
+          const book = fixture.bookmakerOdds?.["betano.pt"];
+          if (!book) continue;
+          for (const [marketId, market] of Object.entries(book.markets || {}).slice(0, 12)) {
+            const outcomes = Object.entries(market.outcomes || {});
+            result.marketDiagnostics.push({
+              fixtureId: String(fixture.fixtureId || "").slice(0, 50),
+              marketId: String(marketId).slice(0, 70),
+              marketKeys: Object.keys(market || {}).slice(0, 16),
+              marketName: String(market.marketName || market.name || "").slice(0, 90),
+              outcomeCount: outcomes.length,
+              outcomeSamples: outcomes.slice(0, 2).map(([outcomeId, outcome]) => ({
+                outcomeId: String(outcomeId).slice(0, 70),
+                keys: Object.keys(outcome || {}).slice(0, 16),
+                playersType: Array.isArray(outcome?.players) ? "array" : typeof outcome?.players,
+                playersCount: Object.keys(outcome?.players || {}).length
+              }))
+            });
+            if (result.marketDiagnostics.length >= 12) break;
+          }
+          if (result.marketDiagnostics.length >= 12) break;
+        }
         result.bookmakerSlugs = [...slugs];
         nbaOddsCache.at = Date.now();
         nbaOddsCache.data = result;
