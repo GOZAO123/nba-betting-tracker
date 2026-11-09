@@ -104,6 +104,7 @@ exports.oddsPapiNbaOddsProbe = onCall(
         const payload = await response.json();
         const fixtures = Array.isArray(payload) ? payload : Array.isArray(payload?.data) ? payload.data : Array.isArray(payload?.fixtures) ? payload.fixtures : [];
         const result = {
+          diagnosticVersion: "25.1",
           tournamentId: 132, requestedBookmaker: "betano.pt",
           fixtures: fixtures.length, withOdds: 0, marketCount: 0, playerEntries: 0,
           namedPlayerEntries: 0, bookmakerSlugs: [], samples: [], cached: false,
@@ -157,6 +158,7 @@ exports.oddsPapiNbaOddsProbe = onCall(
           }
           if (result.marketDiagnostics.length >= 12) break;
         }
+        result.diagnosticCount = result.marketDiagnostics.length;
         result.bookmakerSlugs = [...slugs];
         nbaOddsCache.at = Date.now();
         nbaOddsCache.data = result;
