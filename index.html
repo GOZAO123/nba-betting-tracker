@@ -275,6 +275,11 @@ main{width:100%;min-width:0}
 /* Update 33.5: manual transfer from an OddsPapi preview to the ESPN identity checker. */
 .odds-player-choose{border:0;background:transparent;padding:2px 0;color:#9cd6ff;font:inherit;text-align:left;text-decoration:underline;text-underline-offset:3px;cursor:pointer}
 .odds-player-choose:hover,.odds-player-choose:focus-visible{color:#e0f5ff}
+/* Update 33.7 — manually triggered multi-player research from an existing Betano snapshot. */
+.research-results{display:grid;gap:10px}
+.research-results .boxscore table{font-size:.8rem}
+.research-results .boxscore th:first-child,.research-results .boxscore td:first-child{white-space:normal;min-width:140px}
+.research-row-action{padding:4px 8px;font-size:.75rem;white-space:nowrap}
 </style></head><body><main><div class="bar"><div><h1>🏀 NBA Betting Tracker</h1><p>One player, one check — synced across devices</p></div><div class="header-actions"><button id="layoutModeToggle" type="button" class="mini" aria-label="Switch between wide and mobile layouts">📱 Mobile view</button><button id="updateAppButton" type="button" class="mini" title="Load the newest app version from GitHub Pages">↻ Update app</button><button id="signout" hidden>Sign out</button></div></div><section class="panel" id="login"><h2>Sign in</h2><p>Use the same Google account on Android and PC to see the same checklist.</p><button class="primary" id="signin">Continue with Google</button><p class="muted" id="loginmsg"></p></section><div id="app"><nav class="tabs" aria-label="App sections"><button type="button" data-tab="scanner" aria-selected="true">🤖 AI Scanner</button><button type="button" data-tab="games" aria-selected="false">🏀 NBA Games</button><button type="button" data-tab="analyzer" aria-selected="false">📊 Props Analyzer</button><button type="button" data-tab="checklist" aria-selected="false">✅ Checklist</button></nav><section id="scannerTab" class="panel scanner-panel">
  <header class="scanner-hero"><div><span class="scanner-eyebrow">NBA ANALYTICS · BETANO PT</span><h2>🤖 AI Scanner</h2><p class="muted">Your workspace for NBA player-prop research.</p></div><span class="scanner-badge">● Manual mode</span></header>
  <div class="scanner-overview" aria-label="Scanner overview">
@@ -289,7 +294,12 @@ main{width:100%;min-width:0}
   <div id="scanSummary" class="analyzer-grid"></div>
   <div id="scanGames" style="display:grid;gap:10px;margin-top:12px"></div>
  </div>
- <div class="scanner-workspace"><div class="scanner-section-head"><div><h3>Betting opportunities</h3><p class="muted">Verified player lines and value analysis will appear here once connected.</p></div></div><div class="scanner-empty"><strong>Awaiting verified player props</strong><p class="muted">No betting picks are being generated. Market data, player matching and probabilities must be validated first.</p></div></div>
+ <div class="scanner-workspace"><div class="scanner-section-head"><div><h3>Betting research shortlist</h3><p class="muted">Compare a verified Betano preview with ESPN's recent game history for several players at once.</p></div></div>
+  <div class="row"><button id="researchPreviewBtn" type="button" class="primary" disabled>Analyse preview sample (ESPN only)</button><span class="muted">Manual only · up to 18 NBA schedule dates, 10 box scores and 2 rosters · zero new OddsPapi requests</span></div>
+  <p id="researchPreviewStatus" class="muted" role="status">First load “Preview verified Betano props” under Developer tools. Only that small returned sample is analysed.</p>
+  <div id="researchPreviewResults" class="research-results"></div>
+  <p class="muted notice">Research sorting is descriptive, not an AI prediction or a bet recommendation. Historical hit rates are not calibrated future probabilities; lines and odds may change.</p>
+ </div>
  <details class="scanner-dev"><summary>⚙️ Developer tools <span class="muted">· Manual API tests</span></summary><div class="scanner-dev-content"><p class="muted notice">These buttons make live API requests when tapped. Avoid unnecessary tests to protect the free allowance.</p>
   <div class="row"><button id="oddsProbeBtn" type="button" class="mini">Test OddsPapi NBA connection</button><span id="oddsProbeStatus" class="muted" role="status">Test uses one API request. Available only to the configured owner.</span></div><div id="oddsProbeResult" class="muted"></div>
   <div class="row"><button id="nbaOddsTestBtn" type="button" class="mini">Test Betano PT NBA odds</button><span id="nbaOddsTestStatus" class="muted">One request; 15-minute server cache when successful.</span></div><div id="nbaOddsTestResult" class="muted"></div>
@@ -531,11 +541,63 @@ document.getElementById("espnIdentityBtn")?.addEventListener("click",async()=>{
  }finally{button.disabled=false}
 });
 
+// Update 33.7: research many verified market snapshots using ESPN only.
+// Keep a short-lived per-tab copy so ↻ Update app does not force another paid
+// OddsPapi diagnostic call. Never treat stored odds as a fresh bookmaker quote.
+const RESEARCH_STORAGE_KEY='nba-verified-market-preview-v33-7';
+const RESEARCH_TTL_MS=15*60*1000;
+const researchButton=document.getElementById('researchPreviewBtn');
+const researchStatus=document.getElementById('researchPreviewStatus');
+const researchResults=document.getElementById('researchPreviewResults');
+let researchPreview=null;
+function researchPreviewValid(p){
+ return p&&Array.isArray(p.samples)&&p.samples.length>0&&p.samples.length<=60&&
+   typeof p.fixture==='string'&&typeof p.fixtureId==='string'&&
+   typeof p.startTime==='string'&&Number.isFinite(Date.parse(p.startTime))&&
+   Date.parse(p.startTime)>Date.now()&&Number.isFinite(p.receivedAt)&&
+   Date.now()-p.receivedAt>=0&&Date.now()-p.receivedAt<RESEARCH_TTL_MS;
+}
+function setResearchPreview(data){
+ researchPreview=null;researchButton.disabled=true;
+ researchResults.replaceChildren();
+ try{sessionStorage.removeItem(RESEARCH_STORAGE_KEY)}catch(_){}
+ const sample=(data?.samples||[]).filter(x=>
+   x&&typeof x.player==='string'&&typeof x.family==='string'&&
+   ['PTS','REB','AST','3PT','PR','PA','RA','PRA'].includes(x.family)&&
+   ['Over','Under'].includes(x.selection)&&
+   Number.isFinite(Number(x.line))&&Number(x.line)>=0&&
+   Number.isFinite(Number(x.price))&&Number(x.price)>1
+ ).slice(0,60);
+ const preview={fixture:String(data?.fixture||''),fixtureId:String(data?.fixtureId||''),
+  startTime:String(data?.startTime||''),receivedAt:Date.now(),samples:sample};
+ if(!researchPreviewValid(preview)){
+  researchStatus.textContent='No eligible upcoming preview sample. Run a manual Betano preview when an upcoming NBA game has available props.';
+  return;
+ }
+ researchPreview=preview;researchButton.disabled=false;
+ researchStatus.textContent='Ready: '+sample.length+' sample selections from '+preview.fixture+
+  '. Analyse manually with ESPN only; this is not the complete Betano market.';
+ try{sessionStorage.setItem(RESEARCH_STORAGE_KEY,JSON.stringify(preview))}catch(_){}
+}
+try{
+ const saved=JSON.parse(sessionStorage.getItem(RESEARCH_STORAGE_KEY)||'null');
+ if(researchPreviewValid(saved)){
+  researchPreview=saved;researchButton.disabled=false;
+  researchStatus.textContent='Saved preview: '+saved.samples.length+' selections from '+saved.fixture+
+   '. This is a snapshot; click to research with ESPN only.';
+ }
+}catch(_){}
+
 document.getElementById('verifiedPropsBtn')?.addEventListener('click',async()=>{
  const btn=document.getElementById('verifiedPropsBtn'),status=document.getElementById('verifiedPropsStatus'),out=document.getElementById('verifiedPropsResult');
  if(!auth.currentUser){status.textContent='Sign in first.';return}
  if(!confirm('Preview active full-game Betano PT player props? This reserves 2 of your 6 daily OddsPapi diagnostic requests. No bets will be placed.'))return;
  selectedPreviewOffer=null;invalidateVerifiedOffer();
+ // A new preview attempt invalidates any previous research quote snapshot.
+ researchPreview=null;researchButton.disabled=true;
+ researchStatus.textContent='Waiting for the new verified Betano preview…';
+ researchResults.replaceChildren();
+ try{sessionStorage.removeItem(RESEARCH_STORAGE_KEY)}catch(_){}
  btn.disabled=true;status.textContent='Checking official market names against current Betano PT offers…';out.replaceChildren();
  try{
   const {data}=await httpsCallable(oddsFunctions,'oddsPapiVerifiedPropsProbe')({});
@@ -553,6 +615,7 @@ document.getElementById('verifiedPropsBtn')?.addEventListener('click',async()=>{
   line('Matching market IDs in this game: '+(data.marketCount??0)+' · Active selections: '+(data.activeSelections??0)+' · Excluded/unavailable: '+(data.unavailableSelections??0));
   if(data.marketCounts?.length)line(data.marketCounts.map(x=>x.family+': '+x.activeSelections+' active').join(' · '));
   if(!(data.samples||[]).length){line('No active, verified full-game player-prop prices were returned.','warning');return}
+  setResearchPreview(data);
   const wrap=document.createElement('div');wrap.className='boxscore';const table=document.createElement('table');
   const thead=document.createElement('thead'),heading=document.createElement('tr');
   for(const label of ['Player (OddsPapi)','Market','Line','Side','Betano odds','Provider main line']){
