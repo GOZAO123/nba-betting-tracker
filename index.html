@@ -1566,6 +1566,18 @@ ledgerRefresh.addEventListener('click',async()=>{
  catch(err){ledgerStatus.textContent='Cloud ledger error: '+(err.message||String(err))}
  finally{ledgerRefresh.disabled=false}
 });
+// Descriptive calibration only. Manual quote selection biases samples.
+function ledgerCalibration(entries){
+ const bins=Array.from({length:5},(_,i)=>({low:i/5,high:(i+1)/5,
+  n:0,forecastTotal:0,wonTotal:0}));
+ for(const e of entries){
+  const p=e.modelSelected;
+  if(!Number.isFinite(p)||p<0||p>1||typeof e.resultWon!=='boolean')continue;
+  const b=bins[Math.min(4,Math.floor(p*5))];
+  b.n++;b.forecastTotal+=p;b.wonTotal+=Number(e.resultWon);
+ }
+ return bins;
+}
 function ledgerDraw(){
  ledgerResults.replaceChildren();
  if(!ledgerRows.length){
@@ -1601,6 +1613,28 @@ function ledgerDraw(){
  }
  table.append(body);const scroller=researchCreate('div',null,'boxscore');
  scroller.append(table);ledgerResults.append(scroller);
+ if(scored.length){
+  ledgerResults.append(researchCreate('h4','Research calibration · 20% probability bands'));
+  const table=researchCreate('table'),header=researchCreate('thead'),labels=researchCreate('tr');
+  for(const label of ['Frozen estimate band','Settled games','Mean stored estimate','Observed selection win rate','Sample quality'])
+   labels.append(researchCreate('th',label));
+  header.append(labels);table.append(header);const body=researchCreate('tbody');
+  for(const bin of ledgerCalibration(scored)){
+   const row=researchCreate('tr');
+   const cells=[
+    (100*bin.low).toFixed(0)+'–'+(100*bin.high).toFixed(0)+'%',
+    bin.n,bin.n?(100*bin.forecastTotal/bin.n).toFixed(1)+'%':'—',
+    bin.n?(100*bin.wonTotal/bin.n).toFixed(1)+'%':'—',
+    bin.n<30?'Sparse (<30)':'Descriptive only'
+   ];
+   for(const cell of cells)row.append(researchCreate('td',cell));
+   body.append(row);
+  }
+  table.append(body);const wrap=researchCreate('div',null,'boxscore');
+  wrap.append(table);ledgerResults.append(wrap);
+  ledgerResults.append(researchCreate('p',
+   'Even with 30+ outcomes, self-selected manual prices and mutable Firebase records cannot prove calibrated win probabilities.','warning'));
+ }
  ledgerResults.append(researchCreate('p',
   '*Only records captured before tip-off according to a Firestore server timestamp can be scored. '+
   'Current rules still allow users to edit their own records, so this ledger cannot certify immutable prospective evidence. '+
