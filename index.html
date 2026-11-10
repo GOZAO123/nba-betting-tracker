@@ -1413,7 +1413,7 @@ function ledgerEvent(e,day,now=Date.now()){
  if(!/^\d+$/.test(String(e?.id||''))||!e?.date||e.status?.type?.state!=='pre')return null;
  const start=Date.parse(e.date);
  if(!Number.isFinite(start)||start<=now+LEDGER_GRACE||
-    ledgerNbaDay(new Date(start))!==day||Number(e.season?.type??2)!==2)return null;
+    ledgerNbaDay(new Date(start))!==day||Number(e.season?.type)!==2)return null;
  const sides=e.competitions?.[0]?.competitors||[];
  const h=sides.find(x=>x.homeAway==='home'),a=sides.find(x=>x.homeAway==='away');
  const hid=String(h?.team?.id||''),aid=String(a?.team?.id||'');
