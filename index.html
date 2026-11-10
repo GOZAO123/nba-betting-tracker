@@ -1607,6 +1607,84 @@ function ledgerDraw(){
   'Manually entered quotes are NOT verified against Betano.','warning'));
 }
 
+
+// Settlement is manual, read-only against ESPN and does not query the bookmaker.
+// Incomplete player data, DNPs, postponed games or identity mismatches fail closed.
+function ledgerExtractFinal(box,record){
+ const hdr=box?.header,comp=hdr?.competitions?.[0];
+ if(!comp)throw Error('ESPN final summary has no verified competition');
+ if(String(hdr?.id||comp.id||'')!==String(record.eventId)||
+    (hdr?.id&&String(hdr.id)!==String(record.eventId))||
+    (comp.id&&String(comp.id)!==String(record.eventId)))
+  throw Error('ESPN game ID mismatch');
+ const ids=(comp.competitors||[]).map(x=>String(x.team?.id||''));
+ if(ids.length!==2||!ids.includes(String(record.homeId))||
+    !ids.includes(String(record.awayId)))throw Error('ESPN opponent/team IDs mismatch');
+ const started=Date.parse(comp.date||'');
+ if(Number.isFinite(started)&&Math.abs(started-record.eventStartMs)>120000)
+  throw Error('ESPN game start changed; manual review needed');
+ const status=comp.status?.type;
+ if(status?.state!=='post'||
+    (status.completed!==true&&!/^STATUS_FINAL/.test(String(status.name||''))))
+  throw Error('Game is not confirmed Final by ESPN');
+ const sides=(box.boxscore?.players||[]).filter(x=>
+  String(x.team?.id||'')===String(record.teamId));
+ if(sides.length!==1)throw Error('Team player box score missing or ambiguous');
+ let stat=null;
+ for(const group of sides[0].statistics||[])for(const entry of group.athletes||[]){
+  if(String(entry.athlete?.id||'')!==String(record.athleteId))continue;
+  const parsed=researchExtractAthlete(group,entry);
+  if(!parsed||!Number.isFinite(parsed[record.market]))continue;
+  const value=parsed[record.market];
+  if(stat!==null&&stat!==value)throw Error('Conflicting ESPN player statistics');
+  stat=value;
+ }
+ if(stat===null)throw Error('Player did not play or stats missing; do not count as a loss');
+ if(!Number.isFinite(record.line)||Math.floor(record.line)+.5!==record.line||
+    !['Over','Under'].includes(record.side))throw Error('Invalid stored betting line');
+ return {resultStat:stat,resultWon:record.side==='Over'?stat>record.line:stat<record.line};
+}
+async function ledgerSettle(id){
+ const user=auth.currentUser,row=ledgerRows.find(x=>x.id===id);
+ if(!user||ledgerBusy||!row||ledgerState(row)!=='PENDING')return;
+ if(Date.now()<row.eventStartMs+70*60000){
+  ledgerStatus.textContent='Too early to check the final outcome.';return;
+ }
+ if(!confirm('Check ESPN final box score and save the verified research outcome? No OddsPapi requests or wagers.'))return;
+ ledgerBusy=true;const uid=user.uid,session=ledgerSession;
+ try{
+  ledgerStatus.textContent='Checking ESPN Final and player game statistics…';
+  const box=await ledgerFetch(RESEARCH_ESPN_BASE+'summary?event='+encodeURIComponent(row.eventId));
+  const final=ledgerExtractFinal(box,row);
+  if(auth.currentUser?.uid!==uid||session!==ledgerSession)throw Error('Signed-in account changed');
+  const reference=ledgerRef(uid,id);
+  await runTransaction(db,async tx=>{
+   const snap=await tx.get(reference);
+   if(!snap.exists())throw Error('Record no longer exists');
+   const saved=snap.data(),capture=saved.capturedServerAt?.toMillis?.();
+   if(!Number.isFinite(capture)||capture>=saved.eventStartMs-LEDGER_GRACE)
+    throw Error('Missing verified before-tipoff Firestore server receipt');
+   for(const key of ['eventId','eventStartMs','athleteId','teamId','market','line','side']){
+    if(saved[key]!==row[key])throw Error('Captured record changed; settlement rejected');
+   }
+   if(saved.status!=='pending')throw Error('Already settled or unavailable');
+   if(auth.currentUser?.uid!==uid||session!==ledgerSession)throw Error('Account changed');
+   tx.update(reference,{status:'settled',resultStat:final.resultStat,
+    resultWon:final.resultWon,settledAt:serverTimestamp(),
+    settlementSource:'ESPN Final box score, exact player/team/event'});
+  },{maxAttempts:3});
+  if(auth.currentUser?.uid!==uid||session!==ledgerSession)return;
+  ledgerStatus.textContent=row.player+' · '+row.market+' '+row.line+' '+row.side+
+   ' · ESPN final '+final.resultStat+' → '+(final.resultWon?'Win':'Loss')+
+   '. Research settlement only, not independent Betano verification.';
+  await ledgerLoad();
+ }catch(err){
+  if(auth.currentUser?.uid===uid&&session===ledgerSession)
+   ledgerStatus.textContent='Not settled: '+(err.message||String(err))+
+    '. Missing statistics are never assumed zero or a loss.';
+ }finally{ledgerBusy=false}
+}
+
 btRun.addEventListener('click',async()=>{
  const player=btPlayer.value.trim(),team=btTeam.value,teamId=ESPN_NBA_TEAM_IDS[team];
  if(!auth.currentUser){btStatus.textContent='Sign in with Google first.';return}
