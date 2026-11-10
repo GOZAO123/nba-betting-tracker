@@ -300,6 +300,11 @@ main{width:100%;min-width:0}
   <div id="researchPreviewResults" class="research-results"></div>
   <p class="muted notice">Research sorting is descriptive, not an AI prediction or a bet recommendation. Historical hit rates are not calibrated future probabilities; lines and odds may change.</p>
  </div>
+ <div class="scanner-workspace"><div class="scanner-section-head"><div><h3>🧪 Model laboratory · Walk-forward backtest</h3><p class="muted">Evaluate a simple statistical baseline on the completed NBA regular season. This does not use Betano prices or create betting picks.</p></div></div>
+  <div class="row"><input id="btPlayer" type="text" placeholder="Player name, e.g. Jalen Brunson" aria-label="Player to backtest" style="min-width:230px"><select id="btTeam" aria-label="NBA team for backtest"><option value="">Choose NBA team</option></select><button id="btRun" type="button" class="primary">Backtest player (ESPN only)</button></div>
+  <p id="btStatus" class="muted" role="status">Manual test · one ESPN roster and one player game-log request maximum · zero OddsPapi requests. Historical results are not forecasts.</p>
+  <div id="btResults" class="research-results"></div>
+ </div>
  <details class="scanner-dev"><summary>⚙️ Developer tools <span class="muted">· Manual API tests</span></summary><div class="scanner-dev-content"><p class="muted notice">These buttons make live API requests when tapped. Avoid unnecessary tests to protect the free allowance.</p>
   <div class="row"><button id="oddsProbeBtn" type="button" class="mini">Test OddsPapi NBA connection</button><span id="oddsProbeStatus" class="muted" role="status">Test uses one API request. Available only to the configured owner.</span></div><div id="oddsProbeResult" class="muted"></div>
   <div class="row"><button id="nbaOddsTestBtn" type="button" class="mini">Test Betano PT NBA odds</button><span id="nbaOddsTestStatus" class="muted">One request; 15-minute server cache when successful.</span></div><div id="nbaOddsTestResult" class="muted"></div>
@@ -855,7 +860,15 @@ function renderResearchSample(result,preview){
     }
    }));
   });
-  actionCell.append(action);row.append(actionCell);body.append(row);
+  actionCell.append(action);
+  const modelButton=researchCreate('button','Backtest','mini research-row-action');
+  modelButton.type='button';modelButton.style.marginLeft='4px';
+  modelButton.addEventListener('click',()=>{
+   window.dispatchEvent(new CustomEvent('tracker-backtest-player',{
+    detail:{name:r.player,team:r.team}
+   }));
+  });
+  actionCell.append(modelButton);row.append(actionCell);body.append(row);
  }
  table.append(body);scroll.append(table);researchResults.append(scroll);
 }
@@ -878,6 +891,200 @@ researchButton.addEventListener('click',async()=>{
  }finally{
   researchButton.disabled=!researchPreviewValid(researchPreview);
  }
+});
+
+
+// Update 33.8 — ESPN-only walk-forward model laboratory.
+// Completed previous season, synthetic reference thresholds, no historical odds.
+// No probabilities are applied to today's Betano lines.
+const btTeam=document.getElementById('btTeam');
+const btPlayer=document.getElementById('btPlayer');
+const btStatus=document.getElementById('btStatus');
+const btResults=document.getElementById('btResults');
+const btRun=document.getElementById('btRun');
+for(const t of TEAM_NAMES)btTeam.add(new Option(t,t));
+window.addEventListener('tracker-backtest-player',event=>{
+ const name=String(event.detail?.name||''),team=String(event.detail?.team||'');
+ if(!TEAM_NAMES.includes(team))return;
+ btPlayer.value=name;btTeam.value=team;
+ btStatus.textContent='Selected '+name+' · '+team+'. Press Backtest player to start ESPN-only validation.';
+ btResults.replaceChildren();
+ document.getElementById('btPlayer').scrollIntoView({behavior:'smooth',block:'center'});
+});
+function btCompletedSeason(now=new Date()){
+ // The last completed NBA season ends in the current calendar year from July onward.
+ return now.getUTCFullYear()-(now.getUTCMonth()<6?1:0);
+}
+function btRegularSeason(type){
+ const id=Number(type?.id??type?.type?.id??type?.type);
+ if(Number.isInteger(id)&&id>0)return id===2;
+ return /regular\s+season/i.test(String(type?.displayName||type?.name||''));
+}
+function btParseGamelog(payload,athleteId,season){
+ if(payload?.athlete?.id&&String(payload.athlete.id)!==String(athleteId))
+  throw Error('ESPN player ID mismatch; game log was rejected.');
+ if(!Array.isArray(payload?.seasonTypes)||!payload?.events||typeof payload.events!=='object')
+  throw Error('ESPN player game-log format is not supported; no statistics were assumed.');
+ const events=payload.events;
+ const entries=new Map(),conflicts=new Set();
+ const from=Date.UTC(season-1,8,1),until=Date.UTC(season,6,1);
+ let seasonFound=false;
+ for(const type of payload.seasonTypes){
+  if(!btRegularSeason(type))continue;
+  seasonFound=true;
+  for(const group of type.categories||[]){
+   for(const record of group.events||[]){
+    const eventId=String(record?.eventId||'');
+    const meta=events[eventId];
+    if(!/^\d+$/.test(eventId)||!meta||conflicts.has(eventId))continue;
+    const date=Date.parse(meta.gameDate||meta.date||meta.eventDate||'');
+    if(!Number.isFinite(date)||date<from||date>=until||date>Date.now())continue;
+    if(!Array.isArray(record.stats))continue;
+    const rawLabels=Array.isArray(group.labels)?group.labels:payload.labels;
+    if(!Array.isArray(rawLabels))continue;
+    let labels=rawLabels;
+    if(labels.length!==record.stats.length){
+     const withoutMeta=labels.filter(x=>!['DATE','OPP','RESULT'].includes(String(x).trim().toUpperCase()));
+     if(withoutMeta.length!==record.stats.length)continue;
+     labels=withoutMeta;
+    }
+    const value=researchExtractAthlete({labels},{stats:record.stats});
+    if(!value)continue;
+    const old=entries.get(eventId);
+    if(old&&JSON.stringify(old.stats)!==JSON.stringify(value)){
+     // Conflicting duplicates must not silently enter a statistical backtest.
+     entries.delete(eventId);conflicts.add(eventId);continue;
+    }
+    entries.set(eventId,{id:eventId,date,stats:value});
+   }
+  }
+ }
+ if(!seasonFound)throw Error('ESPN did not provide a verified regular-season group.');
+ return [...entries.values()].sort((a,b)=>a.date-b.date||a.id.localeCompare(b.id));
+}
+// erf approximation for normal cumulative probability (max error ~1.5e-7).
+function btNormalCdf(x){
+ const sign=x<0?-1:1,z=Math.abs(x)/Math.SQRT2,t=1/(1+0.3275911*z);
+ const erf=1-(((((1.061405429*t-1.453152027)*t)+1.421413741)*t-0.284496736)*t+0.254829592)*t*Math.exp(-z*z);
+ return 0.5*(1+sign*erf);
+}
+const btClip=p=>Math.min(.98,Math.max(.02,p));
+// One forecast for the NEXT game uses only the previous 12 player appearances.
+// The reference line is constructed from that training window, not past odds.
+function btNextForecast(train){
+ if(train.length!==12||train.some(x=>!Number.isFinite(x)||x<0))return null;
+ const mean=train.reduce((a,b)=>a+b,0)/train.length;
+ const sorted=[...train].sort((a,b)=>a-b);
+ const median=(sorted[5]+sorted[6])/2;
+ const line=Math.floor(median)+0.5; // Synthetic, not bookmaker-provided.
+ const variance=train.reduce((sum,x)=>sum+(x-mean)**2,0)/(train.length-1);
+ const sd=Math.max(1,Math.sqrt(variance));
+ const normal=1-btNormalCdf((line-mean)/sd);
+ const nOver=train.filter(x=>x>line).length;
+ const empirical=(nOver+2)/(train.length+4); // Weak symmetric prior.
+ const probability=btClip(.55*normal+.45*empirical);
+ return {line,p:probability,empirical};
+}
+function btWalkForward(games,market){
+ const series=games.map(g=>({date:g.date,value:g.stats[market]}))
+  .filter(x=>Number.isFinite(x.value)&&x.value>=0).sort((a,b)=>a.date-b.date);
+ const predictions=[];
+ for(let i=12;i<series.length;i++){
+  const history=series.slice(i-12,i).map(x=>x.value);
+  const f=btNextForecast(history);
+  if(!f)continue;
+  const actual=Number(series[i].value>f.line);
+  predictions.push({
+   time:series[i].date,
+   line:f.line,probability:f.p,baselineProbability:f.empirical,actual
+  });
+ }
+ const n=predictions.length;
+ if(n<12)return {market,games:series.length,tests:n,valid:false,
+  reason:'At least 24 valid player games needed (12 warm-up + 12 out-of-sample tests).'};
+ const brier=key=>predictions.reduce((sum,x)=>sum+(x[key]-x.actual)**2,0)/n;
+ const model=brier('probability'),baseline=brier('baselineProbability');
+ const accuracy=predictions.filter(x=>(x.probability>=.5)===Boolean(x.actual)).length/n;
+ return {market,games:series.length,tests:n,valid:true,model,baseline,accuracy,
+  blindBaseline:.25,firstTest:predictions[0].time,lastTest:predictions[n-1].time,
+  predictions};
+}
+function btRender(games,player,team,season){
+ btResults.replaceChildren();
+ const label=researchCreate('div',null,'stat-tile');
+ label.append(
+  researchCreate('strong',player+' · '+team+' · '+(season-1)+'–'+String(season).slice(-2)+' completed season'),
+  researchCreate('p',games.length+' distinct regular-season appearances with usable minutes · ESPN athlete identity checked against current team roster.','muted')
+ );
+ btResults.append(label);
+ const results=['PTS','REB','AST','3PT','PR','PA','RA','PRA'].map(m=>btWalkForward(games,m));
+ const table=researchCreate('table'),head=researchCreate('thead'),thRow=researchCreate('tr');
+ for(const header of ['Market','Valid games','Walk-forward tests','Model Brier ↓','Rolling baseline ↓','Model accuracy']){
+  thRow.append(researchCreate('th',header));
+ }
+ head.append(thRow);table.append(head);
+ const body=researchCreate('tbody');
+ for(const row of results){
+  const tr=researchCreate('tr');
+  const values=[
+   row.market,row.games,row.tests,
+   row.valid?row.model.toFixed(3):'Insufficient',
+   row.valid?row.baseline.toFixed(3):'—',
+   row.valid?(100*row.accuracy).toFixed(0)+'%':'—'
+  ];
+  for(const v of values)tr.append(researchCreate('td',v));
+  body.append(tr);
+ }
+ table.append(body);
+ const wrap=researchCreate('div',null,'boxscore');wrap.append(table);btResults.append(wrap);
+ btResults.append(researchCreate('p',
+  'Each held-out game is predicted from only the preceding 12 player appearances; the reference line is a synthetic training-window median (+0.5), NOT an actual historical bookmaker line. Lower Brier score is better. The rolling baseline uses previous Over results with weak smoothing.','muted'));
+ const good=results.filter(r=>r.valid);
+ if(!good.length){
+  btResults.append(researchCreate('p',
+   'Insufficient verified game-log data to backtest. The app will NOT generate a probability estimate or a bet recommendation.','warning'));
+ }else{
+  const improved=good.filter(r=>r.model<r.baseline).length;
+  btResults.append(researchCreate('p',
+   good.length+' markets met the minimum 12 held-out tests; the baseline model beat the rolling empirical baseline on '+
+   improved+'/'+good.length+' markets. These tests share overlapping games and are not independent. '+
+   'No out-of-sample ROI, actual historical odds or live-edge validation has been performed.','warning'));
+ }
+}
+btRun.addEventListener('click',async()=>{
+ const player=btPlayer.value.trim(),team=btTeam.value,teamId=ESPN_NBA_TEAM_IDS[team];
+ if(!auth.currentUser){btStatus.textContent='Sign in with Google first.';return}
+ if(!player||!teamId){btStatus.textContent='Enter a player name and select an NBA team.';return}
+ btRun.disabled=true;btResults.replaceChildren();
+ const originalName=player,originalTeam=team;
+ try{
+  btStatus.textContent='Checking ESPN roster identity for '+player+'…';
+  const roster=await readEspnIdentity(RESEARCH_ESPN_BASE+'teams/'+encodeURIComponent(teamId)+'/roster');
+  if((roster.team?.id&&String(roster.team.id)!==teamId)||
+     (roster.team?.displayName&&canonicalPlayerName(roster.team.displayName)!==canonicalPlayerName(team)))
+   throw Error('ESPN roster belongs to another team; identity matching blocked.');
+  const players=(roster.athletes||[]).flatMap(x=>Array.isArray(x.items)?x.items:[x]);
+  const matches=new Map(players.filter(x=>x.id&&x.displayName&&
+   canonicalPlayerName(x.displayName)===canonicalPlayerName(player))
+   .map(x=>[String(x.id),x]));
+  if(matches.size!==1)throw Error('No unique exact ESPN roster match. No history was analysed.');
+  const athlete=[...matches.values()][0];
+  const season=btCompletedSeason();
+  btStatus.textContent='Fetching '+athlete.displayName+"'s "+(season-1)+'–'+String(season).slice(-2)+
+   ' NBA regular-season game log (one ESPN request)…';
+  const url='https://site.web.api.espn.com/apis/common/v3/sports/basketball/nba/athletes/'+
+   encodeURIComponent(athlete.id)+'/gamelog?season='+encodeURIComponent(season);
+  const log=await readEspnIdentity(url);
+  const games=btParseGamelog(log,athlete.id,season);
+  if(btPlayer.value.trim()!==originalName||btTeam.value!==originalTeam)
+   throw Error('Player or team was changed during the backtest; results discarded.');
+  btRender(games,athlete.displayName,team,season);
+  btStatus.textContent='ESPN-only historical backtest completed · '+games.length+
+   ' usable appearances · zero OddsPapi requests. No future probabilities or picks generated.';
+ }catch(error){
+  btStatus.textContent='Backtest unavailable: '+(error.message||String(error))+
+   '. No OddsPapi request was made. ESPN game logs may sometimes be unavailable or browser-blocked.';
+ }finally{btRun.disabled=false}
 });
 
 document.getElementById('verifiedPropsBtn')?.addEventListener('click',async()=>{
