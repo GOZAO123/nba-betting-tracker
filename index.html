@@ -323,6 +323,17 @@ main{width:100%;min-width:0}
   <div class="row"><button id="ledgerSave" type="button" class="primary">Save research snapshot</button><button id="ledgerRefresh" class="mini" type="button">↻ Load my cloud ledger</button></div>
   <p id="ledgerStatus" class="muted" role="status">First run Actual line research above using the genuine line, side and decimal odds. Then choose an upcoming ESPN game and confirm your observed price. No automatic saving.</p>
   <div id="ledgerResults" class="research-results"></div>
+  <details class="scanner-dev" id="ledgerDryRunPanel">
+   <summary>🧪 Check ESPN final-stat reader (read-only test)</summary>
+   <div class="scanner-dev-content">
+    <p class="muted">Test our ESPN final-game parser using a previous completed game. It reads the player name and NBA team from <strong>Actual line research</strong> above. You do not need odds, a betting line or a saved ledger entry. Nothing is written to Firebase.</p>
+    <div class="row"><label for="ledgerTestDate">Past NBA date (US Eastern):</label><input id="ledgerTestDate" type="date"><button id="ledgerTestFind" type="button" class="mini">Find completed games (ESPN)</button></div>
+    <div class="row"><label for="ledgerTestEvent">Completed fixture:</label><select id="ledgerTestEvent" aria-label="Completed ESPN fixture for read-only test"><option value="">Find completed games first</option></select>
+    <button id="ledgerTestRead" type="button" class="mini">Read final player stats (no save)</button></div>
+    <p id="ledgerTestStatus" class="muted" role="status">Manually initiated · at most one scoreboard, one roster and one final-box-score request · zero OddsPapi requests.</p>
+    <div id="ledgerTestResults" class="research-results"></div>
+   </div>
+  </details>
   <p class="warning">Research only. These Firebase records are CLIENT-managed, not independently timestamp-audited or tamper-proof. Manual Betano quotes are NOT verified against the bookmaker. The model estimate is uncalibrated, not a betting recommendation or reliable EV.</p>
  </div>
  <div class="scanner-workspace"><div class="scanner-section-head"><div><h3>🧪 Model laboratory · Walk-forward backtest</h3><p class="muted">Evaluate a simple statistical baseline on the completed NBA regular season. This does not use Betano prices or create betting picks.</p></div></div>
@@ -1425,6 +1436,7 @@ function ledgerEvent(e,day,now=Date.now()){
  return {id:String(e.id),start,homeId:hid,awayId:aid,home,away};
 }
 function ledgerReset(){
+ ledgerTestReset();
  ledgerSession++;ledgerEvents.clear();ledgerRows=[];
  ledgerResults.replaceChildren();ledgerFixture.replaceChildren();
  ledgerFixture.add(new Option('Load upcoming games',''));
@@ -1740,6 +1752,153 @@ async function ledgerSettle(id){
     '. Missing statistics are never assumed zero or a loss.';
  }finally{ledgerBusy=false}
 }
+
+
+// Update 34.4B — optional read-only ESPN Final diagnostics. Never touches
+// saved research records or Firestore. Requires deliberate user interaction.
+const ledgerTestDate=document.getElementById('ledgerTestDate'),
+ ledgerTestFind=document.getElementById('ledgerTestFind'),
+ ledgerTestEvent=document.getElementById('ledgerTestEvent'),
+ ledgerTestRead=document.getElementById('ledgerTestRead'),
+ ledgerTestStatus=document.getElementById('ledgerTestStatus'),
+ ledgerTestResults=document.getElementById('ledgerTestResults');
+let ledgerTestGames=new Map(),ledgerTestBusy=false;
+function ledgerTestDefaultDate(){
+ const d=ledgerNbaDay(new Date(Date.now()-86400000));
+ return d.slice(0,4)+'-'+d.slice(4,6)+'-'+d.slice(6);
+}
+ledgerTestDate.value=ledgerTestDefaultDate();
+function ledgerTestReset(){
+ ledgerTestGames.clear();ledgerTestResults.replaceChildren();
+ ledgerTestEvent.replaceChildren();ledgerTestEvent.add(new Option('Find completed games first',''));
+ ledgerTestDate.value=ledgerTestDefaultDate();
+ ledgerTestStatus.textContent='Read-only ESPN Final check. No Firestore writes or OddsPapi requests.';
+}
+function ledgerTestDayValid(value,now=Date.now()){
+ if(!/^\d{4}-\d{2}-\d{2}$/.test(value))return false;
+ const day=Date.parse(value+'T12:00:00Z');
+ return Number.isFinite(day)&&new Date(day).toISOString().slice(0,10)===value&&
+    day>=now-14*86400000&&
+    value.replaceAll('-','')<=ledgerNbaDay(new Date(now));
+}
+function ledgerTestFinalGame(event,day){
+ const status=event?.status?.type;
+ if(!/^\d+$/.test(String(event?.id||''))||status?.state!=='post'||
+   !(status?.completed===true||/^STATUS_FINAL/.test(String(status?.name||'')))||
+   Number(event.season?.type)!==2)return null;
+ const start=Date.parse(event.date||'');
+ if(!Number.isFinite(start)||ledgerNbaDay(new Date(start))!==day)return null;
+ const comp=event.competitions?.[0],sides=comp?.competitors||[];
+ const home=sides.find(x=>x.homeAway==='home'),
+  away=sides.find(x=>x.homeAway==='away');
+ const homeId=String(home?.team?.id||''),awayId=String(away?.team?.id||'');
+ const homeName=String(home?.team?.displayName||''),
+  awayName=String(away?.team?.displayName||'');
+ if(!homeName||!awayName||!homeId||!awayId||homeId===awayId||
+   !Object.values(ESPN_NBA_TEAM_IDS).includes(homeId)||
+   !Object.values(ESPN_NBA_TEAM_IDS).includes(awayId))return null;
+ return {eventId:String(event.id),eventStartMs:start,homeId,awayId,
+   homeName,awayName};
+}
+ledgerTestDate.addEventListener('change',()=>{
+ ledgerTestGames.clear();
+ ledgerTestEvent.replaceChildren();ledgerTestEvent.add(new Option('Reload completed games',''));
+ ledgerTestResults.replaceChildren();
+});
+ledgerTestFind.addEventListener('click',async()=>{
+ if(!auth.currentUser||ledgerTestBusy)return;
+ const date=ledgerTestDate.value,session=ledgerSession,uid=auth.currentUser.uid;
+ if(!ledgerTestDayValid(date)){
+  ledgerTestStatus.textContent='Choose a real completed NBA date from the last 14 days.';return;
+ }
+ ledgerTestBusy=true;ledgerTestFind.disabled=true;ledgerTestRead.disabled=true;
+ ledgerTestGames.clear();ledgerTestResults.replaceChildren();
+ try{
+  ledgerTestStatus.textContent='Reading ESPN completed fixtures for '+date+'…';
+  const day=date.replaceAll('-','');
+  const board=await ledgerFetch(RESEARCH_ESPN_BASE+'scoreboard?dates='+day);
+  if(!Array.isArray(board?.events))throw Error('ESPN scoreboard data unavailable');
+  if(session!==ledgerSession||auth.currentUser?.uid!==uid)return;
+  if(ledgerTestDate.value!==date)throw Error('Date changed; choose completed games again');
+  const events=new Map();
+  for(const e of board.events){
+   const normalized=ledgerTestFinalGame(e,day);
+   if(normalized)events.set(normalized.eventId,normalized);
+  }
+  ledgerTestGames=events;ledgerTestEvent.replaceChildren();
+  ledgerTestEvent.add(new Option('Choose a completed regular-season fixture',''));
+  for(const game of [...events.values()].sort((a,b)=>a.eventStartMs-b.eventStartMs)){
+   ledgerTestEvent.add(new Option(
+    game.awayName+' @ '+game.homeName+' · '+ledgerLisbonTime(game.eventStartMs),
+    game.eventId));
+  }
+  ledgerTestStatus.textContent=events.size+' verified completed NBA games on '+date+
+   '. Now enter a player and team in Actual line research above, then choose their completed game.';
+ }catch(e){
+  if(session===ledgerSession&&auth.currentUser?.uid===uid)
+   ledgerTestStatus.textContent='Read-only game lookup unavailable: '+(e.message||String(e));
+ }finally{ledgerTestBusy=false;ledgerTestFind.disabled=false;ledgerTestRead.disabled=false}
+});
+ledgerTestRead.addEventListener('click',async()=>{
+ const current=auth.currentUser;
+ if(!current||ledgerTestBusy)return;
+ const selected=ledgerTestGames.get(ledgerTestEvent.value),
+  name=lrPlayer.value.trim(),team=lrTeam.value,
+  teamId=ESPN_NBA_TEAM_IDS[team];
+ if(!selected||!name||!teamId){
+  ledgerTestStatus.textContent='Select a completed ESPN game, and enter a player name and team in Actual line research above.';return;
+ }
+ if(![selected.homeId,selected.awayId].includes(teamId)){
+  ledgerTestStatus.textContent='Selected NBA team did not play in that completed fixture.';return;
+ }
+ const uid=current.uid,session=ledgerSession;
+ ledgerTestBusy=true;ledgerTestRead.disabled=true;ledgerTestResults.replaceChildren();
+ try{
+  ledgerTestStatus.textContent='Verifying the ESPN team roster and player identity…';
+  const roster=await readEspnIdentity(RESEARCH_ESPN_BASE+'teams/'+encodeURIComponent(teamId)+'/roster');
+  if((roster.team?.id&&String(roster.team.id)!==teamId)||
+    (roster.team?.displayName&&canonicalPlayerName(roster.team.displayName)!==canonicalPlayerName(team)))
+   throw Error('Roster team identity mismatch');
+  const matches=new Map((roster.athletes||[]).flatMap(x=>Array.isArray(x?.items)?x.items:[x])
+   .filter(x=>x?.id&&canonicalPlayerName(x?.displayName||'')===canonicalPlayerName(name))
+   .map(x=>[String(x.id),x]));
+  if(matches.size!==1)throw Error('Player was not uniquely verified on the current ESPN team roster');
+  const athlete=[...matches.values()][0];
+  if(auth.currentUser?.uid!==uid||session!==ledgerSession)return;
+  ledgerTestStatus.textContent='Reading completed ESPN box score; no ledger write…';
+  const summary=await ledgerFetch(RESEARCH_ESPN_BASE+'summary?event='+encodeURIComponent(selected.eventId));
+  if(auth.currentUser?.uid!==uid||session!==ledgerSession)return;
+  if(ledgerTestGames.get(ledgerTestEvent.value)!==selected||
+      canonicalPlayerName(lrPlayer.value.trim())!==canonicalPlayerName(name)||
+      lrTeam.value!==team)throw Error('Selection changed during the read-only check');
+  const stats=ledgerExtractFinalStats(summary,{
+   ...selected,athleteId:String(athlete.id),teamId
+  });
+  const heading=researchCreate('div',null,'stat-tile');
+  heading.append(researchCreate('strong',
+   athlete.displayName+' · '+team+' · '+selected.awayName+' @ '+selected.homeName),
+   researchCreate('p','ESPN Final verified: event, both teams and exact athlete ID. '+ledgerLisbonTime(selected.eventStartMs)+
+    ' · No ledger entry created or changed.','muted'));
+  ledgerTestResults.append(heading);
+  const table=researchCreate('table'),head=researchCreate('thead'),tr=researchCreate('tr');
+  for(const h of ['Statistic','Verified ESPN final value'])tr.append(researchCreate('th',h));
+  head.append(tr);table.append(head);
+  const body=researchCreate('tbody');
+  for(const market of ['PTS','REB','AST','3PT','PR','PA','RA','PRA','MIN']){
+   const tr=researchCreate('tr');
+   tr.append(researchCreate('td',market));
+   tr.append(researchCreate('td',Number.isFinite(stats[market])?stats[market]:'Unavailable'));
+   body.append(tr);
+  }
+  table.append(body);const scroll=researchCreate('div',null,'boxscore');
+  scroll.append(table);ledgerTestResults.append(scroll);
+  ledgerTestStatus.textContent='ESPN final player stats verified. Read-only diagnostic passed · 0 OddsPapi requests · 0 Firestore writes.';
+ }catch(err){
+  if(auth.currentUser?.uid===uid&&session===ledgerSession)
+   ledgerTestStatus.textContent='Final-stat check unavailable: '+(err.message||String(err))+
+    '. No research entry was created or settled.';
+ }finally{ledgerTestBusy=false;ledgerTestRead.disabled=false}
+});
 
 btRun.addEventListener('click',async()=>{
  const player=btPlayer.value.trim(),team=btTeam.value,teamId=ESPN_NBA_TEAM_IDS[team];
