@@ -902,7 +902,6 @@ const btPlayer=document.getElementById('btPlayer');
 const btStatus=document.getElementById('btStatus');
 const btResults=document.getElementById('btResults');
 const btRun=document.getElementById('btRun');
-for(const t of TEAM_NAMES)btTeam.add(new Option(t,t));
 window.addEventListener('tracker-backtest-player',event=>{
  const name=String(event.detail?.name||''),team=String(event.detail?.team||'');
  if(!TEAM_NAMES.includes(team))return;
@@ -1223,6 +1222,7 @@ function TODAY(now=new Date()){
 }
 const TEAM_NAMES=['Atlanta Hawks','Boston Celtics','Brooklyn Nets','Charlotte Hornets','Chicago Bulls','Cleveland Cavaliers','Dallas Mavericks','Denver Nuggets','Detroit Pistons','Golden State Warriors','Houston Rockets','Indiana Pacers','LA Clippers','Los Angeles Lakers','Memphis Grizzlies','Miami Heat','Milwaukee Bucks','Minnesota Timberwolves','New Orleans Pelicans','New York Knicks','Oklahoma City Thunder','Orlando Magic','Philadelphia 76ers','Phoenix Suns','Portland Trail Blazers','Sacramento Kings','San Antonio Spurs','Toronto Raptors','Utah Jazz','Washington Wizards'];
 for(const team of TEAM_NAMES)espnIdentityTeam.add(new Option(team,team));
+for(const t of TEAM_NAMES)btTeam.add(new Option(t,t));
 const teamFilterOpen=new Set();const blankChecklist=()=>({players:[],checked:{},date:TODAY(),revision:0});let data=blankChecklist(),user=null,unsubscribe=null,ready=false,writeQueue=Promise.resolve(),authSession=0,pendingWrites=0,latestCloud=null,lastCommitted=null,syncError=null;
 function msg(s,error=false){$('status').textContent=s;$('status').className=error?'warning':'muted'}
 function normalize(raw){if(!raw||!Array.isArray(raw.players)||!raw.checked||typeof raw.checked!=='object'||Array.isArray(raw.checked))throw Error('Invalid backup');return {players:raw.players.filter(p=>p&&typeof p.name==='string'&&typeof p.team==='string').map(p=>({name:p.name,team:p.team})),checked:Object.fromEntries(Object.entries(raw.checked).filter(([k,v])=>typeof k==='string'&&v===true)),date:typeof raw.date==='string'?raw.date:TODAY(),revision:Number.isSafeInteger(raw.revision)&&raw.revision>=0?raw.revision:0}}
