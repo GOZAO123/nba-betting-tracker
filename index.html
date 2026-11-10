@@ -1002,18 +1002,34 @@ function btNextForecast(train){
  const probability=btClip(.55*normal+.45*empirical);
  return {line,p:probability,empirical};
 }
+// 34.1B: strictly pre-game, fixed-form experimental minutes/role adjustment.
+// Parameters are fixed in advance, not optimized on these historical outcomes.
+function btMinutesAwareForecast(train,f){
+ if(train.length!==12||!Number.isFinite(f?.p)||!Number.isFinite(f?.line)||
+   train.some(x=>!Number.isFinite(x.value)||x.value<0||!Number.isFinite(x.minutes)||x.minutes<=0||x.minutes>60))return null;
+ const recent=train.slice(-4),sum=(arr,key)=>arr.reduce((s,x)=>s+x[key],0);
+ const m12=sum(train,'minutes')/12,m4=sum(recent,'minutes')/4;
+ const nextMinutes=Math.min(48,Math.max(1,Math.max(.85*m12,Math.min(1.15*m12,.65*m12+.35*m4))));
+ const rate12=sum(train,'value')/sum(train,'minutes'),rate4=sum(recent,'value')/sum(recent,'minutes');
+ const adjustedMean=nextMinutes*(.7*rate12+.3*rate4),mean=sum(train,'value')/12;
+ const sd=Math.max(1,Math.sqrt(train.reduce((v,x)=>v+(x.value-mean)**2,0)/11));
+ const over=mu=>1-btNormalCdf((f.line-mu)/sd);
+ const p=btClip(f.p+.35*(over(adjustedMean)-over(mean)));
+ return Number.isFinite(p)?{p,nextMinutes,adjustedMean}:null;
+}
 function btWalkForward(games,market){
- const series=games.map(g=>({date:g.date,value:g.stats[market]}))
+ const series=games.map(g=>({date:g.date,value:g.stats[market],minutes:g.stats.MIN}))
   .filter(x=>Number.isFinite(x.value)&&x.value>=0).sort((a,b)=>a.date-b.date);
  const predictions=[];
  for(let i=12;i<series.length;i++){
   const history=series.slice(i-12,i).map(x=>x.value);
   const f=btNextForecast(history);
   if(!f)continue;
+  const alternate=btMinutesAwareForecast(series.slice(i-12,i),f);
   const actual=Number(series[i].value>f.line);
   predictions.push({
-   time:series[i].date,
-   line:f.line,probability:f.p,baselineProbability:f.empirical,actual
+   time:series[i].date,line:f.line,probability:f.p,
+   baselineProbability:f.empirical,minutesAwareProbability:alternate?.p??null,actual
   });
  }
  const n=predictions.length;
@@ -1021,8 +1037,11 @@ function btWalkForward(games,market){
   reason:'At least 24 valid player games needed (12 warm-up + 12 out-of-sample tests).'};
  const brier=key=>predictions.reduce((sum,x)=>sum+(x[key]-x.actual)**2,0)/n;
  const model=brier('probability'),baseline=brier('baselineProbability');
+ const pairedCount=predictions.filter(x=>Number.isFinite(x.minutesAwareProbability)).length;
+ const minutesAware=pairedCount===n?brier('minutesAwareProbability'):null;
  const accuracy=predictions.filter(x=>(x.probability>=.5)===Boolean(x.actual)).length/n;
  return {market,games:series.length,tests:n,valid:true,model,baseline,accuracy,
+  minutesAware,pairedCount,
   blindBaseline:.25,firstTest:predictions[0].time,lastTest:predictions[n-1].time,
   predictions};
 }
@@ -1037,6 +1056,11 @@ function btScoreComparison(row){
  if(shownModel>shownBaseline)return {kind:'higher',label:'Higher error'};
  return {kind:'tied',label:'Tie (4 decimals)'};
 }
+function btCandidateComparison(row){
+ if(!row.valid||!Number.isFinite(row.minutesAware)||row.pairedCount!==row.tests)
+  return {kind:'insufficient',label:'Not comparable'};
+ return btScoreComparison({valid:true,model:row.minutesAware,baseline:row.model});
+}
 function btRender(games,player,team,season){
  btResults.replaceChildren();
  const label=researchCreate('div',null,'stat-tile');
@@ -1047,7 +1071,7 @@ function btRender(games,player,team,season){
  btResults.append(label);
  const results=['PTS','REB','AST','3PT','PR','PA','RA','PRA'].map(m=>btWalkForward(games,m));
  const table=researchCreate('table'),head=researchCreate('thead'),thRow=researchCreate('tr');
- for(const header of ['Market','Valid games','Walk-forward tests','Model Brier ↓','Rolling baseline ↓','Comparison','Model accuracy']){
+ for(const header of ['Market','Valid games','Walk-forward tests','Current Brier ↓','Minutes-aware Brier ↓','Candidate vs current','Rolling baseline ↓','Current vs baseline','Current accuracy']){
   thRow.append(researchCreate('th',header));
  }
  head.append(thRow);table.append(head);
@@ -1057,6 +1081,8 @@ function btRender(games,player,team,season){
   const values=[
    row.market,row.games,row.tests,
    row.valid?row.model.toFixed(4):'Insufficient',
+   row.valid&&row.minutesAware!==null?row.minutesAware.toFixed(4):'Unavailable',
+   btCandidateComparison(row).label,
    row.valid?row.baseline.toFixed(4):'—',
    btScoreComparison(row).label,
    row.valid?(100*row.accuracy).toFixed(0)+'%':'—'
@@ -1067,7 +1093,7 @@ function btRender(games,player,team,season){
  table.append(body);
  const wrap=researchCreate('div',null,'boxscore');wrap.append(table);btResults.append(wrap);
  btResults.append(researchCreate('p',
-  'Each held-out game is predicted from only the preceding 12 player appearances; the reference line is a synthetic training-window median (+0.5), NOT an actual historical bookmaker line. Lower Brier score is better. The rolling baseline uses previous Over results with weak smoothing.','muted'));
+  'EXPERIMENT: minutes-aware uses only the preceding 12 appearances for minutes and per-minute production trends. The current model and synthetic line are unchanged. Both face the SAME held-out games. No real Betano historical odds or betting recommendations. Lower Brier is better.','muted'));
  const good=results.filter(r=>r.valid);
  if(!good.length){
   btResults.append(researchCreate('p',
@@ -1078,6 +1104,12 @@ function btRender(games,player,team,season){
   for(const row of good)counts[btScoreComparison(row).kind]++;
   if(counts.lower+counts.higher+counts.tied!==good.length)
    throw Error('Internal Brier comparison count mismatch. Results not reliable.');
+  const candidateCounts={lower:0,higher:0,tied:0,insufficient:0};
+  for(const row of good)candidateCounts[btCandidateComparison(row).kind]++;
+  btResults.append(researchCreate('p',
+   'Experimental minutes-aware vs current: '+candidateCounts.lower+' lower, '+
+   candidateCounts.higher+' higher, '+candidateCounts.tied+' tied, '+
+   candidateCounts.insufficient+' incomparable markets. Original model unchanged.','warning'));
   btResults.append(researchCreate('p',
    good.length+' markets met the minimum 12 held-out tests. At displayed 4-decimal precision: '+
    counts.lower+' lower model error, '+counts.higher+' higher model error, '+
