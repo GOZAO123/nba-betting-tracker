@@ -309,6 +309,7 @@ main{width:100%;min-width:0}
    <option value="RA">RA</option><option value="PRA">PRA</option>
   </select></div>
   <div class="row"><label for="lineResearchLine">Line:</label><input id="lineResearchLine" type="number" step="1" min="0.5" max="150.5" placeholder="e.g. 24.5" style="width:100px">
+  <label for="lineResearchSide">Selection:</label><select id="lineResearchSide" aria-label="Betano market selection"><option value="Over">Over</option><option value="Under">Under</option></select>
   <label for="lineResearchOdds">Decimal odds (optional):</label><input id="lineResearchOdds" type="number" min="1.01" max="100" step="0.01" placeholder="e.g. 1.80" style="width:110px">
   <button id="lineResearchRun" class="primary" type="button">Research this line (ESPN only)</button></div>
   <p id="lineResearchStatus" class="muted" role="status">Manual · at most 1 current-team ESPN roster and 2 season game logs · zero OddsPapi requests. Historical quote snapshots expire; enter a fresh line manually when needed.</p>
@@ -1150,6 +1151,7 @@ const lrPlayer=document.getElementById('lineResearchPlayer');
 const lrTeam=document.getElementById('lineResearchTeam');
 const lrMarket=document.getElementById('lineResearchMarket');
 const lrLine=document.getElementById('lineResearchLine');
+const lrSide=document.getElementById('lineResearchSide');
 const lrOdds=document.getElementById('lineResearchOdds');
 const lrRun=document.getElementById('lineResearchRun');
 const lrStatus=document.getElementById('lineResearchStatus');
@@ -1212,11 +1214,11 @@ function lrResearch(games,market,line,cutoff=Date.now()){
   w12:lrWindow(values,line,12),w24:lrWindow(values,line,24),
   lastDate:clean.length?clean[clean.length-1].date:null};
 }
-function lrDraw(result,identity,notes,odds){
+function lrDraw(result,identity,notes,odds,side){
  lrResults.replaceChildren();
  const header=researchCreate('div',null,'stat-tile');
  header.append(
-  researchCreate('strong',identity.name+' · '+identity.team+' · '+result.market+' '+result.line),
+  researchCreate('strong',identity.name+' · '+identity.team+' · '+result.market+' '+result.line+' · '+side),
   researchCreate('p',result.eligibleGames+' usable past regular-season appearances · '+notes.join(' · '),'muted'));
  lrResults.append(header);
  if(!result.w12){
@@ -1226,7 +1228,7 @@ function lrDraw(result,identity,notes,odds){
   return;
  }
  const table=researchCreate('table'),head=researchCreate('thead'),tr=researchCreate('tr');
- for(const h of ['History','Recorded Overs','Raw hit rate','Smoothed rate','Normal approximation','Blended estimate*','Average stat']){
+ for(const h of ['History','Recorded Overs','Raw Over','Smoothed Over','Normal Over','Blended Over*','Blended Under*','Average stat']){
   tr.append(researchCreate('th',h));
  }
  head.append(tr);table.append(head);const body=researchCreate('tbody');
@@ -1234,7 +1236,8 @@ function lrDraw(result,identity,notes,odds){
   const row=researchCreate('tr');
   for(const val of ['Last '+w.n,w.hits+'/'+w.n,
    (100*w.empirical).toFixed(1)+'%',(100*w.smoothed).toFixed(1)+'%',
-   (100*w.normal).toFixed(1)+'%',(100*w.model).toFixed(1)+'%',w.average.toFixed(1)]){
+   (100*w.normal).toFixed(1)+'%',(100*w.model).toFixed(1)+'%',
+   (100*(1-w.model)).toFixed(1)+'%',w.average.toFixed(1)]){
    row.append(researchCreate('td',val));
   }
   body.append(row);
@@ -1254,8 +1257,8 @@ function lrDraw(result,identity,notes,odds){
  }
  if(odds!==null){
   lrResults.append(researchCreate('p',
-   'Entered decimal odds: '+odds.toFixed(2)+
-   ' · simple break-even frequency: '+(100/odds).toFixed(1)+
+   'Entered '+side+' decimal odds: '+odds.toFixed(2)+
+   ' · simple break-even frequency for that side: '+(100/odds).toFixed(1)+
    '%. This is NOT a model-estimated betting edge or recommendation; no vig adjustment or live bookmaker verification.','muted'));
  }
  lrResults.append(researchCreate('p',
@@ -1269,6 +1272,7 @@ window.addEventListener('tracker-line-research-prefill',event=>{
    lrValidateLine(item.line)===null||!item.player)return;
  lrPlayer.value=String(item.player);lrTeam.value=item.team;
  lrMarket.value=item.market;lrLine.value=item.line;
+ lrSide.value=['Over','Under'].includes(item.side)?item.side:'Over';
  lrOdds.value=Number.isFinite(item.price)?String(item.price):'';
  lrQuoteContext={
   player:String(item.player),team:item.team,market:item.market,line:item.line,
@@ -1285,17 +1289,23 @@ window.addEventListener('tracker-line-research-prefill',event=>{
 lrRun.addEventListener('click',async()=>{
  if(!auth.currentUser){lrStatus.textContent='Sign in with Google first.';return}
  const name=lrPlayer.value.trim(),team=lrTeam.value,market=lrMarket.value,
-  line=lrValidateLine(lrLine.value),odds=lrValidateOdds(lrOdds.value);
+  line=lrValidateLine(lrLine.value),side=lrSide.value,odds=lrValidateOdds(lrOdds.value);
  if(!name||!Object.hasOwn(ESPN_NBA_TEAM_IDS,team)||line===null||
-   (odds!==null&&!Number.isFinite(odds))){
+   !['Over','Under'].includes(side)||(odds!==null&&!Number.isFinite(odds))){
   lrStatus.textContent='Enter an ESPN player name, select their NBA team, and use a half-point line (e.g. 24.5). Odds, if provided, must be 1.01–100.00.';
   return;
  }
  const expected=lrQuoteContext&&lrQuoteContext.team===team&&
   canonicalPlayerName(lrQuoteContext.player)===canonicalPlayerName(name)&&
-  lrQuoteContext.market===market&&lrQuoteContext.line===line?lrQuoteContext:null;
+  lrQuoteContext.market===market&&lrQuoteContext.line===line&&
+  lrQuoteContext.side===side&&
+  (Number.isFinite(lrQuoteContext.price)?Number(lrQuoteContext.price)===odds:odds===null)
+  ?lrQuoteContext:null;
+ // If this was copied from an earlier preview, exclude all fixtures started
+ // in the 12 hours preceding its timestamp: ESPN event dates are TIPOFF times,
+ // not completion times, and we must not incorporate a game finished later.
  const cutoff=expected&&Number.isFinite(expected.receivedAt)?
-  Math.min(Date.now(),expected.receivedAt):Date.now();
+  Math.min(Date.now(),expected.receivedAt)-12*60*60*1000:Date.now();
  lrRun.disabled=true;lrResults.replaceChildren();
  try{
   const teamId=ESPN_NBA_TEAM_IDS[team];
@@ -1328,18 +1338,21 @@ lrRun.addEventListener('click',async()=>{
    }
   }
   if(lrPlayer.value.trim()!==name||lrTeam.value!==team||lrMarket.value!==market||
-      lrValidateLine(lrLine.value)!==line)throw Error('Input changed during loading. Results discarded.');
+      lrValidateLine(lrLine.value)!==line||lrSide.value!==side||
+      lrValidateOdds(lrOdds.value)!==odds)
+   throw Error('Input changed during loading. Results discarded.');
   if(!games.length)throw Error('Both ESPN season logs unavailable. No probability estimate generated.');
   const researched=lrResearch(games,market,line,cutoff);
   const fullNames=canonicalPlayerName(athlete.displayName)===canonicalPlayerName(name);
   if(!fullNames)throw Error('ESPN player identity changed unexpectedly.');
   const summaryNotes=notes.slice();
   if(expected){
+   summaryNotes.push('Conservative cutoff: 12h before quote timestamp (game dates are tipoff times)');
    summaryNotes.push('Quote snapshot from '+new Intl.DateTimeFormat('en-GB',{
     timeZone:'Europe/Lisbon',hour:'2-digit',minute:'2-digit',hour12:false
    }).format(new Date(expected.receivedAt))+' Lisbon');
-  }else summaryNotes.push('Manually entered line · no live bookmaker verification');
-  lrDraw(researched,{name:athlete.displayName,team},summaryNotes,odds);
+  }else summaryNotes.push('Manually entered line/odds · no live bookmaker verification');
+  lrDraw(researched,{name:athlete.displayName,team},summaryNotes,odds,side);
   lrStatus.textContent='Research completed for ESPN athlete '+athlete.displayName+
    ' · '+researched.eligibleGames+' historical games · zero OddsPapi requests. No validated betting probability or pick.';
  }catch(e){
