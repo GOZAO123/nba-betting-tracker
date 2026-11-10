@@ -306,7 +306,17 @@ main{width:100%;min-width:0}
   <div id="btResults" class="research-results"></div>
  </div>
  <div class="scanner-workspace"><div class="scanner-section-head"><div><h3>📐 Model validation · Six-player cohort</h3><p class="muted">Combine chronological backtests for Knicks and Nuggets players, with pooled Brier scores and probability calibration. ESPN-only exploratory evaluation.</p></div></div>
-  <div class="row"><button id="btCohortRun" type="button" class="primary">Validate six players (ESPN only)</button><span class="muted">Manual · up to 2 ESPN rosters + 6 player game logs · 0 OddsPapi calls</span></div>
+  <div class="row"><button id="btCohortRun" type="button" class="primary">Validate six players (ESPN only)</button><span class="muted">Manual · 6–12 players · up to 18 bounded ESPN requests · 0 OddsPapi calls</span></div>
+  <details class="scanner-dev" id="btExtrasPanel"><summary>＋ Expand testing to more NBA teams (optional)</summary>
+   <div class="scanner-dev-content"><p class="muted">Add up to six more players across NBA teams. Each exact ESPN identity is checked before analysis; no betting odds or API requests are fetched when adding names.</p>
+    <div class="row"><input id="btExtraName" type="text" maxlength="64" placeholder="Another player (e.g. Luka Doncic)" aria-label="Additional player name" style="min-width:245px">
+    <select id="btExtraTeam" aria-label="Additional player's NBA team"><option value="">Choose NBA team</option></select>
+    <button id="btExtraAdd" type="button" class="mini">Add player</button>
+    <button id="btExtraClear" type="button" class="mini">Clear extras</button></div>
+    <p id="btExtrasStatus" class="muted" role="status">Original six-player group selected. Up to six extras can be included.</p>
+    <div id="btExtrasList" class="row"></div>
+   </div>
+  </details>
   <p id="btCohortStatus" class="muted" role="status">Starter group: Jalen Brunson, Mikal Bridges, OG Anunoby, Nikola Jokić, Jamal Murray, Aaron Gordon. Run once to compare their 2025–26 held-out results.</p>
   <div id="btCohortResults" class="research-results"></div>
   <p class="muted notice">Exploratory only. Repeated player-market predictions are correlated; a lower Brier score on synthetic lines does not establish profitable bets or future predictive performance.</p>
@@ -1125,6 +1135,88 @@ const BT_MARKETS=Object.freeze(['PTS','REB','AST','3PT','PR','PA','RA','PRA']);
 const btCohortButton=document.getElementById('btCohortRun');
 const btCohortStatus=document.getElementById('btCohortStatus');
 const btCohortResults=document.getElementById('btCohortResults');
+const btExtraName=document.getElementById('btExtraName');
+const btExtraTeam=document.getElementById('btExtraTeam');
+const btExtraAdd=document.getElementById('btExtraAdd');
+const btExtraClear=document.getElementById('btExtraClear');
+const btExtrasStatus=document.getElementById('btExtrasStatus');
+const btExtrasList=document.getElementById('btExtrasList');
+const BT_EXTRA_STORAGE_KEY='nba-model-validation-extras-v34';
+const BT_MAX_EXTRAS=6,BT_MAX_TEAMS=6;
+let btExtraPlayers=[],btCohortBusy=false;
+// ESPN's id map is declared earlier, so this causes no startup dependency on
+// TEAM_NAMES (which is declared later in the Firebase module).
+for(const team of Object.keys(ESPN_NBA_TEAM_IDS).sort())btExtraTeam.add(new Option(team,team));
+function btCohortList(){
+ return [...BT_COHORT,...btExtraPlayers];
+}
+function btNormalizeExtra(value){
+ if(!value||typeof value.name!=='string'||typeof value.team!=='string')return null;
+ const name=value.name.trim(),team=value.team;
+ if(name.length<2||name.length>64||!canonicalPlayerName(name)||!Object.hasOwn(ESPN_NBA_TEAM_IDS,team))return null;
+ return {name,team};
+}
+function btValidExtraList(values){
+ if(!Array.isArray(values)||values.length>BT_MAX_EXTRAS)return null;
+ const clean=[],seen=new Set(BT_COHORT.map(p=>canonicalPlayerName(p.name)));
+ for(const input of values){
+  const entry=btNormalizeExtra(input);
+  if(!entry)return null;
+  const key=canonicalPlayerName(entry.name);
+  if(seen.has(key))return null;
+  seen.add(key);clean.push(entry);
+ }
+ if(new Set([...BT_COHORT,...clean].map(p=>p.team)).size>BT_MAX_TEAMS)return null;
+ return clean;
+}
+function btSaveExtras(){
+ try{sessionStorage.setItem(BT_EXTRA_STORAGE_KEY,JSON.stringify(btExtraPlayers))}catch(_){}
+}
+function btRenderExtras(){
+ btExtrasList.replaceChildren();
+ for(const entry of btExtraPlayers){
+  const chip=researchCreate('span',entry.name+' · '+entry.team+' ','muted');
+  chip.style.cssText='padding:5px 8px;background:#1e3049;border-radius:8px';
+  const remove=researchCreate('button','×','mini');
+  remove.type='button';remove.title='Remove '+entry.name;
+  remove.disabled=btCohortBusy;
+  remove.addEventListener('click',()=>{
+   if(btCohortBusy)return;
+   btExtraPlayers=btExtraPlayers.filter(p=>p!==entry);
+   btSaveExtras();btRenderExtras();
+  });
+  chip.append(remove);btExtrasList.append(chip);
+ }
+ const cohort=btCohortList(),teams=new Set(cohort.map(p=>p.team)).size;
+ btCohortButton.textContent='Validate '+cohort.length+' players (ESPN only)';
+ btExtrasStatus.textContent=cohort.length+' total players across '+teams+
+  ' NBA teams · up to '+(cohort.length+teams)+' ESPN reads on a cold run · '+
+  btExtraPlayers.length+'/'+BT_MAX_EXTRAS+' optional players selected. No odds calls.';
+}
+try{
+ const loaded=JSON.parse(sessionStorage.getItem(BT_EXTRA_STORAGE_KEY)||'null');
+ if(loaded){
+  const valid=btValidExtraList(loaded);
+  if(valid)btExtraPlayers=valid;
+ }
+}catch(_){}
+btRenderExtras();
+btExtraAdd.addEventListener('click',()=>{
+ if(btCohortBusy)return;
+ const entry=btNormalizeExtra({name:btExtraName.value,team:btExtraTeam.value});
+ if(!entry){btExtrasStatus.textContent='Enter a valid player name and select an NBA team.';return}
+ const next=btValidExtraList([...btExtraPlayers,entry]);
+ if(!next){
+  btExtrasStatus.textContent='Cannot add player: duplicate name, over six extras or over six total NBA teams.';
+  return;
+ }
+ btExtraPlayers=next;btExtraName.value='';btExtraTeam.value='';
+ btSaveExtras();btRenderExtras();
+});
+btExtraClear.addEventListener('click',()=>{
+ if(btCohortBusy)return;
+ btExtraPlayers=[];btSaveExtras();btRenderExtras();
+});
 
 function btPoolMarket(entries,market){
  // Each held-out prediction contributes exactly one squared error.
@@ -1201,22 +1293,22 @@ function btTemporalStability(games){
  return {valid:samples.every(x=>x.n>=30&&Number.isFinite(x.model)&&Number.isFinite(x.baseline)),
   boundary,samples};
 }
-function btCohortSummary(entries,issues=[]){
+function btCohortSummary(entries,issues=[],requested=BT_COHORT.length,requestedTeams=2){
  if(!Array.isArray(entries))throw Error('Missing validated player history.');
  const uniqueIds=new Set(entries.map(e=>e.id));
  if(uniqueIds.size!==entries.length)throw Error('Duplicate ESPN athlete identity in cohort; validation cancelled.');
  const markets=BT_MARKETS.map(m=>btPoolMarket(entries,m));
  return {entries,issues,markets,teams:new Set(entries.map(e=>e.team)).size,
-  players:entries.length};
+  players:entries.length,requested,requestedTeams};
 }
 function btDrawCohort(report,season){
  btCohortResults.replaceChildren();
  const heading=researchCreate('div',null,'stat-tile');
  heading.append(
-  researchCreate('strong',report.players+'/'+BT_COHORT.length+
+  researchCreate('strong',report.players+'/'+report.requested+
    ' ESPN players validated · '+report.teams+' NBA teams · '+(season-1)+'–'+String(season).slice(-2)),
   researchCreate('p','Scores use chronological held-out games, not in-sample fits. '+
-   'These six players were selected for exploration, not randomly sampled.','muted')
+   'These players were selected for exploration, not randomly sampled.','muted')
  );
  btCohortResults.append(heading);
  if(report.issues.length){
@@ -1224,9 +1316,12 @@ function btDrawCohort(report,season){
    '⚠️ Missing players / sources: '+report.issues.join(' · ')+
    '. Pooled results exclude the missing data.','warning'));
  }
- if(report.players<6||report.teams<2){
+ const enoughTeams=report.requested>6?3:2;
+ if(report.players<report.requested||report.teams<enoughTeams){
   btCohortResults.append(researchCreate('p',
-   '⚠️ Incomplete starter cohort: compare descriptive statistics only. The full six-player/two-team check has not passed.','warning'));
+   '⚠️ Incomplete cohort: '+report.players+'/'+report.requested+' verified players, '+
+   report.teams+'/'+enoughTeams+' minimum NBA teams. A wider cohort must span at least three teams. '+
+   'Comparisons remain descriptive.','warning'));
  }
  const participants=researchCreate('div',null,'boxscore'),ptable=researchCreate('table'),
   phead=researchCreate('thead'),pr=researchCreate('tr');
@@ -1251,7 +1346,9 @@ function btDrawCohort(report,season){
  head.append(tr);table.append(head);
  const body=researchCreate('tbody');
  for(const m of report.markets){
-  const row=researchCreate('tr'),enough=m.players>=6&&m.n>=120&&report.teams>=2;
+  const row=researchCreate('tr'),enough=m.players===report.requested&&
+    report.players===report.requested&&m.n>=Math.max(120,report.requested*12)&&
+    report.teams>=(report.requested>6?3:2);
   const cmp=enough?btScoreComparison({valid:true,model:m.model,baseline:m.baseline}):null;
   for(const v of [m.market,m.players,m.n,
    m.n?m.model.toFixed(4):'—',m.n?m.baseline.toFixed(4):'—',
@@ -1264,7 +1361,8 @@ function btDrawCohort(report,season){
  btCohortResults.append(researchCreate('p',
   'Pooled Brier is calculated from each prediction’s squared error, weighted by held-out appearances. '+
   'Markets and players can share game outcomes and are NOT independent observations. '+
-  '“Insufficient cohort” requires all six players, two teams and at least 120 observations in that market.','muted'));
+  '“Insufficient cohort” requires all requested players, '+(report.requested>6?'three':'two')+
+  ' different teams and at least '+Math.max(120,report.requested*12)+' held-out rows per market.','muted'));
  if(!report.markets.some(m=>m.n>0))return;
  const controls=researchCreate('div',null,'row');
  const label=researchCreate('label','Calibration market: ');
@@ -1348,11 +1446,17 @@ function btDrawCohort(report,season){
  widthSelect.addEventListener('change',redraw);
  redraw();
 }
-async function btFetchCohort(season){
+async function btFetchCohort(season,requestedPlayers=BT_COHORT){
  const rosterByTeam=new Map(),issues=[];
- // Explicitly bounded: two roster requests and six individual player log requests.
- const teams=[...new Set(BT_COHORT.map(x=>x.team))];
- if(teams.length!==2||BT_COHORT.length!==6)throw Error('Starter cohort request bound changed.');
+ // Strict upper bound even when optional players are added:
+ // max six rosters and twelve player logs, never more than 18 ESPN reads.
+ const entries=[...requestedPlayers],teams=[...new Set(entries.map(x=>x.team))];
+ if(entries.length<6||entries.length>12||teams.length<2||teams.length>6||
+    (teams.length+entries.length)>18)
+   throw Error('Cohort exceeds manual ESPN request limits.');
+ if(!btValidExtraList(entries.slice(BT_COHORT.length))||
+    BT_COHORT.some((p,i)=>p.name!==entries[i]?.name||p.team!==entries[i]?.team))
+   throw Error('Cohort contains duplicate names or invalid team assignments.');
  for(const team of teams){
   const teamId=ESPN_NBA_TEAM_IDS[team];
   if(!teamId){issues.push(team+': missing ESPN team ID');continue}
@@ -1367,14 +1471,15 @@ async function btFetchCohort(season){
   }catch(e){issues.push(team+' roster: '+(e.message||'unavailable'))}
  }
  const results=[];
- for(const entry of BT_COHORT){
+ for(let index=0;index<entries.length;index++){
+  const entry=entries[index];
   const people=rosterByTeam.get(entry.team)||[];
   const matches=new Map(people.filter(x=>
    canonicalPlayerName(x.displayName)===canonicalPlayerName(entry.name))
    .map(x=>[String(x.id),x]));
   if(matches.size!==1){issues.push(entry.name+': no unique roster match');continue}
   const a=[...matches.values()][0];
-  btCohortStatus.textContent='Analysing '+a.displayName+' ('+(results.length+1)+'/6)…';
+  btCohortStatus.textContent='Analysing '+a.displayName+' ('+(index+1)+'/'+entries.length+')…';
   try{
    const url='https://site.web.api.espn.com/apis/common/v3/sports/basketball/nba/athletes/'+
     encodeURIComponent(a.id)+'/gamelog?season='+encodeURIComponent(season);
@@ -1388,21 +1493,30 @@ async function btFetchCohort(season){
     games:games.length,results:marketResults});
   }catch(e){issues.push(a.displayName+': '+(e.message||'game log unavailable'))}
  }
- return btCohortSummary(results,issues);
+ return btCohortSummary(results,issues,entries.length,teams.length);
 }
 btCohortButton.addEventListener('click',async()=>{
  if(!auth.currentUser){btCohortStatus.textContent='Sign in first.';return}
- if(!confirm('Run six historical ESPN player backtests? Up to eight ESPN reads (2 team rosters and 6 game logs), zero OddsPapi requests. No bets will be recommended.'))return;
- btCohortButton.disabled=true;btCohortResults.replaceChildren();
+ const cohort=btCohortList(),teams=new Set(cohort.map(p=>p.team)).size;
+ const cap=cohort.length+teams;
+ if(!confirm('Run '+cohort.length+' historical ESPN player backtests? Up to '+cap+
+    ' ESPN reads ('+teams+' rosters and '+cohort.length+
+    ' game logs), zero OddsPapi requests. No bets will be recommended.'))return;
+ btCohortBusy=true;btCohortButton.disabled=true;btExtraAdd.disabled=true;btExtraClear.disabled=true;
+ btCohortResults.replaceChildren();
  try{
-  const season=btCompletedSeason(),report=await btFetchCohort(season);
+  const season=btCompletedSeason(),report=await btFetchCohort(season,cohort);
   btDrawCohort(report,season);
   btCohortStatus.textContent='Cross-player historical validation completed: '+
-   report.players+'/6 players · '+report.teams+' teams · 0 OddsPapi requests. No live prediction or betting recommendation.';
+   report.players+'/'+report.requested+' players · '+report.teams+
+   ' teams · 0 OddsPapi requests. No live prediction or betting recommendation.';
  }catch(e){
   btCohortStatus.textContent='Combined validation unavailable: '+(e.message||String(e))+
    '. No OddsPapi requests were made.';
- }finally{btCohortButton.disabled=false}
+ }finally{
+  btCohortBusy=false;btCohortButton.disabled=false;
+  btExtraAdd.disabled=false;btExtraClear.disabled=false;btRenderExtras();
+ }
 });
 
 document.getElementById('verifiedPropsBtn')?.addEventListener('click',async()=>{
