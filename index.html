@@ -588,6 +588,298 @@ try{
  }
 }catch(_){}
 
+
+// One manually triggered batch: no odds API calls, no AI probabilities or recommendations.
+const RESEARCH_ESPN_BASE='https://site.api.espn.com/apis/site/v2/sports/basketball/nba/';
+const researchEspnCache=new Map();
+async function researchJson(url,recent=false){
+ const ttl=recent?5*60000:24*60*60000;
+ const old=researchEspnCache.get(url);
+ if(old&&Date.now()-old.at<ttl)return old.data;
+ const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),14000);
+ try{
+  const response=await fetch(url,{signal:controller.signal,cache:recent?'no-store':'default'});
+  if(!response.ok)throw Error('ESPN HTTP '+response.status);
+  const data=await response.json();
+  if(researchEspnCache.size>=250&&!researchEspnCache.has(url))
+   researchEspnCache.delete(researchEspnCache.keys().next().value);
+  researchEspnCache.set(url,{data,at:Date.now()});
+  return data;
+ }finally{clearTimeout(timer)}
+}
+function researchEasternDay(now=new Date()){
+ const parts=new Intl.DateTimeFormat('en-US',{
+  timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit'
+ }).formatToParts(now);
+ const num=type=>Number(parts.find(p=>p.type===type).value);
+ return new Date(Date.UTC(num('year'),num('month')-1,num('day'),12));
+}
+function researchStat(labels,values,keys,kind='number'){
+ if(!Array.isArray(labels)||!Array.isArray(values))return null;
+ const at=labels.findIndex(l=>keys.includes(String(l).trim().toUpperCase()));
+ if(at<0||values[at]===null||values[at]===undefined)return null;
+ const raw=String(values[at]).trim();
+ if(!raw)return null;
+ if(kind==='minutes'){
+  const parts=/^(\d+):(\d{1,2})$/.exec(raw);
+  if(parts){const seconds=Number(parts[2]);return seconds<60?Number(parts[1])+seconds/60:null}
+ }
+ if(kind==='made'){
+  const parts=/^(\d+)\s*-\s*\d+$/.exec(raw);
+  if(parts)return Number(parts[1]);
+ }
+ if(!/^\d+(?:\.\d+)?$/.test(raw))return null;
+ const number=Number(raw);
+ return Number.isFinite(number)?number:null;
+}
+function researchExtractAthlete(group,athlete){
+ if(athlete?.didNotPlay===true||athlete?.dnp===true||!Array.isArray(athlete?.stats))return null;
+ const labels=group?.labels||[],values=athlete.stats;
+ const min=researchStat(labels,values,['MIN'],'minutes');
+ if(!Number.isFinite(min)||min<=0)return null;
+ const PTS=researchStat(labels,values,['PTS']);
+ const REB=researchStat(labels,values,['REB','TRB']);
+ const AST=researchStat(labels,values,['AST']);
+ const three=researchStat(labels,values,['3PM','3PT'],'made');
+ const combined=(keys)=>keys.every(k=>Number.isFinite(output[k]))
+  ?keys.reduce((n,k)=>n+output[k],0):null;
+ const output={PTS,REB,AST,'3PT':three,MIN:min};
+ output.PR=combined(['PTS','REB']);
+ output.PA=combined(['PTS','AST']);
+ output.RA=combined(['REB','AST']);
+ output.PRA=combined(['PTS','REB','AST']);
+ return output;
+}
+function researchCreate(tag,text,className){
+ const e=document.createElement(tag);
+ if(className)e.className=className;
+ if(text!==undefined&&text!==null)e.textContent=String(text);
+ return e;
+}
+async function researchSample(preview){
+ const names=preview.fixture.split(/\s+vs\.?\s+/i).map(x=>x.trim());
+ if(names.length!==2)throw Error('Cannot uniquely resolve both teams in this Betano fixture.');
+ const teams=names.map(name=>{
+  const matches=Object.entries(ESPN_NBA_TEAM_IDS).filter(([team])=>
+   canonicalPlayerName(team)===canonicalPlayerName(name));
+  if(matches.length!==1)throw Error('Cannot confidently identify NBA team '+name+'.');
+  return {name:matches[0][0],id:matches[0][1]};
+ });
+ if(teams[0].id===teams[1].id)throw Error('A fixture must contain two different NBA teams.');
+ const teamIds=new Set(teams.map(t=>t.id));
+ researchStatus.textContent='Checking both official ESPN team rosters (no OddsPapi requests)…';
+ const rosterResults=await Promise.allSettled(teams.map(t=>
+  readEspnIdentity(RESEARCH_ESPN_BASE+'teams/'+encodeURIComponent(t.id)+'/roster')));
+ const identities=new Map(),rosterErrors=[];
+ for(let i=0;i<teams.length;i++){
+  const result=rosterResults[i],team=teams[i];
+  if(result.status!=='fulfilled'){
+   rosterErrors.push(team.name+': '+(result.reason?.message||'roster unavailable'));
+   continue;
+  }
+  const roster=result.value;
+  if((roster.team?.id&&String(roster.team.id)!==team.id)||
+    (roster.team?.displayName&&
+     canonicalPlayerName(roster.team.displayName)!==canonicalPlayerName(team.name))){
+   rosterErrors.push(team.name+': ESPN roster team identity mismatch');
+   continue;
+  }
+  for(const a of (roster.athletes||[]).flatMap(x=>Array.isArray(x?.items)?x.items:[x])){
+   if(!a?.id||!a?.displayName)continue;
+   const key=canonicalPlayerName(a.displayName);
+   if(!identities.has(key))identities.set(key,new Map());
+   identities.get(key).set(team.id+':'+String(a.id),{
+    id:String(a.id),name:a.displayName,team:team.name,teamId:team.id
+   });
+  }
+ }
+ const playerMap=new Map(),unmatchedPlayers=new Set();
+ for(const offer of preview.samples){
+  const key=canonicalPlayerName(offer.player);
+  const options=[...(identities.get(key)?.values()||[])];
+  if(options.length!==1){unmatchedPlayers.add(offer.player);continue}
+  playerMap.set(key,options[0]);
+ }
+ if(!playerMap.size)throw Error('None of the preview players had a unique exact ESPN roster match. No statistics were combined.');
+ researchStatus.textContent='Checking up to 18 ESPN schedule dates for both teams…';
+ const byTeam=new Map(teams.map(t=>[t.id,new Map()]));
+ const easternToday=researchEasternDay();
+ const missingDates=[];
+ for(let offset=0;offset<18;offset+=6){
+  if([...byTeam.values()].every(games=>games.size>=5))break;
+  const days=Array.from({length:Math.min(6,18-offset)},(_,k)=>{
+   const d=new Date(easternToday);d.setUTCDate(d.getUTCDate()-offset-k);
+   return {offset:offset+k,key:d.toISOString().slice(0,10).replaceAll('-','')};
+  });
+  const boards=await Promise.all(days.map(async d=>{
+   try{
+    return await researchJson(RESEARCH_ESPN_BASE+'scoreboard?dates='+d.key,d.offset<=2);
+   }catch(_){missingDates.push(d.key);return null}
+  }));
+  for(const board of boards)for(const event of board?.events||[]){
+   if(!event?.id||event.status?.type?.state!=='post')continue;
+   if(event.season?.type!==undefined&&Number(event.season.type)!==2)continue;
+   const playing=(event.competitions?.[0]?.competitors||[]).map(x=>String(x.team?.id||''));
+   for(const id of playing){
+    const games=byTeam.get(id);
+    if(games&&!games.has(String(event.id)))games.set(String(event.id),event);
+   }
+  }
+ }
+ const lastGames=new Map();
+ const uniqueGames=new Map();
+ for(const [teamId,all] of byTeam){
+  const events=[...all.values()].sort((a,b)=>Date.parse(b.date)-Date.parse(a.date)).slice(0,5);
+  lastGames.set(teamId,events);
+  for(const event of events)uniqueGames.set(String(event.id),event);
+ }
+ if(uniqueGames.size>10)throw Error('Internal request bound exceeded.');
+ researchStatus.textContent='Loading '+uniqueGames.size+' recent ESPN box scores (up to 10)…';
+ const completed=await Promise.all([...uniqueGames.values()].map(async event=>{
+  try{
+   const recent=Date.parse(event.date)>Date.now()-48*3600000;
+   const box=await researchJson(RESEARCH_ESPN_BASE+'summary?event='+encodeURIComponent(event.id),recent);
+   return {event,box};
+  }catch(_){return {event,box:null}}
+ }));
+ const gameValues=new Map();
+ let failedBoxes=0;
+ for(const {event,box} of completed){
+  if(!box){failedBoxes++;continue}
+  for(const side of box.boxscore?.players||[]){
+   const teamId=String(side.team?.id||'');
+   if(!teamIds.has(teamId))continue;
+   for(const group of side.statistics||[])for(const athlete of group.athletes||[]){
+    const athleteId=String(athlete.athlete?.id||'');
+    if(!athleteId)continue;
+    const stats=researchExtractAthlete(group,athlete);
+    if(!stats)continue;
+    const key=String(event.id)+':'+teamId+':'+athleteId;
+    const old=gameValues.get(key);
+    const coverage=o=>Object.keys(o).filter(k=>k!=='MIN'&&Number.isFinite(o[k])).length;
+    if(!old||coverage(stats)>coverage(old))gameValues.set(key,stats);
+   }
+  }
+ }
+ const result=[],seen=new Set();
+ for(const offer of preview.samples){
+  const identity=playerMap.get(canonicalPlayerName(offer.player));
+  if(!identity)continue;
+  const market=offer.family,side=offer.selection,line=Number(offer.line),price=Number(offer.price);
+  const key=[identity.teamId,identity.id,market,side,line].join('|');
+  if(seen.has(key))continue;
+  seen.add(key);
+  const values=(lastGames.get(identity.teamId)||[]).map(game=>
+    gameValues.get(String(game.id)+':'+identity.teamId+':'+identity.id)?.[market]
+  ).filter(Number.isFinite);
+  const matches=values.filter(v=>side==='Over'?v>line:v<line).length;
+  const pushes=values.filter(v=>v===line).length;
+  result.push({
+   player:identity.name,team:identity.team,espnAthleteId:identity.id,
+   market,side,line,price,played:values.length,matches,pushes,
+   average:values.length?values.reduce((a,b)=>a+b,0)/values.length:null,
+   fixture:preview.fixture,fixtureId:preview.fixtureId,startTime:preview.startTime,
+   previewSelectedAt:preview.receivedAt,
+   oddsPapiPlayerId:String(offer.oddsPapiPlayerId||'')
+  });
+ }
+ result.sort((a,b)=>{
+  const aEnough=a.played>=3,bEnough=b.played>=3;
+  if(aEnough!==bEnough)return aEnough?-1:1;
+  if(aEnough&&bEnough){
+   const diff=b.matches/b.played-a.matches/a.played;
+   if(diff!==0)return diff;
+  }
+  return b.played-a.played||a.player.localeCompare(b.player)||a.market.localeCompare(b.market);
+ });
+ return {rows:result,teams,matchedPlayers:playerMap.size,unmatchedPlayers:[...unmatchedPlayers],
+  missingDates:[...new Set(missingDates)],failedBoxes,gamesFetched:uniqueGames.size,
+  rostersUnavailable:rosterErrors};
+}
+function renderResearchSample(result,preview){
+ researchResults.replaceChildren();
+ const summary=researchCreate('div',null,'stat-tile');
+ summary.append(
+  researchCreate('strong',result.rows.length+' research rows · '+result.matchedPlayers+' unique ESPN players matched'),
+  researchCreate('p','Fixture: '+preview.fixture+' · '+result.gamesFetched+
+    ' completed game summaries requested · quote snapshot received '+
+    new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Lisbon',hour:'2-digit',minute:'2-digit',
+      hour12:false}).format(new Date(preview.receivedAt))+' Lisbon.','muted')
+ );
+ researchResults.append(summary);
+ if(result.missingDates.length||result.failedBoxes||result.rostersUnavailable.length||result.unmatchedPlayers.length){
+  const problems=[];
+  if(result.unmatchedPlayers.length)problems.push('Unmatched/ambiguous names: '+result.unmatchedPlayers.slice(0,8).join(', '));
+  if(result.rostersUnavailable.length)problems.push('Roster unavailable: '+result.rostersUnavailable.join('; '));
+  if(result.missingDates.length)problems.push('ESPN schedule date(s) missing: '+result.missingDates.join(', '));
+  if(result.failedBoxes)problems.push('Box scores unavailable: '+result.failedBoxes);
+  researchResults.append(researchCreate('p','⚠️ Incomplete source coverage. '+problems.join(' · ')+
+   '. Historical percentages may omit recent performances.','warning'));
+ }
+ const eligible=result.rows.filter(r=>r.played>=3).length;
+ researchResults.append(researchCreate('p',
+  eligible+' rows have at least 3 recorded appearances. Sorted by historical match frequency, NOT estimated win probability or expected value. No AI betting picks generated.','muted'));
+ if(!result.rows.length){
+  researchResults.append(researchCreate('p','No player-prop rows could be matched to valid historical statistics.','warning'));
+  return;
+ }
+ const scroll=researchCreate('div',null,'boxscore'),table=researchCreate('table');
+ const head=researchCreate('thead'),tr=researchCreate('tr');
+ for(const field of ['ESPN player','Market','Side','Line','Odds snapshot','Games','Matches','Avg','Research']){
+  tr.append(researchCreate('th',field));
+ }
+ head.append(tr);table.append(head);
+ const body=researchCreate('tbody');
+ for(const r of result.rows){
+  const row=researchCreate('tr');
+  const rate=r.played>=3?(r.matches+'/'+r.played+' · '+Math.round(r.matches/r.played*100)+'%')
+   :r.played?('Only '+r.played+' game(s)'):'No appearances';
+  for(const value of [
+   r.player+' · '+r.team,r.market,r.side,r.line,r.price.toFixed(2),
+   r.played,rate,r.average===null?'—':r.average.toFixed(1)
+  ])row.append(researchCreate('td',value));
+  const actionCell=researchCreate('td'),action=researchCreate('button','View in Analyzer','mini research-row-action');
+  action.type='button';
+  action.disabled=Date.parse(r.startTime)<=Date.now();
+  action.addEventListener('click',()=>{
+   if(Date.parse(r.startTime)<=Date.now()){
+    action.disabled=true;researchStatus.textContent='That fixture has already started. Snapshot cannot be transferred as a pregame offer.';
+    return;
+   }
+   window.dispatchEvent(new CustomEvent('tracker-verified-odds-to-analyzer',{
+    detail:{
+     team:r.team,espnName:r.player,espnAthleteId:r.espnAthleteId,
+     market:r.market,line:r.line,selection:r.side,price:r.price,
+     oddsPapiPlayerId:r.oddsPapiPlayerId,fixtureId:r.fixtureId,
+     fixture:r.fixture,startTime:r.startTime,previewSelectedAt:r.previewSelectedAt
+    }
+   }));
+  });
+  actionCell.append(action);row.append(actionCell);body.append(row);
+ }
+ table.append(body);scroll.append(table);researchResults.append(scroll);
+}
+researchButton.addEventListener('click',async()=>{
+ if(!auth.currentUser){researchStatus.textContent='Sign in with Google first.';return}
+ const preview=researchPreview;
+ if(!researchPreviewValid(preview)){
+  researchPreview=null;researchButton.disabled=true;
+  researchStatus.textContent='Preview expired or the game started. No request was made. Use a new manual Betano preview when appropriate.';
+  return;
+ }
+ researchButton.disabled=true;researchResults.replaceChildren();
+ try{
+  const result=await researchSample(preview);
+  renderResearchSample(result,preview);
+  researchStatus.textContent='Completed ESPN-only multi-player research. This is historical screening, not an AI prediction or a recommendation.';
+ }catch(e){
+  researchStatus.textContent='Could not complete ESPN research: '+(e.message||String(e))+
+   '. No OddsPapi requests were made.';
+ }finally{
+  researchButton.disabled=!researchPreviewValid(researchPreview);
+ }
+});
+
 document.getElementById('verifiedPropsBtn')?.addEventListener('click',async()=>{
  const btn=document.getElementById('verifiedPropsBtn'),status=document.getElementById('verifiedPropsStatus'),out=document.getElementById('verifiedPropsResult');
  if(!auth.currentUser){status.textContent='Sign in first.';return}
