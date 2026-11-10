@@ -592,3 +592,277 @@ exports.oddsPapiVerifiedPropsProbe = onCall(
     finally{verifiedPropsCache.pending=null}
   }
 );
+
+
+// Update 34.5A — owner-only trusted entry point for prospective ESPN player-prop
+// research. This does not use OddsPapi. Quotes/probabilities remain manually
+// supplied and UNVERIFIED; backend validates ESPN identities and capture time.
+// IMPORTANT: The existing Firestore rules remain unchanged until both client
+// migration and trusted settlement have been tested.
+const { Timestamp, FieldValue } = require("firebase-admin/firestore");
+const LEDGER_ALLOWED_MARKETS = Object.freeze(["PTS","REB","AST","3PT","PR","PA","RA","PRA"]);
+const LEDGER_CAPTURE_GRACE_MS = 5*60*1000;
+const LEDGER_OWNER = "I6ZhMcObXxNVdfv2AqapDxwIaet1";
+
+function ledgerAssertOwner(request) {
+  if (!request.auth) throw new HttpsError("unauthenticated","Google sign-in required.");
+  if (request.auth.uid !== LEDGER_OWNER || request.auth.token.email_verified !== true)
+    throw new HttpsError("permission-denied","This research ledger is restricted to its owner.");
+}
+function ledgerReject(message) {
+  throw new HttpsError("invalid-argument",message);
+}
+function ledgerText(x,max) {
+  return typeof x==="string"&&x.length>0&&x.length<=max?x.trim():null;
+}
+function ledgerDigits(x) {
+  return typeof x==="string"&&/^\d{1,20}$/.test(x)?x:null;
+}
+function ledgerNameKey(x) {
+  return String(x||"").normalize("NFKD").replace(/[\u0300-\u036f]/g,"")
+    .toLowerCase().replace(/[^a-z0-9]+/g," ").trim();
+}
+function ledgerNbaDay(serverDate) {
+  const parts=new Intl.DateTimeFormat("en-US",{
+    timeZone:"America/New_York",year:"numeric",month:"2-digit",day:"2-digit"
+  }).formatToParts(serverDate);
+  const val=type=>parts.find(p=>p.type===type)?.value;
+  return val("year")+val("month")+val("day");
+}
+async function ledgerGetEspn(path) {
+  const controller=new AbortController();
+  const timeout=setTimeout(()=>controller.abort(),12000);
+  try {
+    const response=await fetch("https://site.api.espn.com/apis/site/v2/sports/basketball/nba/"+path,{
+      signal:controller.signal,headers:{Accept:"application/json"},cache:"no-store"
+    });
+    if (!response.ok) throw new Error("ESPN HTTP "+response.status);
+    return await response.json();
+  } catch (error) {
+    throw new HttpsError("unavailable","ESPN verification unavailable. No research write confirmed.");
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+function ledgerValidateCapture(payload) {
+  if (!payload||typeof payload!=="object"||Array.isArray(payload))
+    ledgerReject("Missing research entry.");
+  const player=ledgerText(payload.player,80),team=ledgerText(payload.team,80),
+    athleteId=ledgerDigits(payload.athleteId),teamId=ledgerDigits(payload.teamId),
+    eventId=ledgerDigits(payload.eventId),
+    market=payload.market,side=payload.side;
+  const homeId=ledgerDigits(payload.homeId),awayId=ledgerDigits(payload.awayId);
+  const line=payload.line,odds=payload.odds,modelOver=payload.modelOver;
+  if (!player||!team||!athleteId||!teamId||!eventId||!homeId||!awayId||
+      homeId===awayId||!LEDGER_ALLOWED_MARKETS.includes(market)||
+      !["Over","Under"].includes(side)||payload.confirmedObservedQuote!==true)
+    ledgerReject("Invalid ESPN identity, prop market or quote confirmation.");
+  if (!Number.isFinite(line)||line<0.5||line>150.5||
+      Math.abs(line-Math.floor(line)-0.5)>1e-9)
+    ledgerReject("Research line must be a positive half-point value.");
+  if (!Number.isFinite(odds)||odds<1.01||odds>100||
+      !Number.isFinite(modelOver)||modelOver<0.02||modelOver>0.98)
+    ledgerReject("Invalid decimal price or experimental probability.");
+  if (!Number.isInteger(payload.hits12)||payload.hits12<0||payload.hits12>12||
+      payload.games12!==12)
+    ledgerReject("A verified last-12 ESPN research summary is required.");
+  const count24=payload.games24??null,hits24=payload.hits24??null;
+  if (!((count24===null&&hits24===null)||
+       (count24===24&&Number.isInteger(hits24)&&hits24>=0&&hits24<=24)))
+    ledgerReject("Invalid historical 24-game sample.");
+  const start=payload.eventStartMs;
+  if (!Number.isSafeInteger(start)||start<=Date.now()+LEDGER_CAPTURE_GRACE_MS||
+      start>Date.now()+8*86400000)
+    ledgerReject("ESPN fixture must be upcoming and more than 5 minutes away.");
+  return {player,team,athleteId,teamId,eventId,homeId,awayId,
+    market,line,side,odds,modelOver,start,hits12:payload.hits12,games12:12,
+    hits24, games24:count24};
+}
+function ledgerVerifyFixture(board,record) {
+  if (!Array.isArray(board?.events))throw new HttpsError("unavailable","ESPN fixture list unavailable.");
+  const matches=board.events.filter(e=>String(e?.id||"")===record.eventId);
+  if (matches.length!==1)throw new HttpsError("failed-precondition","ESPN fixture is missing or ambiguous.");
+  const e=matches[0];
+  const start=Date.parse(e.date||"");
+  if (!Number.isFinite(start)||start!==record.start||
+      ledgerNbaDay(new Date(start))!==ledgerNbaDay(new Date(record.start))||
+      e.status?.type?.state!=="pre"||Number(e.season?.type)!==2||
+      start<=Date.now()+LEDGER_CAPTURE_GRACE_MS)
+    throw new HttpsError("failed-precondition","ESPN fixture is no longer a verified upcoming regular-season game.");
+  const comp=e.competitions?.[0]?.competitors||[];
+  const h=comp.find(x=>x.homeAway==="home"),a=comp.find(x=>x.homeAway==="away");
+  const hid=String(h?.team?.id||""),aid=String(a?.team?.id||"");
+  if (hid!==record.homeId||aid!==record.awayId||
+      ![hid,aid].includes(record.teamId))
+    throw new HttpsError("failed-precondition","The saved fixture's teams do not match ESPN.");
+  const home=ledgerText(h?.team?.displayName,80),away=ledgerText(a?.team?.displayName,80);
+  if (!home||!away)throw new HttpsError("failed-precondition","ESPN team names unavailable.");
+  return {home,away};
+}
+function ledgerVerifyRoster(roster,record) {
+  if (String(roster?.team?.id||"")!==record.teamId||
+      ledgerNameKey(roster?.team?.displayName)!==ledgerNameKey(record.team))
+    throw new HttpsError("failed-precondition","ESPN roster team mismatch.");
+  const players=(roster.athletes||[]).flatMap(x=>Array.isArray(x?.items)?x.items:[x]);
+  const matching=players.filter(a=>String(a?.id||"")===record.athleteId&&
+    ledgerNameKey(a?.displayName)===ledgerNameKey(record.player));
+  if (matching.length!==1)
+    throw new HttpsError("failed-precondition","Player identity not uniquely verified on ESPN.");
+}
+function ledgerDocId(record) {
+  return [record.eventId,record.athleteId,record.market,
+    String(record.line).replace(".","p"),record.side].join("_");
+}
+exports.ledgerCaptureProspective=onCall(
+  {region:"europe-west1",maxInstances:1,concurrency:5,timeoutSeconds:45,
+    memory:"256MiB",enforceAppCheck:false},
+  async request=>{
+    ledgerAssertOwner(request);
+    const record=ledgerValidateCapture(request.data);
+    const day=ledgerNbaDay(new Date(record.start));
+    const board=await ledgerGetEspn("scoreboard?dates="+day);
+    const verifiedGame=ledgerVerifyFixture(board,record);
+    const roster=await ledgerGetEspn("teams/"+record.teamId+"/roster");
+    ledgerVerifyRoster(roster,record);
+    const db=getFirestore(),id=ledgerDocId(record);
+    const ref=db.doc("users/"+request.auth.uid+"/propResearchLedger/"+id);
+    // Server-controlled capture timestamp; independent of browser clock.
+    const receipt=await db.runTransaction(async tx=>{
+      const previous=await tx.get(ref);
+      if (previous.exists)throw new HttpsError("already-exists",
+        "This game, player, market, line and side were already recorded.");
+      if (Date.now()+LEDGER_CAPTURE_GRACE_MS>=record.start)
+        throw new HttpsError("failed-precondition","Too near tip-off; no record saved.");
+      const captured=Timestamp.now();
+      tx.create(ref,{
+        schemaVersion:2,status:"pending",source:"manual_betano_unverified",
+        capturedVia:"trusted_firebase_callable",
+        player:record.player,athleteId:record.athleteId,
+        team:record.team,teamId:record.teamId,
+        eventId:record.eventId,eventStartMs:record.start,
+        home:verifiedGame.home,away:verifiedGame.away,
+        homeId:record.homeId,awayId:record.awayId,
+        market:record.market,line:record.line,side:record.side,odds:record.odds,
+        modelOver:record.modelOver,
+        modelSelected:record.side==="Over"?record.modelOver:1-record.modelOver,
+        hits12:record.hits12,games12:record.games12,
+        hits24:record.hits24,games24:record.games24,
+        capturedServerAt:captured,clientCapturedMs:captured.toMillis(),
+        settledAt:null,resultStat:null,resultWon:null,
+        disclaimer:"Manual Betano quote not provider-verified. Client-researched model estimate is uncalibrated."
+      });
+      return captured.toMillis();
+    },{maxAttempts:3});
+    return {saved:true,recordId:id,serverCapturedMs:receipt,verifiedEventId:record.eventId};
+  }
+);
+
+function ledgerParseStat(labels,values,names,mode="number") {
+  if (!Array.isArray(labels)||!Array.isArray(values))return null;
+  const index=labels.findIndex(x=>names.includes(String(x).trim().toUpperCase()));
+  if (index<0||index>=values.length||values[index]===null)return null;
+  const raw=String(values[index]).trim();
+  if (!raw||raw==="--")return null;
+  if (mode==="minutes") {
+    const match=/^(\d+):(\d{1,2})$/.exec(raw);
+    if (match)return Number(match[2])<60?Number(match[1])+Number(match[2])/60:null;
+  }
+  if (mode==="made") {
+    const match=/^(\d+)\s*-\s*\d+$/.exec(raw);
+    if (match)return Number(match[1]);
+  }
+  return /^\d+(?:\.\d+)?$/.test(raw)?Number(raw):null;
+}
+function ledgerExtractFinalFromEspn(summary,entry) {
+  const header=summary?.header,comp=header?.competitions?.[0];
+  if (!comp||String(header?.id||comp.id||"")!==String(entry.eventId)||
+      (comp.id&&String(comp.id)!==String(entry.eventId)))
+    throw new HttpsError("failed-precondition","ESPN final event ID mismatch.");
+  const homeAway=(comp.competitors||[]).map(x=>String(x.team?.id||""));
+  if (homeAway.length!==2||!homeAway.includes(String(entry.homeId))||
+      !homeAway.includes(String(entry.awayId)))
+    throw new HttpsError("failed-precondition","ESPN final NBA teams mismatch.");
+  const start=Date.parse(comp.date||"");
+  if (Number.isFinite(start)&&Math.abs(start-entry.eventStartMs)>120000)
+    throw new HttpsError("failed-precondition","ESPN game start has changed.");
+  const status=comp.status?.type;
+  if (status?.state!=="post"&&status?.state!=="final")
+    throw new HttpsError("failed-precondition","Game not completed.");
+  if (status.completed!==true&&!/^STATUS_FINAL/.test(String(status.name||"")))
+    throw new HttpsError("failed-precondition","ESPN final not confirmed.");
+  const sides=(summary?.boxscore?.players||[]).filter(x=>
+    String(x.team?.id||"")===String(entry.teamId));
+  if (sides.length!==1)
+    throw new HttpsError("failed-precondition","Matching ESPN player-team box score unavailable.");
+  let found=null;
+  for(const group of sides[0].statistics||[]){
+    const labels=group.labels||[];
+    for(const player of group.athletes||[]){
+      if (String(player?.athlete?.id||"")!==String(entry.athleteId))continue;
+      if (player.didNotPlay===true||player.dnp===true)continue;
+      const values=player.stats;
+      const minutes=ledgerParseStat(labels,values,["MIN"],"minutes");
+      if (!Number.isFinite(minutes)||minutes<=0)continue;
+      const PTS=ledgerParseStat(labels,values,["PTS"]);
+      const REB=ledgerParseStat(labels,values,["REB","TRB"]);
+      const AST=ledgerParseStat(labels,values,["AST"]);
+      const three=ledgerParseStat(labels,values,["3PM","3PT"],"made");
+      const stats={PTS,REB,AST,"3PT":three,
+        PR:Number.isFinite(PTS)&&Number.isFinite(REB)?PTS+REB:null,
+        PA:Number.isFinite(PTS)&&Number.isFinite(AST)?PTS+AST:null,
+        RA:Number.isFinite(REB)&&Number.isFinite(AST)?REB+AST:null,
+        PRA:Number.isFinite(PTS)&&Number.isFinite(REB)&&Number.isFinite(AST)?PTS+REB+AST:null};
+      const v=stats[entry.market];
+      if (!Number.isFinite(v))continue;
+      if(found!==null&&found!==v)
+        throw new HttpsError("failed-precondition","Contradictory player stats in ESPN final.");
+      found=v;
+    }
+  }
+  if(found===null)
+    throw new HttpsError("failed-precondition","Player DNP or stat unavailable; record remains pending.");
+  if(!Number.isFinite(entry.line)||Math.floor(entry.line)+0.5!==entry.line||
+     !["Over","Under"].includes(entry.side))
+    throw new HttpsError("failed-precondition","Stored betting line is invalid.");
+  return {stat:found,won:entry.side==="Over"?found>entry.line:found<entry.line};
+}
+exports.ledgerSettleProspective=onCall(
+  {region:"europe-west1",maxInstances:1,concurrency:5,timeoutSeconds:40,
+    memory:"256MiB",enforceAppCheck:false},
+  async request=>{
+    ledgerAssertOwner(request);
+    const id=ledgerText(request.data?.recordId,100);
+    if(!id||!/^[A-Za-z0-9_]+$/.test(id))
+      ledgerReject("Invalid prospective research record ID.");
+    const db=getFirestore(),ref=db.doc("users/"+request.auth.uid+"/propResearchLedger/"+id);
+    const snapshot=await ref.get();
+    if(!snapshot.exists)throw new HttpsError("not-found","Research entry missing.");
+    const entry=snapshot.data();
+    if(entry.status!=="pending"||!Number.isSafeInteger(entry.eventStartMs)||
+       Date.now()<entry.eventStartMs+70*60000)
+      throw new HttpsError("failed-precondition","Entry not eligible for ESPN settlement.");
+    const receipt=entry.capturedServerAt?.toMillis?.();
+    if(!Number.isFinite(receipt)||receipt>=entry.eventStartMs-LEDGER_CAPTURE_GRACE_MS)
+      throw new HttpsError("failed-precondition","Missing valid prospective server receipt.");
+    const summary=await ledgerGetEspn("summary?event="+encodeURIComponent(entry.eventId));
+    const result=ledgerExtractFinalFromEspn(summary,entry);
+    await db.runTransaction(async tx=>{
+      const latest=await tx.get(ref);
+      if(!latest.exists)throw new HttpsError("not-found","Research entry missing.");
+      const current=latest.data();
+      for(const key of ["eventId","eventStartMs","athleteId","teamId",
+        "homeId","awayId","market","line","side","modelSelected","odds"]){
+        if(current[key]!==entry[key])
+          throw new HttpsError("failed-precondition","Original research entry changed; cannot settle.");
+      }
+      const time=current.capturedServerAt?.toMillis?.();
+      if(!Number.isFinite(time)||time>=current.eventStartMs-LEDGER_CAPTURE_GRACE_MS||
+         current.status!=="pending")
+        throw new HttpsError("failed-precondition","Record no longer eligible to settle.");
+      tx.update(ref,{status:"settled",resultStat:result.stat,resultWon:result.won,
+        settledAt:FieldValue.serverTimestamp(),
+        settlementSource:"ESPN Final verified by server: event/team/athlete"});
+    },{maxAttempts:3});
+    return {settled:true,resultStat:result.stat,resultWon:result.won,recordId:id};
+  }
+);
