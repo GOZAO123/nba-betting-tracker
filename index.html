@@ -300,6 +300,21 @@ main{width:100%;min-width:0}
   <div id="researchPreviewResults" class="research-results"></div>
   <p class="muted notice">Research sorting is descriptive, not an AI prediction or a bet recommendation. Historical hit rates are not calibrated future probabilities; lines and odds may change.</p>
  </div>
+ <div class="scanner-workspace"><div class="scanner-section-head"><div><h3>🎯 Actual line research · ESPN only</h3><p class="muted">Explore a specific full-game player-prop line, including a line copied from an existing verified Betano preview. Historical hit rates and experimental estimates are NOT calibrated Betano win probabilities.</p></div></div>
+  <div class="row"><input id="lineResearchPlayer" type="text" maxlength="64" placeholder="Player name, e.g. Jalen Brunson" aria-label="Player name for line research" style="min-width:220px">
+  <select id="lineResearchTeam" aria-label="Player's NBA team"><option value="">Choose NBA team</option></select>
+  <select id="lineResearchMarket" aria-label="Player prop market">
+   <option value="PTS">PTS</option><option value="REB">REB</option><option value="AST">AST</option>
+   <option value="3PT">3PT</option><option value="PR">PR</option><option value="PA">PA</option>
+   <option value="RA">RA</option><option value="PRA">PRA</option>
+  </select></div>
+  <div class="row"><label for="lineResearchLine">Line:</label><input id="lineResearchLine" type="number" step="1" min="0.5" max="150.5" placeholder="e.g. 24.5" style="width:100px">
+  <label for="lineResearchOdds">Decimal odds (optional):</label><input id="lineResearchOdds" type="number" min="1.01" max="100" step="0.01" placeholder="e.g. 1.80" style="width:110px">
+  <button id="lineResearchRun" class="primary" type="button">Research this line (ESPN only)</button></div>
+  <p id="lineResearchStatus" class="muted" role="status">Manual · at most 1 current-team ESPN roster and 2 season game logs · zero OddsPapi requests. Historical quote snapshots expire; enter a fresh line manually when needed.</p>
+  <div id="lineResearchResults" class="research-results"></div>
+  <p class="warning">Research estimates here are UNVALIDATED for real bookmaker lines. No EV, staking guidance, automatic betting picks, or claims of a positive edge.</p>
+ </div>
  <div class="scanner-workspace"><div class="scanner-section-head"><div><h3>🧪 Model laboratory · Walk-forward backtest</h3><p class="muted">Evaluate a simple statistical baseline on the completed NBA regular season. This does not use Betano prices or create betting picks.</p></div></div>
   <div class="row"><input id="btPlayer" type="text" placeholder="Player name, e.g. Jalen Brunson" aria-label="Player to backtest" style="min-width:230px"><select id="btTeam" aria-label="NBA team for backtest"><option value="">Choose NBA team</option></select><button id="btRun" type="button" class="primary">Backtest player (ESPN only)</button></div>
   <p id="btStatus" class="muted" role="status">Manual test · one ESPN roster and one player game-log request maximum · zero OddsPapi requests. Historical results are not forecasts.</p>
@@ -886,7 +901,17 @@ function renderResearchSample(result,preview){
     detail:{name:r.player,team:r.team}
    }));
   });
-  actionCell.append(modelButton);row.append(actionCell);body.append(row);
+  actionCell.append(modelButton);
+  const lineBtn=researchCreate('button','Research line','mini research-row-action');
+  lineBtn.type='button';lineBtn.style.marginLeft='4px';
+  lineBtn.addEventListener('click',()=>{
+   window.dispatchEvent(new CustomEvent('tracker-line-research-prefill',{detail:{
+    player:r.player,team:r.team,espnAthleteId:r.espnAthleteId,
+    market:r.market,line:r.line,side:r.side,price:r.price,
+    fixture:r.fixture,startTime:r.startTime,receivedAt:preview.receivedAt
+   }}));
+  });
+  actionCell.append(lineBtn);row.append(actionCell);body.append(row);
  }
  table.append(body);scroll.append(table);researchResults.append(scroll);
 }
@@ -1118,6 +1143,211 @@ function btRender(games,player,team,season){
    'No out-of-sample ROI, actual historical odds or live-edge validation has been performed.','warning'));
  }
 }
+
+// Update 34.2 — research an exact, user-entered bookmaker line without fetching
+// bookmakers or providing unvalidated actionable model recommendations.
+const lrPlayer=document.getElementById('lineResearchPlayer');
+const lrTeam=document.getElementById('lineResearchTeam');
+const lrMarket=document.getElementById('lineResearchMarket');
+const lrLine=document.getElementById('lineResearchLine');
+const lrOdds=document.getElementById('lineResearchOdds');
+const lrRun=document.getElementById('lineResearchRun');
+const lrStatus=document.getElementById('lineResearchStatus');
+const lrResults=document.getElementById('lineResearchResults');
+for(const team of Object.keys(ESPN_NBA_TEAM_IDS).sort())lrTeam.add(new Option(team,team));
+let lrQuoteContext=null;
+function lrValidateLine(raw){
+ const n=Number(raw);
+ if(!Number.isFinite(n)||n<.5||n>150.5||Math.abs(n-(Math.floor(n)+.5))>1e-9)
+  return null;
+ return n;
+}
+function lrValidateOdds(raw){
+ if(String(raw).trim()==='')return null;
+ const n=Number(raw);
+ return Number.isFinite(n)&&n>=1.01&&n<=100?n:NaN;
+}
+function lrNormalOver(train,line){
+ if(train.length<2||!Number.isFinite(line))return null;
+ const mu=train.reduce((a,b)=>a+b,0)/train.length;
+ const sd=Math.max(1,Math.sqrt(train.reduce((a,v)=>a+(v-mu)**2,0)/(train.length-1)));
+ return btClip(1-btNormalCdf((line-mu)/sd));
+}
+function lrWindow(values,line,count){
+ if(!Array.isArray(values)||values.length<count||count<12)return null;
+ const window=values.slice(-count);
+ if(window.some(x=>!Number.isFinite(x)||x<0))return null;
+ const hits=window.filter(v=>v>line).length;
+ const empirical=hits/count;
+ // Beta(2,2) shrinkage matches the experimental baseline's weak prior.
+ const smoothed=(hits+2)/(count+4);
+ const normal=lrNormalOver(window,line);
+ const model=btClip(.55*normal+.45*smoothed);
+ const average=window.reduce((a,b)=>a+b,0)/count;
+ // Wilson 95% interval for raw observed hit frequency. Not an interval for a
+ // future-game win probability, which also depends on changing player roles.
+ const z=1.96,d=1+z*z/count;
+ const center=(empirical+z*z/(2*count))/d;
+ const half=z*Math.sqrt(empirical*(1-empirical)/count+z*z/(4*count*count))/d;
+ return {n:count,hits,empirical,smoothed,normal,model,average,
+  observedLow:Math.max(0,center-half),observedHigh:Math.min(1,center+half)};
+}
+function lrResearch(games,market,line,cutoff=Date.now()){
+ if(!['PTS','REB','AST','3PT','PR','PA','RA','PRA'].includes(market)||lrValidateLine(line)===null)
+  throw Error('Unsupported full-game market or line.');
+ if(!Number.isFinite(cutoff)||cutoff>Date.now()+5*60*1000)
+  throw Error('Invalid research cutoff date.');
+ const seen=new Set(),clean=[];
+ for(const game of [...games].sort((a,b)=>a.date-b.date||String(a.id).localeCompare(String(b.id)))){
+  if(!Number.isFinite(game?.date)||game.date>=cutoff||game.date>Date.now())continue;
+  const id=String(game?.id||'');
+  if(!/^\d+$/.test(id)||seen.has(id))continue;
+  seen.add(id);
+  const value=game.stats?.[market];
+  if(!Number.isFinite(value)||value<0)continue;
+  clean.push({date:game.date,value,minutes:game.stats?.MIN});
+ }
+ const values=clean.map(g=>g.value);
+ return {market,line,eligibleGames:values.length,
+  w12:lrWindow(values,line,12),w24:lrWindow(values,line,24),
+  lastDate:clean.length?clean[clean.length-1].date:null};
+}
+function lrDraw(result,identity,notes,odds){
+ lrResults.replaceChildren();
+ const header=researchCreate('div',null,'stat-tile');
+ header.append(
+  researchCreate('strong',identity.name+' · '+identity.team+' · '+result.market+' '+result.line),
+  researchCreate('p',result.eligibleGames+' usable past regular-season appearances · '+notes.join(' · '),'muted'));
+ lrResults.append(header);
+ if(!result.w12){
+  lrResults.append(researchCreate('p',
+   '⚠️ Fewer than 12 completed games with valid '+result.market+
+   ' statistics. No numerical probability estimate shown.','warning'));
+  return;
+ }
+ const table=researchCreate('table'),head=researchCreate('thead'),tr=researchCreate('tr');
+ for(const h of ['History','Recorded Overs','Raw hit rate','Smoothed rate','Normal approximation','Blended estimate*','Average stat']){
+  tr.append(researchCreate('th',h));
+ }
+ head.append(tr);table.append(head);const body=researchCreate('tbody');
+ for(const w of [result.w12,result.w24].filter(Boolean)){
+  const row=researchCreate('tr');
+  for(const val of ['Last '+w.n,w.hits+'/'+w.n,
+   (100*w.empirical).toFixed(1)+'%',(100*w.smoothed).toFixed(1)+'%',
+   (100*w.normal).toFixed(1)+'%',(100*w.model).toFixed(1)+'%',w.average.toFixed(1)]){
+   row.append(researchCreate('td',val));
+  }
+  body.append(row);
+ }
+ table.append(body);const wrap=researchCreate('div',null,'boxscore');wrap.append(table);lrResults.append(wrap);
+ const w=result.w12;
+ lrResults.append(researchCreate('p',
+  'Observed Over hit rate: '+w.hits+'/'+w.n+' = '+(100*w.empirical).toFixed(1)+
+  '%. Approximate 95% Wilson interval for this small HISTORICAL sample: '+
+  (100*w.observedLow).toFixed(1)+'%–'+(100*w.observedHigh).toFixed(1)+
+  '%. The interval does not account for player-role changes or estimate a next-game probability.','muted'));
+ if(result.w24){
+  const delta=Math.abs(result.w12.model-result.w24.model);
+  if(delta>=.10)lrResults.append(researchCreate('p',
+   '⚠️ Last-12 and last-24 blended estimates differ by '+(100*delta).toFixed(1)+
+   ' percentage points. Recent history is unstable for this line.','warning'));
+ }
+ if(odds!==null){
+  lrResults.append(researchCreate('p',
+   'Entered decimal odds: '+odds.toFixed(2)+
+   ' · simple break-even frequency: '+(100/odds).toFixed(1)+
+   '%. This is NOT a model-estimated betting edge or recommendation; no vig adjustment or live bookmaker verification.','muted'));
+ }
+ lrResults.append(researchCreate('p',
+  '*The blended estimate is an UNVALIDATED 55% normal-approximation / 45% smoothed-hit-rate heuristic for this exact line. '+
+  'Our historical Brier backtests used synthetic median lines, not actual Betano lines. '+
+  'Do not interpret this estimate as a calibrated probability, use it to calculate EV, or place a bet on its basis.','warning'));
+}
+window.addEventListener('tracker-line-research-prefill',event=>{
+ const item=event.detail||{};
+ if(!Object.hasOwn(ESPN_NBA_TEAM_IDS,item.team)||!['PTS','REB','AST','3PT','PR','PA','RA','PRA'].includes(item.market)||
+   lrValidateLine(item.line)===null||!item.player)return;
+ lrPlayer.value=String(item.player);lrTeam.value=item.team;
+ lrMarket.value=item.market;lrLine.value=item.line;
+ lrOdds.value=Number.isFinite(item.price)?String(item.price):'';
+ lrQuoteContext={
+  player:String(item.player),team:item.team,market:item.market,line:item.line,
+  espnAthleteId:String(item.espnAthleteId||''),side:item.side,
+  price:item.price,receivedAt:item.receivedAt,
+  fixture:item.fixture,startTime:item.startTime
+ };
+ lrResults.replaceChildren();
+ lrStatus.textContent='Prefilled from an earlier verified preview: '+item.player+' · '+
+  item.market+' '+item.line+'. This quote is a historical SNAPSHOT, not a currently available offer. '+
+  'Tap Research this line to validate ESPN identity and recent history; zero OddsPapi requests.';
+ document.getElementById('lineResearchPlayer').scrollIntoView({behavior:'smooth',block:'center'});
+});
+lrRun.addEventListener('click',async()=>{
+ if(!auth.currentUser){lrStatus.textContent='Sign in with Google first.';return}
+ const name=lrPlayer.value.trim(),team=lrTeam.value,market=lrMarket.value,
+  line=lrValidateLine(lrLine.value),odds=lrValidateOdds(lrOdds.value);
+ if(!name||!Object.hasOwn(ESPN_NBA_TEAM_IDS,team)||line===null||
+   (odds!==null&&!Number.isFinite(odds))){
+  lrStatus.textContent='Enter an ESPN player name, select their NBA team, and use a half-point line (e.g. 24.5). Odds, if provided, must be 1.01–100.00.';
+  return;
+ }
+ const expected=lrQuoteContext&&lrQuoteContext.team===team&&
+  canonicalPlayerName(lrQuoteContext.player)===canonicalPlayerName(name)&&
+  lrQuoteContext.market===market&&lrQuoteContext.line===line?lrQuoteContext:null;
+ const cutoff=expected&&Number.isFinite(expected.receivedAt)?
+  Math.min(Date.now(),expected.receivedAt):Date.now();
+ lrRun.disabled=true;lrResults.replaceChildren();
+ try{
+  const teamId=ESPN_NBA_TEAM_IDS[team];
+  lrStatus.textContent='Verifying ESPN current-team roster for '+name+'…';
+  const roster=await readEspnIdentity(RESEARCH_ESPN_BASE+'teams/'+encodeURIComponent(teamId)+'/roster');
+  if((roster.team?.id&&String(roster.team.id)!==teamId)||
+     (roster.team?.displayName&&canonicalPlayerName(roster.team.displayName)!==canonicalPlayerName(team)))
+   throw Error('ESPN team identity mismatch; rejected.');
+  const matches=new Map((roster.athletes||[]).flatMap(x=>Array.isArray(x.items)?x.items:[x])
+   .filter(x=>x?.id&&x?.displayName&&canonicalPlayerName(x.displayName)===canonicalPlayerName(name))
+   .map(x=>[String(x.id),x]));
+  if(matches.size!==1)throw Error('Player not uniquely matched to selected ESPN team; no estimate generated.');
+  const athlete=[...matches.values()][0];
+  if(expected?.espnAthleteId&&String(athlete.id)!==expected.espnAthleteId)
+   throw Error('Verified preview athlete ID differs from ESPN roster. No estimate generated.');
+  const completed=btCompletedSeason();
+  const seasons=[completed,completed+1],games=[],notes=[];
+  for(const season of seasons){
+   lrStatus.textContent='Loading '+(season-1)+'–'+String(season).slice(-2)+
+    ' ESPN game log ('+(season-completed+1)+'/2)…';
+   try{
+    const url='https://site.web.api.espn.com/apis/common/v3/sports/basketball/nba/athletes/'+
+     encodeURIComponent(athlete.id)+'/gamelog?season='+season;
+    const log=await readEspnIdentity(url);
+    const parsed=btParseGamelog(log,athlete.id,season);
+    games.push(...parsed);
+    notes.push((season-1)+'–'+String(season).slice(-2)+': '+parsed.length+' games');
+   }catch(e){
+    notes.push((season-1)+'–'+String(season).slice(-2)+' unavailable');
+   }
+  }
+  if(lrPlayer.value.trim()!==name||lrTeam.value!==team||lrMarket.value!==market||
+      lrValidateLine(lrLine.value)!==line)throw Error('Input changed during loading. Results discarded.');
+  if(!games.length)throw Error('Both ESPN season logs unavailable. No probability estimate generated.');
+  const researched=lrResearch(games,market,line,cutoff);
+  const fullNames=canonicalPlayerName(athlete.displayName)===canonicalPlayerName(name);
+  if(!fullNames)throw Error('ESPN player identity changed unexpectedly.');
+  const summaryNotes=notes.slice();
+  if(expected){
+   summaryNotes.push('Quote snapshot from '+new Intl.DateTimeFormat('en-GB',{
+    timeZone:'Europe/Lisbon',hour:'2-digit',minute:'2-digit',hour12:false
+   }).format(new Date(expected.receivedAt))+' Lisbon');
+  }else summaryNotes.push('Manually entered line · no live bookmaker verification');
+  lrDraw(researched,{name:athlete.displayName,team},summaryNotes,odds);
+  lrStatus.textContent='Research completed for ESPN athlete '+athlete.displayName+
+   ' · '+researched.eligibleGames+' historical games · zero OddsPapi requests. No validated betting probability or pick.';
+ }catch(e){
+  lrStatus.textContent='Line research unavailable: '+(e.message||String(e))+
+   '. No OddsPapi requests were made.';
+ }finally{lrRun.disabled=false}
+});
+
 btRun.addEventListener('click',async()=>{
  const player=btPlayer.value.trim(),team=btTeam.value,teamId=ESPN_NBA_TEAM_IDS[team];
  if(!auth.currentUser){btStatus.textContent='Sign in with Google first.';return}
