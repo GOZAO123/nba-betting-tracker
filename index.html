@@ -1148,13 +1148,16 @@ function btPoolMarket(entries,market){
  return {market,players,n,model:n?mean('probability'):null,
   baseline:n?mean('baselineProbability'):null,games};
 }
-function btCalibrationBins(predictions){
- const bins=Array.from({length:5},(_,i)=>({
-  low:i/5,high:(i+1)/5,n:0,probSum:0,winSum:0
+function btCalibrationBins(predictions,binWidth=.2){
+ // Calibration resolution is user selectable; sparse bins are flagged.
+ if(![.1,.2].includes(binWidth))throw Error('Unsupported calibration bin width.');
+ const count=Math.round(1/binWidth);
+ const bins=Array.from({length:count},(_,i)=>({
+  low:i/count,high:(i+1)/count,n:0,probSum:0,winSum:0
  }));
  for(const x of predictions){
   if(!Number.isFinite(x.probability)||![0,1].includes(x.actual))continue;
-  const idx=Math.min(4,Math.floor(x.probability*5));
+  const idx=Math.min(bins.length-1,Math.floor(x.probability*bins.length));
   bins[idx].n++;
   bins[idx].probSum+=x.probability;
   bins[idx].winSum+=x.actual;
@@ -1165,6 +1168,38 @@ function btCalibrationBins(predictions){
   observed:b.n?b.winSum/b.n:null,
   sparse:b.n<30
  }));
+}
+// Update 34.0 — discrimination and chronological stability diagnostics.
+// Descriptive diagnostics only, not a fitted calibration layer or projected EV.
+function btDiscrimination(games){
+ const valid=games.filter(x=>Number.isFinite(x.probability)&&
+   x.probability>=0&&x.probability<=1&&[0,1].includes(x.actual));
+ const n=valid.length;
+ const neutral=valid.filter(x=>x.probability>=.4&&x.probability<.6).length;
+ const upper=valid.filter(x=>x.probability>=.6).length;
+ const lower=valid.filter(x=>x.probability<.4).length;
+ const distance=valid.reduce((sum,x)=>sum+Math.abs(x.probability-.5),0);
+ return {n,neutral,upper,lower,neutralPct:n?100*neutral/n:null,
+  meanDistance:n?distance/n:null};
+}
+function btTemporalStability(games){
+ const dated=games.map(g=>({...g,stamp:new Date(g.time).toISOString().slice(0,10)}))
+  .filter(g=>/^\d{4}-\d{2}-\d{2}$/.test(g.stamp))
+  .sort((a,b)=>a.stamp.localeCompare(b.stamp));
+ const dates=[...new Set(dated.map(g=>g.stamp))];
+ if(dates.length<6)return {valid:false,reason:'Fewer than 6 distinct held-out dates.'};
+ const boundary=dates[Math.floor(dates.length/2)];
+ const samples=[
+  {name:'Earlier dates',rows:dated.filter(g=>g.stamp<boundary)},
+  {name:'Later dates',rows:dated.filter(g=>g.stamp>=boundary)}
+ ].map(group=>{
+  const n=group.rows.length;
+  const model=n?group.rows.reduce((total,g)=>total+(g.probability-g.actual)**2,0)/n:null;
+  const baseline=n?group.rows.reduce((total,g)=>total+(g.baselineProbability-g.actual)**2,0)/n:null;
+  return {name:group.name,n,model,baseline};
+ });
+ return {valid:samples.every(x=>x.n>=30&&Number.isFinite(x.model)&&Number.isFinite(x.baseline)),
+  boundary,samples};
 }
 function btCohortSummary(entries,issues=[]){
  if(!Array.isArray(entries))throw Error('Missing validated player history.');
@@ -1235,13 +1270,19 @@ function btDrawCohort(report,season){
  const label=researchCreate('label','Calibration market: ');
  const select=researchCreate('select');select.setAttribute('aria-label','Market for probability calibration');
  for(const m of report.markets)select.add(new Option(m.market,m.market));
- select.value='PTS';label.append(select);controls.append(label);btCohortResults.append(controls);
+ select.value='PTS';label.append(select);controls.append(label);
+ const widthLabel=researchCreate('label','Bin width: ');
+ const widthSelect=researchCreate('select');widthSelect.setAttribute('aria-label','Probability calibration bin width');
+ widthSelect.add(new Option('20% bands','0.2'));
+ widthSelect.add(new Option('10% bands','0.1'));
+ widthLabel.append(widthSelect);controls.append(widthLabel);
+ btCohortResults.append(controls);
  const calibration=researchCreate('div',null,'research-results');btCohortResults.append(calibration);
  const redraw=()=>{
   calibration.replaceChildren();
   const market=report.markets.find(m=>m.market===select.value);
   if(!market||!market.n)return;
-  const bins=btCalibrationBins(market.games);
+  const bins=btCalibrationBins(market.games,Number(widthSelect.value));
   const table=researchCreate('table'),th=researchCreate('thead'),thr=researchCreate('tr');
   for(const v of ['Predicted band','Observations','Avg forecast','Observed Over','Coverage']){
    thr.append(researchCreate('th',v));
@@ -1261,12 +1302,50 @@ function btDrawCohort(report,season){
   table.append(body);
   const scroller=researchCreate('div',null,'boxscore');scroller.append(table);
   calibration.append(scroller);
+  const spread=btDiscrimination(market.games);
+  const pct=count=>spread.n?(100*count/spread.n).toFixed(1)+'%':'—';
   calibration.append(researchCreate('p',
-   'Calibration compares forecast probability with the actual Over frequency for the '+
-   market.market+' synthetic historical line. Sparse bins cannot support reliable conclusions. '+
-   'These are NOT Betano-priced markets or live betting recommendations.','warning'));
+   'Probability spread ('+market.market+'): '+spread.neutral+'/'+spread.n+
+   ' forecasts ('+pct(spread.neutral)+') between 40% and 60%; '+
+   spread.lower+' below 40% ('+pct(spread.lower)+'); '+
+   spread.upper+' at least 60% ('+pct(spread.upper)+').','muted'));
+  if(spread.neutralPct>=85){
+   calibration.append(researchCreate('p',
+    '⚠️ Most forecasts cluster near 50%. This model has limited probability separation in '+
+    market.market+' and is not ready to identify a reliable betting edge.','warning'));
+  }
+  const split=btTemporalStability(market.games);
+  if(split.valid){
+   const stableTable=researchCreate('table'),stableHead=researchCreate('thead'),
+    stableTr=researchCreate('tr');
+   for(const v of ['Chronological period','Held-out rows','Model Brier ↓','Baseline Brier ↓','Comparison'])
+    stableTr.append(researchCreate('th',v));
+   stableHead.append(stableTr);stableTable.append(stableHead);
+   const stableBody=researchCreate('tbody');
+   for(const group of split.samples){
+    const row=researchCreate('tr');
+    const score=btScoreComparison({valid:true,model:group.model,baseline:group.baseline});
+    for(const v of [group.name,group.n,group.model.toFixed(4),group.baseline.toFixed(4),score.label])
+     row.append(researchCreate('td',v));
+    stableBody.append(row);
+   }
+   stableTable.append(stableBody);
+   calibration.append(researchCreate('p',
+    'Chronological stability check: held-out game dates split at '+split.boundary+
+    ' (same date never divided across periods).','muted'));
+   const stableWrap=researchCreate('div',null,'boxscore');stableWrap.append(stableTable);
+   calibration.append(stableWrap);
+  }else{
+   calibration.append(researchCreate('p',
+    '⚠️ Not enough date-separated games for two meaningful validation periods.','warning'));
+  }
+  calibration.append(researchCreate('p',
+   'Calibration compares predicted probabilities with actual Over frequencies for synthetic historical lines. '+
+   'Sparse bands (<30) are unreliable. Earlier/later checks reuse the same model and cannot replace a separate untouched season. '+
+   'No Betano historical prices, expected value, or betting recommendation.','warning'));
  };
  select.addEventListener('change',redraw);
+ widthSelect.addEventListener('change',redraw);
  redraw();
 }
 async function btFetchCohort(season){
