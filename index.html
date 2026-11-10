@@ -1480,6 +1480,133 @@ function ledgerState(row){
 }
 function ledgerRef(uid,id){return doc(db,'users',uid,'propResearchLedger',id)}
 
+
+// Append-only in this app: one frozen quote per fixture/player/market/side/line.
+// Firestore security currently permits user edits outside the app: NOT audit-proof.
+ledgerSave.addEventListener('click',async()=>{
+ const user=auth.currentUser,snap=lrLatestResearch,event=ledgerEvents.get(ledgerFixture.value);
+ if(!user||ledgerBusy)return;
+ if(!ledgerSameResearch(snap)||Date.now()-(snap?.at||0)>5*60000){
+  ledgerStatus.textContent='Run Actual line research with unchanged inputs and a real price within five minutes.';return;
+ }
+ if(!Number.isFinite(snap.odds)||snap.odds<1.01||!snap.researched?.w12||
+   !Number.isFinite(snap.researched.w12.model)){
+  ledgerStatus.textContent='Actual decimal odds and at least 12 historical appearances are required.';return;
+ }
+ if(!event||event.start<=Date.now()+LEDGER_GRACE){
+  ledgerStatus.textContent='Select an upcoming ESPN fixture more than five minutes before tip-off.';return;
+ }
+ const teamId=ESPN_NBA_TEAM_IDS[snap.team];
+ if(![event.homeId,event.awayId].includes(teamId)){
+  ledgerStatus.textContent='The player team does not participate in this fixture.';return;
+ }
+ if(!ledgerQuoteConfirmed.checked){
+  ledgerStatus.textContent='Confirm you genuinely observed these Betano odds. Do not record fictional test prices.';return;
+ }
+ if(!confirm('Save this observed line/price and UNVALIDATED model estimate? This places no bet and is not an audited prediction.'))return;
+ ledgerBusy=true;ledgerSave.disabled=true;
+ const uid=user.uid,session=ledgerSession;
+ try{
+  ledgerStatus.textContent='Rechecking the game and tip-off with ESPN…';
+  const day=ledgerNbaDay(new Date(event.start));
+  const board=await ledgerFetch(RESEARCH_ESPN_BASE+'scoreboard?dates='+day);
+  if(!Array.isArray(board?.events))throw Error('ESPN game not verifiable');
+  const checked=board.events.map(e=>ledgerEvent(e,day)).find(e=>e?.id===event.id);
+  if(!checked||checked.start!==event.start||checked.homeId!==event.homeId||
+     checked.awayId!==event.awayId)
+   throw Error('Fixture started or changed. Entry not saved.');
+  if(auth.currentUser?.uid!==uid||session!==ledgerSession||
+     !ledgerSameResearch(snap)||!ledgerQuoteConfirmed.checked||
+     Date.now()-snap.at>5*60000)throw Error('Account or inputs changed. Entry not saved.');
+  const recordId=[
+   event.id,snap.athleteId,snap.market,String(snap.line).replace('.','p'),snap.side
+  ].join('_');
+  if(!/^[a-zA-Z0-9_]{8,100}$/.test(recordId))throw Error('Invalid ESPN selection ID');
+  const p=snap.researched.w12.model,reference=ledgerRef(uid,recordId);
+  const entry={
+   schemaVersion:1,status:'pending',source:'manual_betano_unverified',
+   player:snap.name,athleteId:snap.athleteId,team:snap.team,teamId,
+   market:snap.market,line:snap.line,side:snap.side,odds:snap.odds,
+   eventId:event.id,eventStartMs:event.start,
+   home:event.home,away:event.away,homeId:event.homeId,awayId:event.awayId,
+   modelOver:p,modelSelected:snap.side==='Over'?p:1-p,
+   hits12:snap.researched.w12.hits,games12:12,
+   hits24:snap.researched.w24?.hits??null,games24:snap.researched.w24?.n??null,
+   clientCapturedMs:Date.now(),capturedServerAt:serverTimestamp(),
+   settledAt:null,resultStat:null,resultWon:null,
+   disclaimer:'Experimental heuristic, not calibrated to bookmaker lines; manual unverified odds.'
+  };
+  await runTransaction(db,async tx=>{
+   if((await tx.get(reference)).exists())throw Error('This exact event/player/line/side is already recorded. First snapshot preserved.');
+   if(auth.currentUser?.uid!==uid||ledgerSession!==session)throw Error('Account changed');
+   tx.set(reference,entry);
+  },{maxAttempts:3});
+  if(auth.currentUser?.uid!==uid||session!==ledgerSession)return;
+  ledgerQuoteConfirmed.checked=false;
+  ledgerStatus.textContent='Prospective research snapshot saved. Check Firebase server receipt in the cloud ledger. Zero OddsPapi calls.';
+  await ledgerLoad();
+ }catch(err){
+  if(auth.currentUser?.uid===uid&&session===ledgerSession)
+   ledgerStatus.textContent='Research save NOT confirmed: '+(err.message||String(err))+
+    '. Load your cloud ledger before retrying.';
+ }finally{ledgerBusy=false;ledgerSave.disabled=false}
+});
+async function ledgerLoad(){
+ const uid=auth.currentUser?.uid,session=ledgerSession;
+ if(!uid){ledgerResults.replaceChildren();return}
+ const rows=await getDocsFromServer(query(collection(db,'users',uid,'propResearchLedger'),
+  orderBy('clientCapturedMs','desc'),limit(50)));
+ if(auth.currentUser?.uid!==uid||session!==ledgerSession)return;
+ ledgerRows=rows.docs.map(d=>({id:d.id,...d.data()}));ledgerDraw();
+}
+ledgerRefresh.addEventListener('click',async()=>{
+ if(ledgerBusy||!auth.currentUser)return;
+ ledgerRefresh.disabled=true;
+ try{await ledgerLoad();ledgerStatus.textContent='Cloud ledger loaded: '+ledgerRows.length+' entries (latest 50).';}
+ catch(err){ledgerStatus.textContent='Cloud ledger error: '+(err.message||String(err))}
+ finally{ledgerRefresh.disabled=false}
+});
+function ledgerDraw(){
+ ledgerResults.replaceChildren();
+ if(!ledgerRows.length){
+  ledgerResults.append(researchCreate('p','No research entries yet. Do not invent test odds; only record actual observed offers.','muted'));return;
+ }
+ const scored=ledgerRows.filter(r=>ledgerState(r)==='SETTLED'&&
+  typeof r.resultWon==='boolean'&&Number.isFinite(r.modelSelected));
+ const brier=scored.length?scored.reduce((total,r)=>total+
+  (r.modelSelected-Number(r.resultWon))**2,0)/scored.length:null;
+ ledgerResults.append(researchCreate('p',
+  ledgerRows.length+' cloud records · '+scored.length+' eligible completed comparisons'+
+  (brier!==null?' · unvalidated-model Brier '+brier.toFixed(4):'')+
+  '. Results are NOT audited odds, ROI or betting value.','muted'));
+ const table=researchCreate('table'),head=researchCreate('thead'),headers=researchCreate('tr');
+ for(const name of ['Fixture · Lisbon','Player/prop','Observed odds','Frozen estimate*','Status','Outcome','Check'])
+  headers.append(researchCreate('th',name));
+ head.append(headers);table.append(head);
+ const body=researchCreate('tbody');
+ for(const row of ledgerRows){
+  const tr=researchCreate('tr'),state=ledgerState(row);
+  for(const v of [
+   row.away+' @ '+row.home+' · '+ledgerLisbonTime(row.eventStartMs),
+   row.player+' · '+row.market+' '+row.line+' '+row.side,
+   Number(row.odds).toFixed(2)+' (manual)',
+   Number.isFinite(row.modelSelected)?(100*row.modelSelected).toFixed(1)+'%':'—',
+   state,state==='SETTLED'?row.resultStat+' · '+(row.resultWon?'Won':'Lost'):'—'
+  ])tr.append(researchCreate('td',v));
+  const buttonCell=researchCreate('td');
+  const button=researchCreate('button','Check ESPN final','mini');
+  button.disabled=state!=='PENDING'||Date.now()<row.eventStartMs+70*60000;
+  button.addEventListener('click',()=>ledgerSettle(row.id));
+  buttonCell.append(button);tr.append(buttonCell);body.append(tr);
+ }
+ table.append(body);const scroller=researchCreate('div',null,'boxscore');
+ scroller.append(table);ledgerResults.append(scroller);
+ ledgerResults.append(researchCreate('p',
+  '*Only records captured before tip-off according to a Firestore server timestamp can be scored. '+
+  'Current rules still allow users to edit their own records, so this ledger cannot certify immutable prospective evidence. '+
+  'Manually entered quotes are NOT verified against Betano.','warning'));
+}
+
 btRun.addEventListener('click',async()=>{
  const player=btPlayer.value.trim(),team=btTeam.value,teamId=ESPN_NBA_TEAM_IDS[team];
  if(!auth.currentUser){btStatus.textContent='Sign in with Google first.';return}
