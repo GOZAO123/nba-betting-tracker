@@ -306,7 +306,8 @@ main{width:100%;min-width:0}
   <div id="btResults" class="research-results"></div>
  </div>
  <div class="scanner-workspace"><div class="scanner-section-head"><div><h3>📐 Model validation · Six-player cohort</h3><p class="muted">Combine chronological backtests for Knicks and Nuggets players, with pooled Brier scores and probability calibration. ESPN-only exploratory evaluation.</p></div></div>
-  <div class="row"><button id="btCohortRun" type="button" class="primary">Validate six players (ESPN only)</button><span class="muted">Manual · 6–12 players · up to 18 bounded ESPN requests · 0 OddsPapi calls</span></div>
+  <div class="row"><label for="btCohortSeason">Completed season:</label><select id="btCohortSeason" aria-label="Completed NBA season for cohort backtest"></select><span class="muted">Test each historical season separately; previous-season results are not a prospective forecast.</span></div>
+  <div class="row"><button id="btCohortRun" type="button" class="primary">Validate six players (ESPN only)</button><span class="muted">Manual · 6–12 players · up to 18 bounded ESPN requests per selected season · 0 OddsPapi calls</span></div>
   <details class="scanner-dev" id="btExtrasPanel"><summary>＋ Expand testing to more NBA teams (optional)</summary>
    <div class="scanner-dev-content"><p class="muted">Add up to six more players across NBA teams. Each exact ESPN identity is checked before analysis; no betting odds or API requests are fetched when adding names.</p>
     <div class="row"><input id="btExtraName" type="text" maxlength="64" placeholder="Another player (e.g. Luka Doncic)" aria-label="Additional player name" style="min-width:245px">
@@ -319,6 +320,7 @@ main{width:100%;min-width:0}
   </details>
   <p id="btCohortStatus" class="muted" role="status">Starter group: Jalen Brunson, Mikal Bridges, OG Anunoby, Nikola Jokić, Jamal Murray, Aaron Gordon. Run once to compare their 2025–26 held-out results.</p>
   <div id="btCohortResults" class="research-results"></div>
+  <div id="btCrossSeasonResults" class="research-results"></div>
   <p class="muted notice">Exploratory only. Repeated player-market predictions are correlated; a lower Brier score on synthetic lines does not establish profitable bets or future predictive performance.</p>
  </div>
  <details class="scanner-dev"><summary>⚙️ Developer tools <span class="muted">· Manual API tests</span></summary><div class="scanner-dev-content"><p class="muted notice">These buttons make live API requests when tapped. Avoid unnecessary tests to protect the free allowance.</p>
@@ -1135,6 +1137,22 @@ const BT_MARKETS=Object.freeze(['PTS','REB','AST','3PT','PR','PA','RA','PRA']);
 const btCohortButton=document.getElementById('btCohortRun');
 const btCohortStatus=document.getElementById('btCohortStatus');
 const btCohortResults=document.getElementById('btCohortResults');
+const btCohortSeason=document.getElementById('btCohortSeason');
+const btCrossSeasonResults=document.getElementById('btCrossSeasonResults');
+// Only fully completed NBA seasons may be selected; both requests are manual.
+const BT_SEASON_YEARS=Object.freeze([btCompletedSeason()-1,btCompletedSeason()]);
+for(const year of BT_SEASON_YEARS){
+ btCohortSeason.add(new Option((year-1)+'–'+String(year).slice(-2),String(year)));
+}
+btCohortSeason.value=String(BT_SEASON_YEARS[1]);
+const btCrossSeasonRuns=new Map();
+function btSelectedSeason(){
+ const season=Number(btCohortSeason.value);
+ return BT_SEASON_YEARS.includes(season)?season:null;
+}
+function btScopeKey(players){
+ return JSON.stringify(players.map(p=>canonicalPlayerName(p.name)+'@'+p.team).sort());
+}
 const btExtraName=document.getElementById('btExtraName');
 const btExtraTeam=document.getElementById('btExtraTeam');
 const btExtraAdd=document.getElementById('btExtraAdd');
@@ -1495,26 +1513,95 @@ async function btFetchCohort(season,requestedPlayers=BT_COHORT){
  }
  return btCohortSummary(results,issues,entries.length,teams.length);
 }
+
+// Separate historical seasons are compared only for an identical, fully
+// verified player cohort. This is historical robustness, not a live hold-out.
+function btDrawCrossSeason(scope){
+ btCrossSeasonResults.replaceChildren();
+ const older=btCrossSeasonRuns.get(scope+':'+BT_SEASON_YEARS[0]);
+ const newer=btCrossSeasonRuns.get(scope+':'+BT_SEASON_YEARS[1]);
+ if(!older||!newer){
+  btCrossSeasonResults.append(researchCreate('p',
+   'Cross-season comparison: validate the same complete player group in both '+
+   (BT_SEASON_YEARS[0]-1)+'–'+String(BT_SEASON_YEARS[0]).slice(-2)+
+   ' and '+(BT_SEASON_YEARS[1]-1)+'–'+String(BT_SEASON_YEARS[1]).slice(-2)+
+   ' to see whether model improvements persist across seasons. Each run is manually confirmed.','muted'));
+  return;
+ }
+ const oldTitle=(older.season-1)+'–'+String(older.season).slice(-2);
+ const newTitle=(newer.season-1)+'–'+String(newer.season).slice(-2);
+ const heading=researchCreate('div',null,'stat-tile');
+ heading.append(researchCreate('strong','Cross-season comparison · '+oldTitle+' vs '+newTitle),
+  researchCreate('p',older.players+' verified players in both tests · completed regular seasons only. '+
+   'Comparisons use each season’s own chronologically held-out games.','muted'));
+ btCrossSeasonResults.append(heading);
+ const table=researchCreate('table'),head=researchCreate('thead'),tr=researchCreate('tr');
+ for(const v of ['Market',oldTitle+' held-outs',oldTitle+' model/baseline',oldTitle+' verdict',
+  newTitle+' held-outs',newTitle+' model/baseline',newTitle+' verdict','Consistent lower error?']){
+  tr.append(researchCreate('th',v));
+ }
+ head.append(tr);table.append(head);
+ const body=researchCreate('tbody');
+ let consistent=0;
+ for(const m of older.markets){
+  const n=newer.markets.find(x=>x.market===m.market);
+  if(!n)continue;
+  const oldVerdict=btScoreComparison({valid:true,model:m.model,baseline:m.baseline});
+  const newVerdict=btScoreComparison({valid:true,model:n.model,baseline:n.baseline});
+  const both=oldVerdict.kind==='lower'&&newVerdict.kind==='lower';
+  if(both)consistent++;
+  const row=researchCreate('tr');
+  for(const value of [m.market,m.n,m.model.toFixed(4)+' / '+m.baseline.toFixed(4),oldVerdict.label,
+   n.n,n.model.toFixed(4)+' / '+n.baseline.toFixed(4),newVerdict.label,both?'Yes':'No']){
+   row.append(researchCreate('td',value));
+  }
+  body.append(row);
+ }
+ table.append(body);
+ const wrap=researchCreate('div',null,'boxscore');wrap.append(table);
+ btCrossSeasonResults.append(wrap);
+ btCrossSeasonResults.append(researchCreate('p',
+  consistent+'/8 markets have lower pooled model error in BOTH historical seasons. '+
+  'This is retrospective analysis of a selected cohort using synthetic lines. '+
+  'It does not prove performance on a future untouched season or imply positive betting EV.','warning'));
+}
+
 btCohortButton.addEventListener('click',async()=>{
  if(!auth.currentUser){btCohortStatus.textContent='Sign in first.';return}
  const cohort=btCohortList(),teams=new Set(cohort.map(p=>p.team)).size;
- const cap=cohort.length+teams;
- if(!confirm('Run '+cohort.length+' historical ESPN player backtests? Up to '+cap+
-    ' ESPN reads ('+teams+' rosters and '+cohort.length+
+ const season=btSelectedSeason();
+ if(!season){btCohortStatus.textContent='Select one completed NBA season.';return}
+ const cap=cohort.length+teams,seasonLabel=(season-1)+'–'+String(season).slice(-2);
+ if(!confirm('Run '+cohort.length+' ESPN player backtests for completed '+seasonLabel+
+    '? Up to '+cap+' ESPN reads ('+teams+' rosters and '+cohort.length+
     ' game logs), zero OddsPapi requests. No bets will be recommended.'))return;
  btCohortBusy=true;btCohortButton.disabled=true;btExtraAdd.disabled=true;btExtraClear.disabled=true;
- btCohortResults.replaceChildren();
+ btCohortSeason.disabled=true;btCohortResults.replaceChildren();btCrossSeasonResults.replaceChildren();
  try{
-  const season=btCompletedSeason(),report=await btFetchCohort(season,cohort);
+  const report=await btFetchCohort(season,cohort);
   btDrawCohort(report,season);
-  btCohortStatus.textContent='Cross-player historical validation completed: '+
+  const key=btScopeKey(cohort);
+  // Store only aggregated completed-season results in memory; no Firestore writes.
+  // Never compare partially matched cohorts or incomplete market coverage.
+  if(report.players===report.requested&&report.teams>=2&&
+     report.markets.every(x=>x.players===report.requested&&x.n>=Math.max(120,report.requested*12))){
+   btCrossSeasonRuns.set(key+':'+season,{scope:key,season,
+    players:report.players,teams:report.teams,
+    markets:report.markets.map(x=>({
+     market:x.market,n:x.n,model:x.model,baseline:x.baseline
+    }))});
+  }else{
+   btCrossSeasonRuns.delete(key+':'+season);
+  }
+  btDrawCrossSeason(key);
+  btCohortStatus.textContent='Historical '+seasonLabel+' validation completed: '+
    report.players+'/'+report.requested+' players · '+report.teams+
    ' teams · 0 OddsPapi requests. No live prediction or betting recommendation.';
  }catch(e){
-  btCohortStatus.textContent='Combined validation unavailable: '+(e.message||String(e))+
+  btCohortStatus.textContent='Completed-season validation unavailable: '+(e.message||String(e))+
    '. No OddsPapi requests were made.';
  }finally{
-  btCohortBusy=false;btCohortButton.disabled=false;
+  btCohortBusy=false;btCohortButton.disabled=false;btCohortSeason.disabled=false;
   btExtraAdd.disabled=false;btExtraClear.disabled=false;btRenderExtras();
  }
 });
