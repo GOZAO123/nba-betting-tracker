@@ -1281,14 +1281,19 @@ function btPoolMarket(entries,market){
       p<0||p>1||b<0||b>1)continue;
    games.push({
     playerId:e.id,team:e.team,time:prediction.time,
-    probability:p,baselineProbability:b,actual:y
+    probability:p,baselineProbability:b,
+    minutesAwareProbability:Number.isFinite(prediction.minutesAwareProbability)?prediction.minutesAwareProbability:null,
+    actual:y
    });
   }
  }
  const n=games.length,players=new Set(games.map(x=>x.playerId)).size;
  const mean=field=>games.reduce((v,g)=>v+(g[field]-g.actual)**2,0)/(n||1);
+ const pairedCount=games.filter(g=>Number.isFinite(g.minutesAwareProbability)).length;
  return {market,players,n,model:n?mean('probability'):null,
-  baseline:n?mean('baselineProbability'):null,games};
+  baseline:n?mean('baselineProbability'):null,
+  minutesAware:n&&pairedCount===n?mean('minutesAwareProbability'):null,
+  pairedCount,games};
 }
 function btCalibrationBins(predictions,binWidth=.2){
  // Calibration resolution is user selectable; sparse bins are flagged.
@@ -1375,7 +1380,7 @@ function btDrawCohort(report,season){
  }
  const participants=researchCreate('div',null,'boxscore'),ptable=researchCreate('table'),
   phead=researchCreate('thead'),pr=researchCreate('tr');
- for(const value of ['Verified ESPN player','Team','Season games','Hold-outs per market','Lower Brier markets']){
+ for(const value of ['Verified ESPN player','Team','Season games','Hold-outs per market','Current vs baseline','Minutes-aware vs current']){
   pr.append(researchCreate('th',value));
  }
  phead.append(pr);ptable.append(phead);
@@ -1384,15 +1389,19 @@ function btDrawCohort(report,season){
   const tr=researchCreate('tr');
   const valid=e.results.filter(x=>x.valid);
   const better=valid.filter(x=>btScoreComparison(x).kind==='lower').length;
+  const minuteBetter=valid.filter(x=>btCandidateComparison(x).kind==='lower').length;
+  const comparable=valid.filter(x=>btCandidateComparison(x).kind!=='insufficient').length;
   const tests=valid.length===8?Math.min(...valid.map(x=>x.tests))+' minimum':'Incomplete';
-  for(const v of [e.name,e.team,e.games,tests,better+'/'+valid.length])
+  for(const v of [e.name,e.team,e.games,tests,better+'/'+valid.length,
+    minuteBetter+'/'+comparable])
    tr.append(researchCreate('td',v));
   pb.append(tr);
  }
  ptable.append(pb);participants.append(ptable);btCohortResults.append(participants);
  const table=researchCreate('table'),head=researchCreate('thead'),tr=researchCreate('tr');
- for(const v of ['Market','Players','Held-out rows','Pooled model Brier ↓',
-  'Pooled baseline ↓','Comparison'])tr.append(researchCreate('th',v));
+ for(const v of ['Market','Players','Held-out rows','Current Brier ↓',
+  'Minutes-aware Brier ↓','Candidate vs current','Rolling baseline ↓','Current vs baseline'])
+  tr.append(researchCreate('th',v));
  head.append(tr);table.append(head);
  const body=researchCreate('tbody');
  for(const m of report.markets){
@@ -1400,14 +1409,30 @@ function btDrawCohort(report,season){
     report.players===report.requested&&m.n>=Math.max(120,report.requested*12)&&
     report.teams>=(report.requested>6?3:2);
   const cmp=enough?btScoreComparison({valid:true,model:m.model,baseline:m.baseline}):null;
+  const candidate=enough?btCandidateComparison({
+   valid:true,model:m.model,minutesAware:m.minutesAware,pairedCount:m.pairedCount,tests:m.n
+  }):null;
   for(const v of [m.market,m.players,m.n,
-   m.n?m.model.toFixed(4):'—',m.n?m.baseline.toFixed(4):'—',
+   m.n?m.model.toFixed(4):'—',
+   Number.isFinite(m.minutesAware)?m.minutesAware.toFixed(4):'Unavailable',
+   candidate?candidate.label:'Insufficient cohort',
+   m.n?m.baseline.toFixed(4):'—',
    cmp?cmp.label:'Insufficient cohort'])
    row.append(researchCreate('td',v));
   body.append(row);
  }
  table.append(body);const wrap=researchCreate('div',null,'boxscore');
  wrap.append(table);btCohortResults.append(wrap);
+ const comparableMarkets=report.markets.filter(m=>m.players===report.requested&&
+  Number.isFinite(m.minutesAware)&&m.pairedCount===m.n);
+ const minutesBetter=comparableMarkets.filter(m=>btCandidateComparison({
+  valid:true,model:m.model,minutesAware:m.minutesAware,pairedCount:m.pairedCount,tests:m.n
+ }).kind==='lower').length;
+ btCohortResults.append(researchCreate('p',
+  'EXPERIMENTAL minutes-aware model: '+minutesBetter+'/'+comparableMarkets.length+
+  ' comparable markets have lower pooled Brier than the UNCHANGED current model. '+
+  'Both use identical synthetic reference lines and held-out game outcomes. '+
+  'The candidate is not used to generate any betting picks.','warning'));
  btCohortResults.append(researchCreate('p',
   'Pooled Brier is calculated from each prediction’s squared error, weighted by held-out appearances. '+
   'Markets and players can share game outcomes and are NOT independent observations. '+
@@ -1419,6 +1444,12 @@ function btDrawCohort(report,season){
  const select=researchCreate('select');select.setAttribute('aria-label','Market for probability calibration');
  for(const m of report.markets)select.add(new Option(m.market,m.market));
  select.value='PTS';label.append(select);controls.append(label);
+ const modelLabel=researchCreate('label','Inspect model: ');
+ const modelSelect=researchCreate('select');
+ modelSelect.setAttribute('aria-label','Current versus experimental minutes-aware model for calibration');
+ modelSelect.add(new Option('Current','probability'));
+ modelSelect.add(new Option('Minutes-aware (experimental)','minutesAwareProbability'));
+ modelLabel.append(modelSelect);controls.append(modelLabel);
  const widthLabel=researchCreate('label','Bin width: ');
  const widthSelect=researchCreate('select');widthSelect.setAttribute('aria-label','Probability calibration bin width');
  widthSelect.add(new Option('20% bands','0.2'));
@@ -1430,7 +1461,18 @@ function btDrawCohort(report,season){
   calibration.replaceChildren();
   const market=report.markets.find(m=>m.market===select.value);
   if(!market||!market.n)return;
-  const bins=btCalibrationBins(market.games,Number(widthSelect.value));
+  const key=modelSelect.value;
+  const viewGames=market.games.filter(g=>Number.isFinite(g[key]))
+   .map(g=>({...g,probability:g[key]}));
+  if(!viewGames.length){
+   calibration.append(researchCreate('p','Selected model has no comparable historical forecasts.','warning'));return;
+  }
+  if(viewGames.length!==market.games.length){
+   calibration.append(researchCreate('p',
+    '⚠️ Missing minutes-aware forecasts: '+(market.games.length-viewGames.length)+
+    ' games excluded from THIS experimental diagnostic.','warning'));
+  }
+  const bins=btCalibrationBins(viewGames,Number(widthSelect.value));
   const table=researchCreate('table'),th=researchCreate('thead'),thr=researchCreate('tr');
   for(const v of ['Predicted band','Observations','Avg forecast','Observed Over','Coverage']){
    thr.append(researchCreate('th',v));
@@ -1450,7 +1492,7 @@ function btDrawCohort(report,season){
   table.append(body);
   const scroller=researchCreate('div',null,'boxscore');scroller.append(table);
   calibration.append(scroller);
-  const spread=btDiscrimination(market.games);
+  const spread=btDiscrimination(viewGames);
   const pct=count=>spread.n?(100*count/spread.n).toFixed(1)+'%':'—';
   calibration.append(researchCreate('p',
    'Probability spread ('+market.market+'): '+spread.neutral+'/'+spread.n+
@@ -1462,7 +1504,7 @@ function btDrawCohort(report,season){
     '⚠️ Most forecasts cluster near 50%. This model has limited probability separation in '+
     market.market+' and is not ready to identify a reliable betting edge.','warning'));
   }
-  const split=btTemporalStability(market.games);
+  const split=btTemporalStability(viewGames);
   if(split.valid){
    const stableTable=researchCreate('table'),stableHead=researchCreate('thead'),
     stableTr=researchCreate('tr');
@@ -1488,11 +1530,13 @@ function btDrawCohort(report,season){
     '⚠️ Not enough date-separated games for two meaningful validation periods.','warning'));
   }
   calibration.append(researchCreate('p',
-   'Calibration compares predicted probabilities with actual Over frequencies for synthetic historical lines. '+
+   'Selected model: '+(key==='probability'?'unchanged current':'EXPERIMENTAL minutes-aware')+
+   '. Calibration compares predicted probabilities with actual Over frequencies for synthetic historical lines. '+
    'Sparse bands (<30) are unreliable. Earlier/later checks reuse the same model and cannot replace a separate untouched season. '+
    'No Betano historical prices, expected value, or betting recommendation.','warning'));
  };
  select.addEventListener('change',redraw);
+ modelSelect.addEventListener('change',redraw);
  widthSelect.addEventListener('change',redraw);
  redraw();
 }
@@ -1592,6 +1636,45 @@ function btDrawCrossSeason(scope){
  table.append(body);
  const wrap=researchCreate('div',null,'boxscore');wrap.append(table);
  btCrossSeasonResults.append(wrap);
+ // Keep existing/current model comparison untouched. This separate table
+ // compares ONLY the experimental candidate against current within each season.
+ const alternateTable=researchCreate('table'),alternateHead=researchCreate('thead'),
+   altHeaders=researchCreate('tr');
+ for(const value of ['Market',oldTitle+' current/minutes-aware',oldTitle+' candidate',
+   newTitle+' current/minutes-aware',newTitle+' candidate','Candidate better in BOTH?'])
+  altHeaders.append(researchCreate('th',value));
+ alternateHead.append(altHeaders);alternateTable.append(alternateHead);
+ const alternateRows=researchCreate('tbody');
+ let candidateBoth=0,candidateComparable=0;
+ for(const o of older.markets){
+  const n=newer.markets.find(x=>x.market===o.market);
+  if(!n)continue;
+  const classify=x=>btCandidateComparison({valid:true,model:x.model,
+   minutesAware:x.minutesAware,pairedCount:x.pairedCount,tests:x.n});
+  const a=classify(o),b=classify(n);
+  const comparable=a.kind!=='insufficient'&&b.kind!=='insufficient';
+  if(comparable)candidateComparable++;
+  const both=comparable&&a.kind==='lower'&&b.kind==='lower';
+  if(both)candidateBoth++;
+  const row=researchCreate('tr');
+  for(const value of [o.market,
+   o.model.toFixed(4)+' / '+(Number.isFinite(o.minutesAware)?o.minutesAware.toFixed(4):'—'),
+   a.label,
+   n.model.toFixed(4)+' / '+(Number.isFinite(n.minutesAware)?n.minutesAware.toFixed(4):'—'),
+   b.label,both?'Yes':'No'])
+   row.append(researchCreate('td',value));
+  alternateRows.append(row);
+ }
+ alternateTable.append(alternateRows);
+ btCrossSeasonResults.append(researchCreate('h4',
+  'Experimental minutes-aware vs unchanged current model'));
+ const altWrap=researchCreate('div',null,'boxscore');
+ altWrap.append(alternateTable);btCrossSeasonResults.append(altWrap);
+ btCrossSeasonResults.append(researchCreate('p',
+  'Minutes-aware has lower historical Brier in BOTH seasons on '+
+  candidateBoth+'/'+candidateComparable+' comparable markets. '+
+  'These alternative-model weights were chosen in advance, not trained or optimized '+
+  'for either season. A small lower Brier value is not proof of future betting value.','warning'));
  btCrossSeasonResults.append(researchCreate('p',
   consistent+'/8 markets have lower pooled model error in BOTH historical seasons. '+
   'This is retrospective analysis of a selected cohort using synthetic lines. '+
@@ -1620,7 +1703,8 @@ btCohortButton.addEventListener('click',async()=>{
    btCrossSeasonRuns.set(key+':'+season,{scope:key,season,
     players:report.players,teams:report.teams,
     markets:report.markets.map(x=>({
-     market:x.market,n:x.n,model:x.model,baseline:x.baseline
+     market:x.market,n:x.n,model:x.model,baseline:x.baseline,
+     minutesAware:x.minutesAware,pairedCount:x.pairedCount
     }))});
   }else{
    btCrossSeasonRuns.delete(key+':'+season);
