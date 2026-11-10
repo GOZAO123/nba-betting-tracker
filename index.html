@@ -1373,6 +1373,113 @@ lrRun.addEventListener('click',async()=>{
  }finally{lrRun.disabled=false}
 });
 
+
+// Update 34.3: manual, ESPN-verified prospective prop research ledger.
+const ledgerDate=document.getElementById('ledgerDate'),
+ ledgerFind=document.getElementById('ledgerFind'),
+ ledgerFixture=document.getElementById('ledgerFixture'),
+ ledgerQuoteConfirmed=document.getElementById('ledgerQuoteConfirmed'),
+ ledgerSave=document.getElementById('ledgerSave'),
+ ledgerRefresh=document.getElementById('ledgerRefresh'),
+ ledgerStatus=document.getElementById('ledgerStatus'),
+ ledgerResults=document.getElementById('ledgerResults');
+const LEDGER_GRACE=5*60*1000;
+let ledgerEvents=new Map(),ledgerRows=[],ledgerBusy=false,ledgerSession=0;
+function ledgerNbaDay(date){
+ const p=new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',
+  year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(date);
+ const v=k=>p.find(x=>x.type===k)?.value;
+ return v('year')+v('month')+v('day');
+}
+function ledgerLisbonTime(ms){
+ return new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Lisbon',
+  day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'
+ }).format(new Date(ms))+' Lisbon';
+}
+function ledgerToday(){
+ const day=ledgerNbaDay(new Date());
+ return day.slice(0,4)+'-'+day.slice(4,6)+'-'+day.slice(6);
+}
+ledgerDate.value=ledgerToday();
+async function ledgerFetch(url){
+ const c=new AbortController(),timer=setTimeout(()=>c.abort(),12000);
+ try{
+  const r=await fetch(url,{signal:c.signal,cache:'no-store'});
+  if(!r.ok)throw Error('ESPN HTTP '+r.status);
+  return await r.json();
+ }finally{clearTimeout(timer)}
+}
+function ledgerEvent(e,day,now=Date.now()){
+ if(!/^\d+$/.test(String(e?.id||''))||!e?.date||e.status?.type?.state!=='pre')return null;
+ const start=Date.parse(e.date);
+ if(!Number.isFinite(start)||start<=now+LEDGER_GRACE||
+    ledgerNbaDay(new Date(start))!==day||Number(e.season?.type??2)!==2)return null;
+ const sides=e.competitions?.[0]?.competitors||[];
+ const h=sides.find(x=>x.homeAway==='home'),a=sides.find(x=>x.homeAway==='away');
+ const hid=String(h?.team?.id||''),aid=String(a?.team?.id||'');
+ if(!hid||!aid||hid===aid||
+    !Object.values(ESPN_NBA_TEAM_IDS).includes(hid)||
+    !Object.values(ESPN_NBA_TEAM_IDS).includes(aid))return null;
+ const home=String(h?.team?.displayName||''),away=String(a?.team?.displayName||'');
+ if(!home||!away)return null;
+ return {id:String(e.id),start,homeId:hid,awayId:aid,home,away};
+}
+function ledgerReset(){
+ ledgerSession++;ledgerEvents.clear();ledgerRows=[];
+ ledgerResults.replaceChildren();ledgerFixture.replaceChildren();
+ ledgerFixture.add(new Option('Load upcoming games',''));
+ ledgerQuoteConfirmed.checked=false;ledgerDate.value=ledgerToday();
+ lrLatestResearch=null;
+ ledgerStatus.textContent='Load an upcoming ESPN fixture; cloud ledger loads manually.';
+}
+ledgerDate.addEventListener('change',()=>{
+ ledgerEvents.clear();ledgerFixture.replaceChildren();
+ ledgerFixture.add(new Option('Load fixtures for this date',''));
+ ledgerQuoteConfirmed.checked=false;
+});
+ledgerFind.addEventListener('click',async()=>{
+ if(ledgerBusy||!auth.currentUser)return;
+ const day=ledgerDate.value,dt=Date.parse(day+'T12:00:00Z'),
+  now=Date.now(),session=ledgerSession;
+ if(!/^\d{4}-\d{2}-\d{2}$/.test(day)||!Number.isFinite(dt)||
+   new Date(dt).toISOString().slice(0,10)!==day||
+   dt<now-3*86400000||dt>now+7*86400000){
+  ledgerStatus.textContent='Choose a valid NBA date within seven days.';return;
+ }
+ ledgerBusy=true;ledgerFind.disabled=true;ledgerEvents.clear();
+ try{
+  const board=await ledgerFetch(RESEARCH_ESPN_BASE+'scoreboard?dates='+day.replaceAll('-',''));
+  if(!Array.isArray(board?.events))throw Error('Invalid ESPN schedule response.');
+  if(session!==ledgerSession)return;
+  if(ledgerDate.value!==day)throw Error('Fixture date changed. Load again.');
+  const events=new Map();
+  for(const event of board.events){
+   const fixture=ledgerEvent(event,day.replaceAll('-',''));
+   if(fixture)events.set(fixture.id,fixture);
+  }
+  ledgerEvents=events;ledgerFixture.replaceChildren();
+  ledgerFixture.add(new Option('Choose an upcoming verified ESPN fixture',''));
+  for(const e of [...events.values()].sort((a,b)=>a.start-b.start))
+   ledgerFixture.add(new Option(e.away+' @ '+e.home+' · '+ledgerLisbonTime(e.start),e.id));
+  ledgerStatus.textContent=events.size+' upcoming regular-season fixtures · 1 ESPN request, zero OddsPapi calls.';
+ }catch(err){
+  if(session===ledgerSession)ledgerStatus.textContent='ESPN fixture lookup failed: '+(err.message||String(err));
+ }finally{ledgerBusy=false;ledgerFind.disabled=false}
+});
+function ledgerSameResearch(v){
+ return !!v&&canonicalPlayerName(v.name)===canonicalPlayerName(lrPlayer.value.trim())&&
+  v.team===lrTeam.value&&v.market===lrMarket.value&&
+  v.line===lrValidateLine(lrLine.value)&&v.side===lrSide.value&&
+  v.odds===lrValidateOdds(lrOdds.value);
+}
+function ledgerState(row){
+ const ms=row.capturedServerAt?.toMillis?.();
+ if(!Number.isFinite(ms))return 'UNVERIFIED TIMESTAMP';
+ if(ms>=row.eventStartMs-LEDGER_GRACE)return 'LATE / EXCLUDED';
+ return row.status==='settled'?'SETTLED':'PENDING';
+}
+function ledgerRef(uid,id){return doc(db,'users',uid,'propResearchLedger',id)}
+
 btRun.addEventListener('click',async()=>{
  const player=btPlayer.value.trim(),team=btTeam.value,teamId=ESPN_NBA_TEAM_IDS[team];
  if(!auth.currentUser){btStatus.textContent='Sign in with Google first.';return}
@@ -2260,6 +2367,7 @@ $('signin').onclick=async()=>{try{$('loginmsg').textContent='Signing in…';awai
 getRedirectResult(auth).catch(e=>{$('loginmsg').textContent=e.message});
 $('signout').onclick=()=>signOut(auth);
 onAuthStateChanged(auth,u=>{
+ ledgerReset();
  authSession++;writeQueue=Promise.resolve();pendingWrites=0;latestCloud=null;lastCommitted=null;syncError=null;
  if(unsubscribe){unsubscribe();unsubscribe=null}
  user=u;ready=false;$('login').hidden=!!u;$('app').style.display=u?'block':'none';$('signout').hidden=!u;
