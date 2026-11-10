@@ -316,6 +316,15 @@ main{width:100%;min-width:0}
   <div id="lineResearchResults" class="research-results"></div>
   <p class="warning">Research estimates here are UNVALIDATED for real bookmaker lines. No EV, staking guidance, automatic betting picks, or claims of a positive edge.</p>
  </div>
+ <div class="scanner-workspace"><div class="scanner-section-head"><div><h3>📓 Prospective player-prop research ledger</h3><p class="muted">Save a manually observed Betano line, the ESPN-only research estimate and an upcoming verified fixture before tip-off; check the final result later. Nothing here places wagers.</p></div></div>
+  <div class="row"><label for="ledgerDate">NBA fixture date (US Eastern):</label><input id="ledgerDate" type="date"><button id="ledgerFind" class="mini" type="button">Find upcoming fixtures (ESPN)</button></div>
+  <div class="row"><label for="ledgerFixture">ESPN fixture:</label><select id="ledgerFixture" aria-label="Upcoming ESPN fixture" style="min-width:300px"><option value="">Load fixtures first</option></select></div>
+  <div class="row"><label><input type="checkbox" id="ledgerQuoteConfirmed"> I actually observed this Betano line and price before tip-off (not a made-up test quote).</label></div>
+  <div class="row"><button id="ledgerSave" type="button" class="primary">Save research snapshot</button><button id="ledgerRefresh" class="mini" type="button">↻ Load my cloud ledger</button></div>
+  <p id="ledgerStatus" class="muted" role="status">First run Actual line research above using the genuine line, side and decimal odds. Then choose an upcoming ESPN game and confirm your observed price. No automatic saving.</p>
+  <div id="ledgerResults" class="research-results"></div>
+  <p class="warning">Research only. These Firebase records are CLIENT-managed, not independently timestamp-audited or tamper-proof. Manual Betano quotes are NOT verified against the bookmaker. The model estimate is uncalibrated, not a betting recommendation or reliable EV.</p>
+ </div>
  <div class="scanner-workspace"><div class="scanner-section-head"><div><h3>🧪 Model laboratory · Walk-forward backtest</h3><p class="muted">Evaluate a simple statistical baseline on the completed NBA regular season. This does not use Betano prices or create betting picks.</p></div></div>
   <div class="row"><input id="btPlayer" type="text" placeholder="Player name, e.g. Jalen Brunson" aria-label="Player to backtest" style="min-width:230px"><select id="btTeam" aria-label="NBA team for backtest"><option value="">Choose NBA team</option></select><button id="btRun" type="button" class="primary">Backtest player (ESPN only)</button></div>
   <p id="btStatus" class="muted" role="status">Manual test · one ESPN roster and one player game-log request maximum · zero OddsPapi requests. Historical results are not forecasts.</p>
@@ -374,7 +383,7 @@ main{width:100%;min-width:0}
 </script><script type="module">
 import {initializeApp} from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-app.js';
 import {getAuth,GoogleAuthProvider,signInWithPopup,signInWithRedirect,getRedirectResult,onAuthStateChanged,signOut} from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js';
-import {getFirestore,doc,onSnapshot,runTransaction} from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js';
+import {getFirestore,doc,collection,query,orderBy,limit,getDocsFromServer,onSnapshot,runTransaction,serverTimestamp} from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js';
 import {getFunctions,httpsCallable} from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-functions.js';
 const firebaseConfig={apiKey:'AIzaSyCW2dgvRxO_Lh5i79wAMpX4tc6VgP7K8wk',authDomain:'nba-betting-tracker-3979d.firebaseapp.com',projectId:'nba-betting-tracker-3979d',storageBucket:'nba-betting-tracker-3979d.firebasestorage.app',messagingSenderId:'846190824224',appId:'1:846190824224:web:71a3a188df36519f0a2545'};
 const app=initializeApp(firebaseConfig),auth=getAuth(app),db=getFirestore(app),provider=new GoogleAuthProvider();
@@ -1154,6 +1163,7 @@ const lrLine=document.getElementById('lineResearchLine');
 const lrSide=document.getElementById('lineResearchSide');
 const lrOdds=document.getElementById('lineResearchOdds');
 const lrRun=document.getElementById('lineResearchRun');
+let lrLatestResearch=null;
 const lrStatus=document.getElementById('lineResearchStatus');
 const lrResults=document.getElementById('lineResearchResults');
 for(const team of Object.keys(ESPN_NBA_TEAM_IDS).sort())lrTeam.add(new Option(team,team));
@@ -1306,7 +1316,7 @@ lrRun.addEventListener('click',async()=>{
  // not completion times, and we must not incorporate a game finished later.
  const cutoff=expected&&Number.isFinite(expected.receivedAt)?
   Math.min(Date.now(),expected.receivedAt)-12*60*60*1000:Date.now();
- lrRun.disabled=true;lrResults.replaceChildren();
+ lrRun.disabled=true;lrResults.replaceChildren();lrLatestResearch=null;
  try{
   const teamId=ESPN_NBA_TEAM_IDS[team];
   lrStatus.textContent='Verifying ESPN current-team roster for '+name+'…';
@@ -1353,6 +1363,8 @@ lrRun.addEventListener('click',async()=>{
    }).format(new Date(expected.receivedAt))+' Lisbon');
   }else summaryNotes.push('Manually entered line/odds · no live bookmaker verification');
   lrDraw(researched,{name:athlete.displayName,team},summaryNotes,odds,side);
+  lrLatestResearch={name:athlete.displayName,athleteId:String(athlete.id),
+   team,market,line,side,odds,researched,at:Date.now()};
   lrStatus.textContent='Research completed for ESPN athlete '+athlete.displayName+
    ' · '+researched.eligibleGames+' historical games · zero OddsPapi requests. No validated betting probability or pick.';
  }catch(e){
