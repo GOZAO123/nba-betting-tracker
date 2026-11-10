@@ -1646,7 +1646,9 @@ function ledgerDraw(){
 
 // Settlement is manual, read-only against ESPN and does not query the bookmaker.
 // Incomplete player data, DNPs, postponed games or identity mismatches fail closed.
-function ledgerExtractFinal(box,record){
+// Common ESPN Final identity/stat validator used both by the real ledger
+// settlement and the read-only dry run. No odds, Brier, or Firebase writes here.
+function ledgerExtractFinalStats(box,record){
  const hdr=box?.header,comp=hdr?.competitions?.[0];
  if(!comp)throw Error('ESPN final summary has no verified competition');
  if(String(hdr?.id||comp.id||'')!==String(record.eventId)||
@@ -1666,19 +1668,37 @@ function ledgerExtractFinal(box,record){
  const sides=(box.boxscore?.players||[]).filter(x=>
   String(x.team?.id||'')===String(record.teamId));
  if(sides.length!==1)throw Error('Team player box score missing or ambiguous');
- let stat=null;
+ const results={PTS:null,REB:null,AST:null,'3PT':null,PR:null,PA:null,RA:null,PRA:null,MIN:null};
+ let matched=false;
  for(const group of sides[0].statistics||[])for(const entry of group.athletes||[]){
   if(String(entry.athlete?.id||'')!==String(record.athleteId))continue;
+  matched=true;
   const parsed=researchExtractAthlete(group,entry);
-  if(!parsed||!Number.isFinite(parsed[record.market]))continue;
-  const value=parsed[record.market];
-  if(stat!==null&&stat!==value)throw Error('Conflicting ESPN player statistics');
-  stat=value;
+  if(!parsed)continue; // DNP or invalid minutes: do not treat as 0
+  for(const market of Object.keys(results)){
+   const value=parsed[market];
+   if(!Number.isFinite(value))continue;
+   if(results[market]!==null&&results[market]!==value)
+    throw Error('Conflicting ESPN player statistics for '+market);
+   results[market]=value;
+  }
  }
- if(stat===null)throw Error('Player did not play or stats missing; do not count as a loss');
+ if(!matched)throw Error('ESPN athlete ID absent from final team box score');
+ if(!Number.isFinite(results.MIN)||results.MIN<=0)
+  throw Error('Player did not play or minutes unavailable; cannot settle');
+ if(!Object.keys(results).some(k=>k!=='MIN'&&Number.isFinite(results[k])))
+  throw Error('ESPN final player statistics unavailable');
+ return results;
+}
+function ledgerExtractFinal(box,record){
+ const stats=ledgerExtractFinalStats(box,record);
+ const value=stats[record.market];
+ if(!Number.isFinite(value))
+  throw Error('Player '+record.market+' statistic unavailable; do not treat as zero');
  if(!Number.isFinite(record.line)||Math.floor(record.line)+.5!==record.line||
-    !['Over','Under'].includes(record.side))throw Error('Invalid stored betting line');
- return {resultStat:stat,resultWon:record.side==='Over'?stat>record.line:stat<record.line};
+    !['Over','Under'].includes(record.side))
+  throw Error('Invalid stored betting line');
+ return {resultStat:value,resultWon:record.side==='Over'?value>record.line:value<record.line};
 }
 async function ledgerSettle(id){
  const user=auth.currentUser,row=ledgerRows.find(x=>x.id===id);
