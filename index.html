@@ -1592,7 +1592,7 @@ function ledgerDraw(){
   (brier!==null?' · unvalidated-model Brier '+brier.toFixed(4):'')+
   '. Results are NOT audited odds, ROI or betting value.','muted'));
  const table=researchCreate('table'),head=researchCreate('thead'),headers=researchCreate('tr');
- for(const name of ['Fixture · Lisbon','Player/prop','Observed odds','Frozen estimate*','Status','Outcome','Check'])
+ for(const name of ['Fixture · Lisbon','Player/prop','Observed odds','Frozen estimate*','Firebase receipt · Lisbon','Status','Outcome','Check'])
   headers.append(researchCreate('th',name));
  head.append(headers);table.append(head);
  const body=researchCreate('tbody');
@@ -1603,6 +1603,8 @@ function ledgerDraw(){
    row.player+' · '+row.market+' '+row.line+' '+row.side,
    Number(row.odds).toFixed(2)+' (manual)',
    Number.isFinite(row.modelSelected)?(100*row.modelSelected).toFixed(1)+'%':'—',
+   Number.isFinite(row.capturedServerAt?.toMillis?.())
+    ?ledgerLisbonTime(row.capturedServerAt.toMillis()):'Server receipt not available',
    state,state==='SETTLED'?row.resultStat+' · '+(row.resultWon?'Won':'Lost'):'—'
   ])tr.append(researchCreate('td',v));
   const buttonCell=researchCreate('td');
