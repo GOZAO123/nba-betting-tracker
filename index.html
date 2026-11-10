@@ -305,6 +305,12 @@ main{width:100%;min-width:0}
   <p id="btStatus" class="muted" role="status">Manual test · one ESPN roster and one player game-log request maximum · zero OddsPapi requests. Historical results are not forecasts.</p>
   <div id="btResults" class="research-results"></div>
  </div>
+ <div class="scanner-workspace"><div class="scanner-section-head"><div><h3>📐 Model validation · Six-player cohort</h3><p class="muted">Combine chronological backtests for Knicks and Nuggets players, with pooled Brier scores and probability calibration. ESPN-only exploratory evaluation.</p></div></div>
+  <div class="row"><button id="btCohortRun" type="button" class="primary">Validate six players (ESPN only)</button><span class="muted">Manual · up to 2 ESPN rosters + 6 player game logs · 0 OddsPapi calls</span></div>
+  <p id="btCohortStatus" class="muted" role="status">Starter group: Jalen Brunson, Mikal Bridges, OG Anunoby, Nikola Jokić, Jamal Murray, Aaron Gordon. Run once to compare their 2025–26 held-out results.</p>
+  <div id="btCohortResults" class="research-results"></div>
+  <p class="muted notice">Exploratory only. Repeated player-market predictions are correlated; a lower Brier score on synthetic lines does not establish profitable bets or future predictive performance.</p>
+ </div>
  <details class="scanner-dev"><summary>⚙️ Developer tools <span class="muted">· Manual API tests</span></summary><div class="scanner-dev-content"><p class="muted notice">These buttons make live API requests when tapped. Avoid unnecessary tests to protect the free allowance.</p>
   <div class="row"><button id="oddsProbeBtn" type="button" class="mini">Test OddsPapi NBA connection</button><span id="oddsProbeStatus" class="muted" role="status">Test uses one API request. Available only to the configured owner.</span></div><div id="oddsProbeResult" class="muted"></div>
   <div class="row"><button id="nbaOddsTestBtn" type="button" class="mini">Test Betano PT NBA odds</button><span id="nbaOddsTestStatus" class="muted">One request; 15-minute server cache when successful.</span></div><div id="nbaOddsTestResult" class="muted"></div>
@@ -1102,6 +1108,222 @@ btRun.addEventListener('click',async()=>{
   btStatus.textContent='Backtest unavailable: '+(error.message||String(error))+
    '. No OddsPapi request was made. ESPN game logs may sometimes be unavailable or browser-blocked.';
  }finally{btRun.disabled=false}
+});
+
+
+// Update 33.9 — manually initiated cross-player validation.
+// IMPORTANT: No ESPN requests occur at startup; no OddsPapi/Firebase writes.
+const BT_COHORT=Object.freeze([
+ {name:'Jalen Brunson',team:'New York Knicks'},
+ {name:'Mikal Bridges',team:'New York Knicks'},
+ {name:'OG Anunoby',team:'New York Knicks'},
+ {name:'Nikola Jokic',team:'Denver Nuggets'},
+ {name:'Jamal Murray',team:'Denver Nuggets'},
+ {name:'Aaron Gordon',team:'Denver Nuggets'}
+]);
+const BT_MARKETS=Object.freeze(['PTS','REB','AST','3PT','PR','PA','RA','PRA']);
+const btCohortButton=document.getElementById('btCohortRun');
+const btCohortStatus=document.getElementById('btCohortStatus');
+const btCohortResults=document.getElementById('btCohortResults');
+
+function btPoolMarket(entries,market){
+ // Each held-out prediction contributes exactly one squared error.
+ // This is weighted by game appearances, NOT an unweighted average of players.
+ const games=[];
+ for(const e of entries){
+  const result=e.results.find(x=>x.market===market&&x.valid);
+  if(!result)continue;
+  for(const prediction of result.predictions){
+   const p=prediction.probability,b=prediction.baselineProbability,y=prediction.actual;
+   if(!Number.isFinite(p)||!Number.isFinite(b)||![0,1].includes(y)||
+      p<0||p>1||b<0||b>1)continue;
+   games.push({
+    playerId:e.id,team:e.team,time:prediction.time,
+    probability:p,baselineProbability:b,actual:y
+   });
+  }
+ }
+ const n=games.length,players=new Set(games.map(x=>x.playerId)).size;
+ const mean=field=>games.reduce((v,g)=>v+(g[field]-g.actual)**2,0)/(n||1);
+ return {market,players,n,model:n?mean('probability'):null,
+  baseline:n?mean('baselineProbability'):null,games};
+}
+function btCalibrationBins(predictions){
+ const bins=Array.from({length:5},(_,i)=>({
+  low:i/5,high:(i+1)/5,n:0,probSum:0,winSum:0
+ }));
+ for(const x of predictions){
+  if(!Number.isFinite(x.probability)||![0,1].includes(x.actual))continue;
+  const idx=Math.min(4,Math.floor(x.probability*5));
+  bins[idx].n++;
+  bins[idx].probSum+=x.probability;
+  bins[idx].winSum+=x.actual;
+ }
+ return bins.map(b=>({
+  ...b,
+  predicted:b.n?b.probSum/b.n:null,
+  observed:b.n?b.winSum/b.n:null,
+  sparse:b.n<30
+ }));
+}
+function btCohortSummary(entries,issues=[]){
+ if(!Array.isArray(entries))throw Error('Missing validated player history.');
+ const uniqueIds=new Set(entries.map(e=>e.id));
+ if(uniqueIds.size!==entries.length)throw Error('Duplicate ESPN athlete identity in cohort; validation cancelled.');
+ const markets=BT_MARKETS.map(m=>btPoolMarket(entries,m));
+ return {entries,issues,markets,teams:new Set(entries.map(e=>e.team)).size,
+  players:entries.length};
+}
+function btDrawCohort(report,season){
+ btCohortResults.replaceChildren();
+ const heading=researchCreate('div',null,'stat-tile');
+ heading.append(
+  researchCreate('strong',report.players+'/'+BT_COHORT.length+
+   ' ESPN players validated · '+report.teams+' NBA teams · '+(season-1)+'–'+String(season).slice(-2)),
+  researchCreate('p','Scores use chronological held-out games, not in-sample fits. '+
+   'These six players were selected for exploration, not randomly sampled.','muted')
+ );
+ btCohortResults.append(heading);
+ if(report.issues.length){
+  btCohortResults.append(researchCreate('p',
+   '⚠️ Missing players / sources: '+report.issues.join(' · ')+
+   '. Pooled results exclude the missing data.','warning'));
+ }
+ if(report.players<6||report.teams<2){
+  btCohortResults.append(researchCreate('p',
+   '⚠️ Incomplete starter cohort: compare descriptive statistics only. The full six-player/two-team check has not passed.','warning'));
+ }
+ const participants=researchCreate('div',null,'boxscore'),ptable=researchCreate('table'),
+  phead=researchCreate('thead'),pr=researchCreate('tr');
+ for(const value of ['Verified ESPN player','Team','Season games','Hold-outs per market','Lower Brier markets']){
+  pr.append(researchCreate('th',value));
+ }
+ phead.append(pr);ptable.append(phead);
+ const pb=researchCreate('tbody');
+ for(const e of report.entries){
+  const tr=researchCreate('tr');
+  const valid=e.results.filter(x=>x.valid);
+  const better=valid.filter(x=>btScoreComparison(x).kind==='lower').length;
+  const tests=valid.length===8?Math.min(...valid.map(x=>x.tests))+' minimum':'Incomplete';
+  for(const v of [e.name,e.team,e.games,tests,better+'/'+valid.length])
+   tr.append(researchCreate('td',v));
+  pb.append(tr);
+ }
+ ptable.append(pb);participants.append(ptable);btCohortResults.append(participants);
+ const table=researchCreate('table'),head=researchCreate('thead'),tr=researchCreate('tr');
+ for(const v of ['Market','Players','Held-out rows','Pooled model Brier ↓',
+  'Pooled baseline ↓','Comparison'])tr.append(researchCreate('th',v));
+ head.append(tr);table.append(head);
+ const body=researchCreate('tbody');
+ for(const m of report.markets){
+  const row=researchCreate('tr'),enough=m.players>=6&&m.n>=120&&report.teams>=2;
+  const cmp=enough?btScoreComparison({valid:true,model:m.model,baseline:m.baseline}):null;
+  for(const v of [m.market,m.players,m.n,
+   m.n?m.model.toFixed(4):'—',m.n?m.baseline.toFixed(4):'—',
+   cmp?cmp.label:'Insufficient cohort'])
+   row.append(researchCreate('td',v));
+  body.append(row);
+ }
+ table.append(body);const wrap=researchCreate('div',null,'boxscore');
+ wrap.append(table);btCohortResults.append(wrap);
+ btCohortResults.append(researchCreate('p',
+  'Pooled Brier is calculated from each prediction’s squared error, weighted by held-out appearances. '+
+  'Markets and players can share game outcomes and are NOT independent observations. '+
+  '“Insufficient cohort” requires all six players, two teams and at least 120 observations in that market.','muted'));
+ if(!report.markets.some(m=>m.n>0))return;
+ const controls=researchCreate('div',null,'row');
+ const label=researchCreate('label','Calibration market: ');
+ const select=researchCreate('select');select.setAttribute('aria-label','Market for probability calibration');
+ for(const m of report.markets)select.add(new Option(m.market,m.market));
+ select.value='PTS';label.append(select);controls.append(label);btCohortResults.append(controls);
+ const calibration=researchCreate('div',null,'research-results');btCohortResults.append(calibration);
+ const redraw=()=>{
+  calibration.replaceChildren();
+  const market=report.markets.find(m=>m.market===select.value);
+  if(!market||!market.n)return;
+  const bins=btCalibrationBins(market.games);
+  const table=researchCreate('table'),th=researchCreate('thead'),thr=researchCreate('tr');
+  for(const v of ['Predicted band','Observations','Avg forecast','Observed Over','Coverage']){
+   thr.append(researchCreate('th',v));
+  }
+  th.append(thr);table.append(th);
+  const body=researchCreate('tbody');
+  for(const b of bins){
+   const tr=researchCreate('tr');
+   for(const v of [
+    Math.round(100*b.low)+'–'+Math.round(100*b.high)+'%',b.n,
+    b.predicted===null?'—':(100*b.predicted).toFixed(1)+'%',
+    b.observed===null?'—':(100*b.observed).toFixed(1)+'%',
+    b.sparse?'Sparse (<30)':'Descriptive only'
+   ])tr.append(researchCreate('td',v));
+   body.append(tr);
+  }
+  table.append(body);
+  const scroller=researchCreate('div',null,'boxscore');scroller.append(table);
+  calibration.append(scroller);
+  calibration.append(researchCreate('p',
+   'Calibration compares forecast probability with the actual Over frequency for the '+
+   market.market+' synthetic historical line. Sparse bins cannot support reliable conclusions. '+
+   'These are NOT Betano-priced markets or live betting recommendations.','warning'));
+ };
+ select.addEventListener('change',redraw);
+ redraw();
+}
+async function btFetchCohort(season){
+ const rosterByTeam=new Map(),issues=[];
+ // Explicitly bounded: two roster requests and six individual player log requests.
+ const teams=[...new Set(BT_COHORT.map(x=>x.team))];
+ if(teams.length!==2||BT_COHORT.length!==6)throw Error('Starter cohort request bound changed.');
+ for(const team of teams){
+  const teamId=ESPN_NBA_TEAM_IDS[team];
+  if(!teamId){issues.push(team+': missing ESPN team ID');continue}
+  btCohortStatus.textContent='ESPN roster check: '+team+'…';
+  try{
+   const roster=await readEspnIdentity(RESEARCH_ESPN_BASE+'teams/'+encodeURIComponent(teamId)+'/roster');
+   if((roster.team?.id&&String(roster.team.id)!==teamId)||
+      (roster.team?.displayName&&canonicalPlayerName(roster.team.displayName)!==canonicalPlayerName(team)))
+    throw Error('ESPN team identity mismatch');
+   rosterByTeam.set(team,(roster.athletes||[]).flatMap(x=>
+    Array.isArray(x?.items)?x.items:[x]).filter(x=>x?.id&&x?.displayName));
+  }catch(e){issues.push(team+' roster: '+(e.message||'unavailable'))}
+ }
+ const results=[];
+ for(const entry of BT_COHORT){
+  const people=rosterByTeam.get(entry.team)||[];
+  const matches=new Map(people.filter(x=>
+   canonicalPlayerName(x.displayName)===canonicalPlayerName(entry.name))
+   .map(x=>[String(x.id),x]));
+  if(matches.size!==1){issues.push(entry.name+': no unique roster match');continue}
+  const a=[...matches.values()][0];
+  btCohortStatus.textContent='Analysing '+a.displayName+' ('+(results.length+1)+'/6)…';
+  try{
+   const url='https://site.web.api.espn.com/apis/common/v3/sports/basketball/nba/athletes/'+
+    encodeURIComponent(a.id)+'/gamelog?season='+encodeURIComponent(season);
+   const log=await readEspnIdentity(url);
+   const games=btParseGamelog(log,a.id,season);
+   const marketResults=BT_MARKETS.map(m=>btWalkForward(games,m));
+   if(!marketResults.some(x=>x.valid)){
+    issues.push(a.displayName+': fewer than 12 held-out forecasts');continue;
+   }
+   results.push({name:a.displayName,id:String(a.id),team:entry.team,
+    games:games.length,results:marketResults});
+  }catch(e){issues.push(a.displayName+': '+(e.message||'game log unavailable'))}
+ }
+ return btCohortSummary(results,issues);
+}
+btCohortButton.addEventListener('click',async()=>{
+ if(!auth.currentUser){btCohortStatus.textContent='Sign in first.';return}
+ if(!confirm('Run six historical ESPN player backtests? Up to eight ESPN reads (2 team rosters and 6 game logs), zero OddsPapi requests. No bets will be recommended.'))return;
+ btCohortButton.disabled=true;btCohortResults.replaceChildren();
+ try{
+  const season=btCompletedSeason(),report=await btFetchCohort(season);
+  btDrawCohort(report,season);
+  btCohortStatus.textContent='Cross-player historical validation completed: '+
+   report.players+'/6 players · '+report.teams+' teams · 0 OddsPapi requests. No live prediction or betting recommendation.';
+ }catch(e){
+  btCohortStatus.textContent='Combined validation unavailable: '+(e.message||String(e))+
+   '. No OddsPapi requests were made.';
+ }finally{btCohortButton.disabled=false}
 });
 
 document.getElementById('verifiedPropsBtn')?.addEventListener('click',async()=>{
