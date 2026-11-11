@@ -1,0 +1,30 @@
+name: Backend syntax and settlement tests
+
+on:
+  pull_request:
+    paths:
+      - "functions/**"
+      - ".github/workflows/backend-checks.yml"
+  push:
+    branches: [main]
+    paths:
+      - "functions/**"
+      - ".github/workflows/backend-checks.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  node22:
+    name: Node 22 backend verification
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Backend syntax lint (no dependencies or external API calls)
+        run: npm run lint --prefix functions
+      - name: Offline settlement regression tests
+        run: npm test --prefix functions

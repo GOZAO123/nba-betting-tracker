@@ -866,3 +866,40 @@ exports.ledgerSettleProspective=onCall(
     return {settled:true,resultStat:result.stat,resultWon:result.won,recordId:id};
   }
 );
+
+// Update 34.6 — optional daily, server-only automatic ESPN settlement.
+// This does not touch OddsPapi and does not require a signed-in browser.
+// Deploy this function separately, only after owner approval (Cloud Scheduler
+// creates a billed job; Firebase Blaze plan may be required).
+const { onSchedule } = require("firebase-functions/v2/scheduler");
+const { runAutomaticSettlement } = require("./auto-settlement");
+const AUTO_LEDGER_SCAN_LIMIT = 300;
+
+exports.ledgerAutoSettleProspective = onSchedule(
+  {
+    schedule: "0 12 * * *", timeZone: "Europe/Lisbon",
+    region: "europe-west1", maxInstances: 1, concurrency: 1,
+    timeoutSeconds: 480, memory: "256MiB"
+  },
+  async () => {
+    const db = getFirestore();
+    // Status-only collection query uses Firestore's default single-field index.
+    // A hard cap bounds daily reads; older/DNP records are excluded by the
+    // pure runner's 14-day eligibility window, and do not consume ESPN calls.
+    const pending = await db.collection("users").doc(LEDGER_OWNER)
+      .collection("propResearchLedger").where("status", "==", "pending")
+      .limit(AUTO_LEDGER_SCAN_LIMIT).get();
+    const result = await runAutomaticSettlement({
+      snapshots: pending.docs, now: Date.now(), db,
+      fetchSummary: eventId => ledgerGetEspn("summary?event=" + encodeURIComponent(eventId)),
+      extractFinal: ledgerExtractFinalFromEspn,
+      serverTimestamp: () => FieldValue.serverTimestamp()
+    });
+    // Do not log identifying data, player names or manually observed odds.
+    console.info("ESPN automatic prospective settlement", {
+      ...result, scanLimitReached: pending.size === AUTO_LEDGER_SCAN_LIMIT
+    });
+    if (pending.size === AUTO_LEDGER_SCAN_LIMIT)
+      console.warn("Pending ledger scan cap reached; some records may need manual settlement.");
+  }
+);

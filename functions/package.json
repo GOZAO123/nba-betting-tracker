@@ -7,7 +7,8 @@
     "node": "22"
   },
   "scripts": {
-    "lint": "node --check index.js"
+    "lint": "node --check index.js && node --check auto-settlement.js && node --check auto-settlement.test.js",
+    "test": "node --test auto-settlement.test.js"
   },
   "dependencies": {
     "firebase-admin": "^13.0.0",
