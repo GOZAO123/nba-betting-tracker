@@ -334,7 +334,7 @@ main{width:100%;min-width:0}
     <div id="ledgerTestResults" class="research-results"></div>
    </div>
   </details>
-  <p class="warning">Research only. New captures and settlements use trusted Firebase functions, but current Firestore owner-write rules STILL allow edits, so this ledger is not yet immutable or independently audited. Manually entered Betano prices and client-generated model estimates are NOT independently verified. No betting recommendations or reliable EV.</p>
+  <p class="warning">Research only. Firestore security rules now block direct browser writes to research entries. New captures and settlements use trusted Firebase functions, but manual Betano prices and client-generated estimates are NOT independently verified. Legacy entries were captured before this protection. No audited bookmaker ROI, betting recommendations or reliable EV.</p>
  </div>
  <div class="scanner-workspace"><div class="scanner-section-head"><div><h3>🧪 Model laboratory · Walk-forward backtest</h3><p class="muted">Evaluate a simple statistical baseline on the completed NBA regular season. This does not use Betano prices or create betting picks.</p></div></div>
   <div class="row"><input id="btPlayer" type="text" placeholder="Player name, e.g. Jalen Brunson" aria-label="Player to backtest" style="min-width:230px"><select id="btTeam" aria-label="NBA team for backtest"><option value="">Choose NBA team</option></select><button id="btRun" type="button" class="primary">Backtest player (ESPN only)</button></div>
@@ -1633,12 +1633,12 @@ function ledgerDraw(){
   table.append(body);const wrap=researchCreate('div',null,'boxscore');
   wrap.append(table);ledgerResults.append(wrap);
   ledgerResults.append(researchCreate('p',
-   'Even with 30+ outcomes, self-selected manual prices and mutable Firebase records cannot prove calibrated win probabilities.','warning'));
+   'Even with 30+ outcomes, self-selected manual offers, unverified bookmaker prices and uncalibrated client estimates cannot prove reliable future win probabilities.','warning'));
  }
  ledgerResults.append(researchCreate('p',
   '*Only records captured before tip-off according to a Firestore server timestamp can be scored. '+
-  'Current rules still allow users to edit their own records, so this ledger cannot certify immutable prospective evidence. '+
-  'Manually entered quotes are NOT verified against Betano.','warning'));
+  'Current Firestore rules prohibit owner-browser edits; only trusted Firebase functions can now change ledger records. '+
+  'Legacy entries were captured before this restriction. Manual odds and experimental estimates are NOT independently validated against Betano.','warning'));
 }
 
 
