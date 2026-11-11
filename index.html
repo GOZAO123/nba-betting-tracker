@@ -1594,7 +1594,7 @@ async function ledgerLoad(append=false){
   if(auth.currentUser?.uid!==uid||session!==ledgerSession)return false;
   const next=ledgerCombinePages(ledgerRows,page.docs,append);
   ledgerRows=next.records;
-  ledgerLastDoc=page.docs.at(-1)||(append?ledgerLastDoc:null);
+  ledgerLastDoc=page.docs.length?page.docs[page.docs.length-1]:(append?ledgerLastDoc:null);
   ledgerMoreAvailable=next.moreAvailable;
   ledgerLoadMore.hidden=!ledgerMoreAvailable;
   ledgerDraw();
