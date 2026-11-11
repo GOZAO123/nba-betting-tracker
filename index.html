@@ -326,6 +326,15 @@ main{width:100%;min-width:0}
 .batch-offer-edit input{width:105px;min-width:80px;max-width:135px}
 .batch-offer-info{min-width:160px}
 @media(max-width:700px){.batch-composer-grid{grid-template-columns:minmax(0,1fr)}.batch-composer-actions button{flex:1}.batch-offer-item button{width:auto}.batch-offer-info{min-width:100%}}
+
+/* Update 35.0D: explicitly triggered, capped ESPN-only research preview for local drafts. */
+.batch-research-actions{display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin:13px 0 6px}
+.batch-research-actions button{min-height:40px}
+.batch-research-table{max-width:100%;width:100%;overflow-x:auto;overscroll-behavior-x:contain}
+.batch-research-table table{min-width:650px;font-size:.81rem}
+.batch-research-table th:first-child,.batch-research-table td:first-child{white-space:normal;min-width:130px}
+.batch-research-table .batch-research-error{color:#ffc999;white-space:normal;overflow-wrap:anywhere;min-width:170px}
+@media(max-width:700px){.batch-research-actions button{width:100%}}
 </style></head><body><main><div class="bar"><div><h1>🏀 NBA Betting Tracker</h1><p>One player, one check — synced across devices</p></div><div class="header-actions"><button id="layoutModeToggle" type="button" class="mini" aria-label="Switch between wide and mobile layouts">📱 Mobile view</button><button id="updateAppButton" type="button" class="mini" title="Load the newest app version from GitHub Pages">↻ Update app</button><button id="signout" hidden>Sign out</button></div></div><section class="panel" id="login"><h2>Sign in</h2><p>Use the same Google account on Android and PC to see the same checklist.</p><button class="primary" id="signin">Continue with Google</button><p class="muted" id="loginmsg"></p></section><div id="app"><nav class="tabs" aria-label="App sections"><button type="button" data-tab="scanner" aria-selected="true">🤖 AI Scanner</button><button type="button" data-tab="games" aria-selected="false">🏀 NBA Games</button><button type="button" data-tab="analyzer" aria-selected="false">📊 Props Analyzer</button><button type="button" data-tab="checklist" aria-selected="false">✅ Checklist</button></nav><section id="scannerTab" class="panel scanner-panel">
  <header class="scanner-hero"><div><span class="scanner-eyebrow">NBA ANALYTICS · BETANO PT</span><h2>🤖 AI Scanner</h2><p class="muted">Your workspace for NBA player-prop research.</p></div><span class="scanner-badge">● Manual mode</span></header>
  <div class="scanner-overview" aria-label="Scanner overview">
@@ -396,6 +405,13 @@ main{width:100%;min-width:0}
    <div class="row"><button id="batchOfferClear" class="mini" type="button">Clear all local drafts</button></div>
    <p id="batchOfferStatus" class="muted" role="status">No drafts staged. Preparation never contacts Firebase, ESPN or OddsPapi.</p>
    <div id="batchOfferRows" class="batch-offer-list" aria-label="Prepared research drafts"></div>
+   <div class="batch-research-actions">
+    <button id="batchResearchRun" class="primary" type="button" disabled>Research entire batch (ESPN only)</button>
+    <span class="muted">Manual · max 20 drafts, 12 teams, 52 potential ESPN lookups · 2 simultaneous players · zero OddsPapi</span>
+   </div>
+   <p id="batchResearchStatus" class="muted" role="status">Prepare at least one genuine local offer, then start the bounded research preview.</p>
+   <div id="batchResearchResults" class="batch-research-table" aria-label="Descriptive batch ESPN research results"></div>
+   <p class="warning notice">Batch results are temporary ESPN-only exploratory estimates, NOT verified sportsbook odds, calibrated probabilities, betting picks or saved research. A result never authorizes cloud capture: each prospective observation still requires fresh individual Actual line research, a verified ESPN fixture and explicit trusted backend confirmation.</p>
    <p class="warning notice">All offers remain temporary local drafts and disappear on refresh or sign-out. Searchable players are checked against ESPN's team roster, not a verified Betano feed. For each offer, still run Actual line research, choose the verified upcoming fixture and reconfirm the current bookmaker price before separate trusted backend capture. Keep track of rejected/unavailable quotes to avoid selection bias.</p>
   </details>
  </div>
