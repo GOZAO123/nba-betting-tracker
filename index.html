@@ -1510,7 +1510,7 @@ const batchOfferInput=document.getElementById('batchOfferInput'),
 let batchOffers=[],batchActiveKey=null;
 function batchReset(){
  batchOffers=[];batchActiveKey=null;batchOfferInput.value='';batchOfferConfirmed.checked=false;
- batchOfferRows.replaceChildren();
+ batchOfferRows.replaceChildren();batchComposerReset();
  batchOfferStatus.textContent='No drafts staged. Nothing was saved.';
 }
 function batchRender(){
@@ -1530,6 +1530,7 @@ function batchRender(){
    batchActiveKey=item.key;
    lrPlayer.value=item.player;lrTeam.value=item.team;lrMarket.value=item.market;
    lrLine.value=String(item.line);lrSide.value=item.side;lrOdds.value=String(item.odds);
+   if(item.eventId&&ledgerEvents.has(item.eventId))ledgerFixture.value=item.eventId;
    lrQuoteContext=null;lrLatestResearch=null;lrResults.replaceChildren();
    ledgerQuoteConfirmed.checked=false;
    lrStatus.textContent='Local quote draft copied. Recheck Betano price, then click Research this line (ESPN only). A new player identity/history check is required before saving.';
@@ -1537,7 +1538,53 @@ function batchRender(){
    batchRender();
    lrPlayer.scrollIntoView({behavior:'smooth',block:'center'});
   });
-  row.append(description,select);batchOfferRows.append(row);
+  const edit=researchCreate('button','Edit odds','mini');
+  edit.type='button';
+  edit.addEventListener('click',()=>{
+   if(!auth.currentUser||ledgerBusy||ledgerPageBusy||lrRun.disabled)return;
+   const controls=researchCreate('div',null,'batch-offer-edit');
+   const field=researchCreate('input');field.type='text';field.inputMode='decimal';
+   field.maxLength=12;field.value=String(item.odds);
+   field.setAttribute('aria-label','Updated decimal odds for '+item.player);
+   const apply=researchCreate('button','Save new price','mini');
+   apply.type='button';
+   const cancel=researchCreate('button','Cancel','mini');
+   cancel.type='button';cancel.addEventListener('click',()=>batchRender());
+   apply.addEventListener('click',()=>{
+    if(!auth.currentUser||ledgerBusy||ledgerPageBusy)return;
+    const price=lrValidateOdds(field.value.trim().replace(',','.'));
+    if(!Number.isFinite(price)){
+     batchOfferStatus.textContent='Enter valid observed decimal odds from 1.01 to 100.00.';
+     return;
+    }
+    if(price!==item.odds&&!confirm('Confirm this is the updated Betano price you actually observed. Nothing is saved to Firebase.'))return;
+    item.odds=price;
+    if(item.key===batchActiveKey){
+     lrLatestResearch=null;lrQuoteContext=null;lrResults.replaceChildren();
+     ledgerQuoteConfirmed.checked=false;
+     lrStatus.textContent='The local quote changed. Select Use for research and rerun ESPN research before saving.';
+    }
+    batchOfferStatus.textContent='Local price updated for '+item.player+
+     '. Previous research was invalidated if this row was active. No backend write.';
+    batchRender();
+   });
+   controls.append(field,apply,cancel);
+   row.append(controls);field.focus();
+  });
+  const remove=researchCreate('button','Remove','mini');
+  remove.type='button';
+  remove.addEventListener('click',()=>{
+   if(ledgerBusy||ledgerPageBusy||lrRun.disabled)return;
+   if(!confirm('Remove this unsaved local draft for '+item.player+'?'))return;
+   batchOffers=batchOffers.filter(x=>x!==item);
+   if(batchActiveKey===item.key){
+    batchActiveKey=null;lrLatestResearch=null;lrQuoteContext=null;lrResults.replaceChildren();
+    ledgerQuoteConfirmed.checked=false;
+   }
+   batchOfferStatus.textContent='One local draft removed. No Firebase record was deleted.';
+   batchRender();
+  });
+  row.append(description,select,edit,remove);batchOfferRows.append(row);
  }
 }
 batchOfferPrepare.addEventListener('click',()=>{
@@ -1552,6 +1599,7 @@ batchOfferPrepare.addEventListener('click',()=>{
    (parsed.errors.length>5?' Plus '+(parsed.errors.length-5)+' more errors.':'');
   return;
  }
+ if(batchOffers.length&&!confirm('Replace the '+batchOffers.length+' existing local drafts with this pasted list? Saved Firebase records are unchanged.'))return;
  batchOffers=parsed.rows;batchActiveKey=null;batchOfferConfirmed.checked=false;
  batchOfferStatus.textContent=batchOffers.length+' drafts prepared in this tab only. None captured. Select each row to run ESPN research.';
  batchRender();
