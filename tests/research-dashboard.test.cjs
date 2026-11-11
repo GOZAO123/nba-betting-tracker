@@ -204,3 +204,114 @@ test("paginator guards account changes, duplicate requests and leaves reads expl
  assert.match(reset,/ledgerLastDoc=null;ledgerMoreAvailable=false;ledgerPageBusy=false/);
  assert.match(reset,/ledgerLoadMore.hidden=true/);
 });
+
+
+// Update 35.0B: all batch rows below are synthetic offline parser fixtures.
+// No fixture, odds, or quote in these tests is a verified bookmaker offer.
+const batchParser=(()=>{
+ const canonicalStart=html.indexOf("function canonicalPlayerName(");
+ const canonicalEnd=html.indexOf("const ESPN_NBA_TEAM_IDS=",canonicalStart);
+ const validateStart=html.indexOf("function lrValidateLine(");
+ const validateEnd=html.indexOf("function lrNormalOver(",validateStart);
+ const parserStart=html.indexOf("function batchParseOffers(");
+ const parserEnd=html.indexOf("// Update 35.0B pure parser END",parserStart);
+ assert.ok(canonicalStart>0&&canonicalEnd>canonicalStart);
+ assert.ok(validateStart>0&&validateEnd>validateStart);
+ assert.ok(parserStart>0&&parserEnd>parserStart);
+ return new Function(
+  html.slice(canonicalStart,canonicalEnd)+
+  html.slice(validateStart,validateEnd)+
+  html.slice(parserStart,parserEnd)+
+  "\nreturn batchParseOffers;")();
+})();
+const exampleTeams={"Boston Celtics":"2","New York Knicks":"18","Oklahoma City Thunder":"25"};
+const item=(player="Example Player",team="Boston Celtics",market="PTS",line="20.5",
+ side="Over",odds="1.80")=>[player,team,market,line,side,odds].join(" | ");
+
+test("manual quote parser accepts up to 20 valid rows, comma decimals and TAB columns",()=>{
+ const input=[
+  item("Sample One","Boston Celtics","pts","20,5","over","1,75"),
+  ["Sample Two","New York Knicks","REB","7.5","UNDER","2.20"].join("\t")
+ ].join("\n");
+ const parsed=batchParser(input,exampleTeams);
+ assert.deepEqual(parsed.errors,[]);
+ assert.equal(parsed.rows.length,2);
+ assert.deepEqual([parsed.rows[0].market,parsed.rows[0].line,parsed.rows[0].side,
+  parsed.rows[0].odds],["PTS",20.5,"Over",1.75]);
+ assert.deepEqual([parsed.rows[1].market,parsed.rows[1].side],["REB","Under"]);
+ assert.equal(parsed.rows.every(r=>!Object.hasOwn(r,"modelSelected")&&!Object.hasOwn(r,"athleteId")),true);
+});
+
+test("all eight supported markets are accepted without unvalidated model filters",()=>{
+ const markets=["PTS","REB","AST","3PT","PR","PA","RA","PRA"];
+ const payload=markets.map((market,i)=>item("Sample "+i,"Boston Celtics",
+  market,(i+1)+".5","Over","1.80")).join("\n");
+ const parsed=batchParser(payload,exampleTeams);
+ assert.deepEqual(parsed.errors,[]);
+ assert.equal(parsed.rows.length,8);
+ assert.deepEqual(parsed.rows.map(x=>x.market),markets);
+});
+
+test("wrong team or invalid odds, line, side and market reject the entire batch",()=>{
+ const faulty=[
+  item("One","Boston Celtics"),
+  item("Two","Fake Team"),
+  item("Three","Boston Celtics","PTS","21","Over","1.80"),
+  item("Four","Boston Celtics","PTS","21.5","Over","1.00"),
+  item("Five","Boston Celtics","PTS","21.5","Draw","1.80"),
+  item("Six","Boston Celtics","NotMarket","21.5","Over","1.80")
+ ].join("\n");
+ const parsed=batchParser(faulty,exampleTeams);
+ assert.equal(parsed.rows.length,0);
+ assert.equal(parsed.errors.length,5);
+});
+
+test("duplicate selections are rejected even if a second quote has different odds",()=>{
+ const p=batchParser([
+  item("Same Player","Boston Celtics","PTS","20.5","Over","1.80"),
+  item("Same Player","Boston Celtics","PTS","20.5","Over","1.95")
+ ].join("\n"),exampleTeams);
+ assert.equal(p.rows.length,0);
+ assert.match(p.errors.join(" "),/duplicate selection/i);
+});
+
+test("missing columns, empty input and oversized batches are rejected",()=>{
+ assert.ok(batchParser("",exampleTeams).errors.length);
+ assert.ok(batchParser("First | Boston Celtics | PTS",exampleTeams).errors.length);
+ assert.ok(batchParser(Array.from({length:21},(_,i)=>
+  item("Test Player "+i)).join("\n"),exampleTeams).errors.length);
+ assert.ok(batchParser("a".repeat(5001),exampleTeams).errors.length);
+});
+
+test("malicious HTML-looking player strings are rejected and never rendered as HTML",()=>{
+ const parsed=batchParser(item("<img src=x onerror=alert(1)>"),exampleTeams);
+ assert.equal(parsed.rows.length,0);
+ assert.ok(parsed.errors.length);
+ const start=html.indexOf("function batchRender(){");
+ const end=html.indexOf("batchOfferPrepare.addEventListener(",start);
+ const render=html.slice(start,end);
+ assert.ok(start>0&&end>start);
+ assert.doesNotMatch(render,/innerHTML|insertAdjacentHTML/);
+ assert.match(render,/researchCreate\('strong'/);
+});
+
+test("batch queue requires explicit quote confirmation and only prefills existing research",()=>{
+ assert.match(html,/id="batchOfferConfirmed"/);
+ assert.match(html,/id="batchOfferInput"/);
+ assert.match(html,/maxlength="5000"/);
+ assert.match(html,/id="batchOfferRows"/);
+ const start=html.indexOf("// Update 35.0B — pure parser;");
+ const end=html.indexOf("// Update 34.3:",start);
+ const block=html.slice(start,end);
+ assert.ok(start>0&&end>start);
+ assert.match(block,/if\(!batchOfferConfirmed.checked\)/);
+ assert.match(block,/lrQuoteContext=null;lrLatestResearch=null;lrResults.replaceChildren\(\)/);
+ assert.match(block,/ledgerQuoteConfirmed.checked=false/);
+ assert.match(block,/function batchReset\(\)/);
+ assert.doesNotMatch(block,/httpsCallable|getDocsFromServer|fetch\s*\(|sessionStorage|localStorage|\.click\s*\(/);
+ const signout=html.slice(html.indexOf("function ledgerReset(){"),
+  html.indexOf("ledgerDate.addEventListener('change'"));
+ assert.match(signout,/batchReset\(\)/);
+ assert.match(html,/ledgerCaptureProspective/);
+ assert.match(html,/confirmedObservedQuote:true/);
+});
