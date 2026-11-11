@@ -1611,26 +1611,62 @@ function batchResearchEvaluate(item,games,cutoff=Date.now()){
 }
 // Update 35.0D pure batch research END
 
+// Update 35.0E: pure, conservative pre-capture review of in-memory drafts.
+// IMPORTANT: this is never a backend permission, settlement or capture instruction.
+function batchReviewSignature(item){
+ return JSON.stringify([item?.player,item?.team,item?.market,item?.line,
+  item?.side,item?.odds,item?.eventId||null,item?.eventStartMs??null]);
+}
+function batchReviewAssess(item,preview,fixture,recheck,teams,now=Date.now(),grace=300000){
+ const id=teams[item?.team],signature=batchReviewSignature(item);
+ const research=preview?.status==='ready'&&Number.isFinite(preview.estimate)&&
+  preview.estimate>=0&&preview.estimate<=1&&preview.sample12>=12&&
+  Number.isFinite(preview.asOf)&&preview.asOf<=now;
+ const fixtureValid=Boolean(fixture&&item?.eventId&&fixture.id===item.eventId&&
+  Number.isFinite(item.eventStartMs)&&fixture.start===item.eventStartMs&&
+  Number.isFinite(fixture.start)&&fixture.start>now+grace&&
+  [fixture.homeId,fixture.awayId].includes(id));
+ const quoteValid=Boolean(Number.isFinite(item?.odds)&&
+  recheck?.signature===signature&&Number.isFinite(recheck.at)&&
+  recheck.at<=now&&now-recheck.at<=5*60000);
+ const reasons=[];
+ if(!research)reasons.push(!preview?'Run batch ESPN research':
+  preview.status==='insufficient'?'Insufficient verified ESPN history':
+  preview.status==='error'?'ESPN identity or history error':
+  'Rerun ESPN research preview');
+ if(!fixtureValid)reasons.push('Verify an upcoming ESPN fixture for this team');
+ if(!quoteValid)reasons.push('Recheck the exact current Betano line and price');
+ return {research,fixtureValid,quoteValid,
+  preparedForIndividual:reasons.length===0,
+  reasons,needsIndividualResearch:true,captureAuthorized:false};
+}
+// Update 35.0E pure review END
+
 const batchResearchRun=document.getElementById('batchResearchRun'),
  batchResearchStatus=document.getElementById('batchResearchStatus'),
  batchResearchResults=document.getElementById('batchResearchResults');
 let batchResearchBusy=false,batchResearchEpoch=0,batchResearchPreview=new Map();
+const batchReviewSummary=document.getElementById('batchReviewSummary'),
+ batchReviewRows=document.getElementById('batchReviewRows'),
+ batchCaptureReview=document.getElementById('batchCaptureReview');
+let batchQuoteRechecks=new Map();
 function batchResearchInvalidate(message='Draft list changed. Research batch again when ready.'){
  batchResearchEpoch++;
  batchResearchPreview.clear();batchResearchResults.replaceChildren();
+ batchQuoteRechecks.clear();batchReviewDraw();
  batchResearchRun.disabled=batchResearchBusy||!batchOffers.length;
  batchResearchStatus.textContent=message;
 }
 function batchResearchReset(){
  batchResearchEpoch++;batchResearchBusy=false;batchResearchPreview.clear();
- batchResearchResults.replaceChildren();
+ batchQuoteRechecks.clear();batchResearchResults.replaceChildren();batchReviewDraw();
  batchResearchRun.disabled=true;
  batchResearchRun.textContent='Research entire batch (ESPN only)';
  batchResearchStatus.textContent='Prepare genuine local drafts, then run the ESPN-only preview. Nothing saved.';
 }
 function batchResearchDraw(){
  batchResearchResults.replaceChildren();
- if(!batchResearchPreview.size)return;
+ if(!batchResearchPreview.size){batchReviewDraw();return;}
  const table=researchCreate('table'),head=researchCreate('thead'),hr=researchCreate('tr');
  for(const title of ['Player · prop','ESPN status','Past games','Last 12 side hits','Last 24 side hits',
   'Unvalidated estimate (last 12)','ESPN notes']){
@@ -1657,6 +1693,7 @@ function batchResearchDraw(){
   body.append(tr);
  }
  table.append(body);batchResearchResults.append(table);
+ batchReviewDraw();
 }
 function batchReset(){
  batchOffers=[];batchActiveKey=null;batchOfferInput.value='';batchOfferConfirmed.checked=false;
@@ -1784,7 +1821,7 @@ batchResearchRun.addEventListener('click',async()=>{
   batchResearchEpoch===run;
  batchResearchBusy=true;batchResearchRun.disabled=true;
  batchResearchRun.textContent='Researching ESPN batch…';
- batchResearchPreview.clear();batchResearchResults.replaceChildren();
+ batchResearchPreview.clear();batchResearchResults.replaceChildren();batchReviewDraw();
  try{
   const rosters=new Map();
   for(const [idx,team] of plan.teams.entries()){
@@ -1868,7 +1905,7 @@ batchResearchRun.addEventListener('click',async()=>{
    }catch(error){
     failed++;result={status:'error',message:error.message||String(error)};
    }
-   preview.set(item.key,result);
+   preview.set(item.key,{...result,asOf:cutoff});
   }
   if(!stillCurrent())return;
   batchResearchPreview=preview;
