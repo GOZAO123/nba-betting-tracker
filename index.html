@@ -280,6 +280,21 @@ main{width:100%;min-width:0}
 .research-results .boxscore table{font-size:.8rem}
 .research-results .boxscore th:first-child,.research-results .boxscore td:first-child{white-space:normal;min-width:140px}
 .research-row-action{padding:4px 8px;font-size:.75rem;white-space:nowrap}
+
+/* Update 34.7: prospective dashboard, no additional API requests. */
+.ledger-dashboard{display:grid;gap:12px;min-width:0;max-width:100%;margin:15px 0}
+.ledger-dashboard>h4{margin:0;font-size:1.05rem}
+.ledger-kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px}
+.ledger-kpi{background:#1b2e46;border:1px solid #344f6a;border-radius:11px;padding:12px;min-width:0;overflow-wrap:anywhere}
+.ledger-kpi span{display:block;color:#b9cde0;font-size:.77rem}
+.ledger-kpi strong{display:block;font-size:1.25rem;color:#e6f5ff;margin-top:6px;font-variant-numeric:tabular-nums}
+.ledger-kpi small{display:block;color:#9fb0c7;margin-top:4px;line-height:1.4}
+.ledger-breakdown{min-width:0;max-width:100%;border:1px solid #36516c;border-radius:10px;padding:10px}
+.ledger-breakdown>summary{font-size:.9rem;font-weight:700;min-height:27px}
+.ledger-breakdown[open]>summary{margin-bottom:9px}
+.ledger-dashboard .boxscore{width:100%;max-width:100%;min-width:0;overflow-x:auto}
+.ledger-dashboard .boxscore th:first-child,.ledger-dashboard .boxscore td:first-child{white-space:normal;min-width:110px;overflow-wrap:anywhere}
+@media(max-width:700px){.ledger-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.ledger-kpi{padding:10px}}
 </style></head><body><main><div class="bar"><div><h1>🏀 NBA Betting Tracker</h1><p>One player, one check — synced across devices</p></div><div class="header-actions"><button id="layoutModeToggle" type="button" class="mini" aria-label="Switch between wide and mobile layouts">📱 Mobile view</button><button id="updateAppButton" type="button" class="mini" title="Load the newest app version from GitHub Pages">↻ Update app</button><button id="signout" hidden>Sign out</button></div></div><section class="panel" id="login"><h2>Sign in</h2><p>Use the same Google account on Android and PC to see the same checklist.</p><button class="primary" id="signin">Continue with Google</button><p class="muted" id="loginmsg"></p></section><div id="app"><nav class="tabs" aria-label="App sections"><button type="button" data-tab="scanner" aria-selected="true">🤖 AI Scanner</button><button type="button" data-tab="games" aria-selected="false">🏀 NBA Games</button><button type="button" data-tab="analyzer" aria-selected="false">📊 Props Analyzer</button><button type="button" data-tab="checklist" aria-selected="false">✅ Checklist</button></nav><section id="scannerTab" class="panel scanner-panel">
  <header class="scanner-hero"><div><span class="scanner-eyebrow">NBA ANALYTICS · BETANO PT</span><h2>🤖 AI Scanner</h2><p class="muted">Your workspace for NBA player-prop research.</p></div><span class="scanner-badge">● Manual mode</span></header>
  <div class="scanner-overview" aria-label="Scanner overview">
@@ -1564,6 +1579,108 @@ ledgerRefresh.addEventListener('click',async()=>{
  catch(err){ledgerStatus.textContent='Cloud ledger error: '+(err.message||String(err))}
  finally{ledgerRefresh.disabled=false}
 });
+// Update 34.7 pure dashboard metrics BEGIN
+function ledgerWilson95(wins,n){
+ if(!Number.isInteger(n)||n<=0||!Number.isInteger(wins)||wins<0||wins>n)return null;
+ const z=1.959963984540054,p=wins/n,z2=z*z,divisor=1+z2/n;
+ const middle=(p+z2/(2*n))/divisor;
+ const radius=z*Math.sqrt(p*(1-p)/n+z2/(4*n*n))/divisor;
+ return [Math.max(0,middle-radius),Math.min(1,middle+radius)];
+}
+function ledgerDashboardMetrics(rows,stateOf){
+ const blank=()=>({records:0,pending:0,settled:0,excluded:0,wins:0,losses:0,scored:0,squaredError:0});
+ const overall=blank(),maps={market:new Map(),player:new Map(),team:new Map(),capture:new Map()};
+ const named=s=>typeof s==='string'&&s.trim()?s.trim():'Unknown';
+ const source=r=>r.capturedVia==='trusted_firebase_callable'?'Backend':
+  (r.schemaVersion===1||r.capturedVia==null?'Legacy / pre-backend':'Unclassified');
+ const add=(s,r,state)=>{
+  s.records++;
+  if(state==='PENDING'){s.pending++;return}
+  if(state!=='SETTLED'){s.excluded++;return}
+  s.settled++;
+  if(typeof r.resultWon!=='boolean'||!Number.isFinite(r.resultStat))return;
+  if(r.resultWon)s.wins++;else s.losses++;
+  if(Number.isFinite(r.modelSelected)&&r.modelSelected>=0&&r.modelSelected<=1){
+   s.scored++;s.squaredError+=(r.modelSelected-Number(r.resultWon))**2;
+  }
+ };
+ for(const r of rows){
+  if(!r||typeof r!=='object')continue;
+  const state=stateOf(r);add(overall,r,state);
+  for(const [type,name] of [['market',named(r.market)],['player',named(r.player)],
+   ['team',named(r.team)],['capture',source(r)]]){
+   const map=maps[type];if(!map.has(name))map.set(name,blank());
+   add(map.get(name),r,state);
+  }
+ }
+ const groups={};
+ for(const type of Object.keys(maps)){
+  groups[type]=[...maps[type]].map(([name,s])=>({name,...s}))
+   .sort((a,b)=>b.records-a.records||a.name.localeCompare(b.name));
+ }
+ return {overall,groups,loaded:rows.length,limited:rows.length>=50};
+}
+// Update 34.7 pure dashboard metrics END
+
+function ledgerRenderDashboard(container,result){
+ const s=result.overall,observed=s.wins+s.losses;
+ const pct=(n,d)=>d?(100*n/d).toFixed(1)+'%':'—';
+ const ci=ledgerWilson95(s.wins,observed);
+ const dashboard=researchCreate('section',null,'ledger-dashboard');
+ dashboard.setAttribute('aria-label','Research performance dashboard');
+ dashboard.append(researchCreate('h4','📊 Research performance · loaded observations'));
+ const tiles=researchCreate('div',null,'ledger-kpis');
+ const values=[
+  ['Loaded records',s.records,'Latest cloud ledger sample'],
+  ['Pending',s.pending,'Awaiting settlement'],
+  ['Settled',s.settled,'Recorded settlement status'],
+  ['Excluded',s.excluded,'Missing or late receipt'],
+  ['Wins',s.wins,'Verified outcome records'],
+  ['Losses',s.losses,'Verified outcome records'],
+  ['Observed win rate',pct(s.wins,observed),'n='+observed+' · descriptive only'],
+  ['Experimental Brier',s.scored?(s.squaredError/s.scored).toFixed(4):'—','n='+s.scored+' frozen estimates']
+ ];
+ for(const [label,value,note] of values){
+  const tile=researchCreate('div',null,'ledger-kpi');
+  tile.append(researchCreate('span',label),researchCreate('strong',value),researchCreate('small',note));
+  tiles.append(tile);
+ }
+ dashboard.append(tiles);
+ dashboard.append(researchCreate('p',result.limited?
+  'Only the latest 50 records are loaded. These counts and breakdowns are NOT all-time totals.':
+  'Based on '+s.records+' loaded cloud records only. No additional Firebase reads.','muted notice'));
+ dashboard.append(researchCreate('p',ci?
+  'Approximate 95% Wilson interval for observed selection wins: '+pct(ci[0],1)+'–'+
+   pct(ci[1],1)+' (n='+observed+'). This assumes independent outcomes, which may not hold for overlapping player props.':
+  'No eligible settled outcomes yet; win-rate uncertainty cannot be estimated.','muted notice'));
+ const headings={market:'Market',player:'Player',team:'Team',capture:'Capture method'};
+ for(const type of ['market','player','team','capture']){
+  const list=result.groups[type];
+  const details=researchCreate('details',null,'ledger-breakdown');
+  details.open=(type==='market'||type==='capture');
+  details.append(researchCreate('summary','Performance by '+headings[type]+' · '+list.length+' groups'));
+  const scroll=researchCreate('div',null,'boxscore'),table=researchCreate('table');
+  const thead=researchCreate('thead'),titles=researchCreate('tr');
+  for(const label of [headings[type],'Loaded','Pending','Settled','W–L','Win rate','Brier','Sample'])
+   titles.append(researchCreate('th',label));
+  thead.append(titles);table.append(thead);
+  const tbody=researchCreate('tbody');
+  for(const group of list){
+   const tr=researchCreate('tr'),n=group.wins+group.losses;
+   for(const value of [group.name,group.records,group.pending,group.settled,
+    group.wins+'–'+group.losses,pct(group.wins,n),
+    group.scored?(group.squaredError/group.scored).toFixed(4):'—',
+    (n<30?'Sparse (<30)':'Descriptive')+' · n='+n]){
+    tr.append(researchCreate('td',value));
+   }
+   tbody.append(tr);
+  }
+  table.append(tbody);scroll.append(table);details.append(scroll);dashboard.append(details);
+ }
+ dashboard.append(researchCreate('p',
+  'Research only: manually selected Betano quotes are not independently verified; experimental frozen estimates are uncalibrated. Small and correlated samples, self-selection and missing data prevent claims of reliable probabilities, betting value or audited ROI.','warning notice'));
+ container.append(dashboard);
+}
 // Descriptive calibration only. Manual quote selection biases samples.
 function ledgerCalibration(entries){
  const bins=Array.from({length:5},(_,i)=>({low:i/5,high:(i+1)/5,
@@ -1578,6 +1695,7 @@ function ledgerCalibration(entries){
 }
 function ledgerDraw(){
  ledgerResults.replaceChildren();
+ ledgerRenderDashboard(ledgerResults,ledgerDashboardMetrics(ledgerRows,ledgerState));
  if(!ledgerRows.length){
   ledgerResults.append(researchCreate('p','No research entries yet. Do not invent test odds; only record actual observed offers.','muted'));return;
  }
