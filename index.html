@@ -1624,6 +1624,7 @@ function batchReset(){
 }
 function batchRender(){
  batchOfferRows.replaceChildren();
+ batchResearchRun.disabled=batchResearchBusy||!batchOffers.length;
  for(const [i,item] of batchOffers.entries()){
   const row=researchCreate('div',null,'batch-offer-item');
   if(item.key===batchActiveKey)row.dataset.active='true';
@@ -1638,7 +1639,7 @@ function batchRender(){
   const select=researchCreate('button','Use for research','mini');
   select.type='button';
   select.addEventListener('click',()=>{
-   if(!auth.currentUser||ledgerBusy||ledgerPageBusy||lrRun.disabled)return;
+   if(!auth.currentUser||ledgerBusy||ledgerPageBusy||lrRun.disabled||batchResearchBusy)return;
    batchActiveKey=item.key;
    lrPlayer.value=item.player;lrTeam.value=item.team;lrMarket.value=item.market;
    lrLine.value=String(item.line);lrSide.value=item.side;lrOdds.value=String(item.odds);
@@ -1653,7 +1654,7 @@ function batchRender(){
   const edit=researchCreate('button','Edit odds','mini');
   edit.type='button';
   edit.addEventListener('click',()=>{
-   if(!auth.currentUser||ledgerBusy||ledgerPageBusy||lrRun.disabled)return;
+   if(!auth.currentUser||ledgerBusy||ledgerPageBusy||lrRun.disabled||batchResearchBusy)return;
    const controls=researchCreate('div',null,'batch-offer-edit');
    const field=researchCreate('input');field.type='text';field.inputMode='decimal';
    field.maxLength=12;field.value=String(item.odds);
@@ -1663,13 +1664,14 @@ function batchRender(){
    const cancel=researchCreate('button','Cancel','mini');
    cancel.type='button';cancel.addEventListener('click',()=>batchRender());
    apply.addEventListener('click',()=>{
-    if(!auth.currentUser||ledgerBusy||ledgerPageBusy)return;
+    if(!auth.currentUser||ledgerBusy||ledgerPageBusy||batchResearchBusy)return;
     const price=lrValidateOdds(field.value.trim().replace(',','.'));
     if(!Number.isFinite(price)){
      batchOfferStatus.textContent='Enter valid observed decimal odds from 1.01 to 100.00.';
      return;
     }
     if(price!==item.odds&&!confirm('Confirm this is the updated Betano price you actually observed. Nothing is saved to Firebase.'))return;
+    if(price!==item.odds)batchResearchInvalidate('A draft price changed. Rerun batch ESPN research before comparing quotes.');
     item.odds=price;
     if(item.key===batchActiveKey){
      lrLatestResearch=null;lrQuoteContext=null;lrResults.replaceChildren();
@@ -1686,9 +1688,10 @@ function batchRender(){
   const remove=researchCreate('button','Remove','mini');
   remove.type='button';
   remove.addEventListener('click',()=>{
-   if(ledgerBusy||ledgerPageBusy||lrRun.disabled)return;
+   if(ledgerBusy||ledgerPageBusy||lrRun.disabled||batchResearchBusy)return;
    if(!confirm('Remove this unsaved local draft for '+item.player+'?'))return;
    batchOffers=batchOffers.filter(x=>x!==item);
+   batchResearchInvalidate('One draft removed. Rerun batch ESPN research for the remaining offers.');
    if(batchActiveKey===item.key){
     batchActiveKey=null;lrLatestResearch=null;lrQuoteContext=null;lrResults.replaceChildren();
     ledgerQuoteConfirmed.checked=false;
@@ -1700,7 +1703,7 @@ function batchRender(){
  }
 }
 batchOfferPrepare.addEventListener('click',()=>{
- if(!auth.currentUser||ledgerBusy||ledgerPageBusy||lrRun.disabled)return;
+ if(!auth.currentUser||ledgerBusy||ledgerPageBusy||lrRun.disabled||batchResearchBusy)return;
  if(!batchOfferConfirmed.checked){
   batchOfferStatus.textContent='Confirm these are genuinely observed Betano offers before preparing drafts.';
   return;
@@ -1713,11 +1716,12 @@ batchOfferPrepare.addEventListener('click',()=>{
  }
  if(batchOffers.length&&!confirm('Replace the '+batchOffers.length+' existing local drafts with this pasted list? Saved Firebase records are unchanged.'))return;
  batchOffers=parsed.rows;batchActiveKey=null;batchOfferConfirmed.checked=false;
+ batchResearchInvalidate('New pasted drafts prepared. Click Research entire batch for a fresh ESPN preview.');
  batchOfferStatus.textContent=batchOffers.length+' drafts prepared in this tab only. None captured. Select each row to run ESPN research.';
  batchRender();
 });
 batchOfferClear.addEventListener('click',()=>{
- if(ledgerBusy||ledgerPageBusy||lrRun.disabled)return;
+ if(ledgerBusy||ledgerPageBusy||lrRun.disabled||batchResearchBusy)return;
  batchReset();
 });
 
@@ -1975,7 +1979,7 @@ batchComposerLoadRoster.addEventListener('click',async()=>{
  }
 });
 batchComposerAdd.addEventListener('click',()=>{
- if(!auth.currentUser||ledgerBusy||ledgerPageBusy||lrRun.disabled)return;
+ if(!auth.currentUser||ledgerBusy||ledgerPageBusy||lrRun.disabled||batchResearchBusy)return;
  if(!batchComposerConfirmed.checked){
   batchComposerStatus.textContent='Confirm that this Betano line and decimal price were genuinely observed.';
   return;
@@ -1991,6 +1995,7 @@ batchComposerAdd.addEventListener('click',()=>{
    side:batchComposerSide.value,odds:batchComposerOdds.value.trim().replace(',','.')
   },athlete,ledgerEvents.get(batchComposerFixture.value),batchOffers,ESPN_NBA_TEAM_IDS);
   batchOffers.push(draft);batchComposerConfirmed.checked=false;
+  batchResearchInvalidate('A new local offer was added. Research the batch when ready.');
   batchComposerPlayer.value='';batchComposerLine.value='';batchComposerOdds.value='';
   batchComposerStatus.textContent='Added '+draft.player+' as an unsaved local draft. Current bookmaker price still needs reconfirmation before capture.';
   batchOfferStatus.textContent=batchOffers.length+' local drafts prepared. None automatically researched or captured.';
