@@ -534,7 +534,7 @@ test("batch research runs only after explicit click, with two workers and no cap
  const code=html.slice(begin,end);
  assert.match(code,/batchResearchRun.addEventListener\('click',async/);
  assert.match(code,/batchResearchPlan\(batchOffers,ESPN_NBA_TEAM_IDS\)/);
- assert.match(code,/readEspnIdentity\(RESEARCH_ESPN_BASE/);
+ assert.match(code,/readEspnIdentity\(\s*RESEARCH_ESPN_BASE/);
  assert.match(code,/encodeURIComponent\(athlete.id\).*gamelog\?season=/s);
  assert.match(code,/btParseGamelog\(payload,athlete.id,season\)/);
  assert.match(code,/Math\.min\(2,plan\.players\.length\)/);
