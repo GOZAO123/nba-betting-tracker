@@ -1630,7 +1630,7 @@ function ledgerWilson95(wins,n){
  const radius=z*Math.sqrt(p*(1-p)/n+z2/(4*n*n))/divisor;
  return [Math.max(0,middle-radius),Math.min(1,middle+radius)];
 }
-function ledgerDashboardMetrics(rows,stateOf,hasMore=rows.length>=LEDGER_PAGE_SIZE){
+function ledgerDashboardMetrics(rows,stateOf,hasMore=rows.length>=50){
  const blank=()=>({records:0,pending:0,settled:0,excluded:0,wins:0,losses:0,scored:0,squaredError:0});
  const overall=blank(),maps={market:new Map(),player:new Map(),team:new Map(),capture:new Map()};
  const named=s=>typeof s==='string'&&s.trim()?s.trim():'Unknown';
@@ -1691,7 +1691,7 @@ function ledgerRenderDashboard(container,result){
  dashboard.append(tiles);
  dashboard.append(researchCreate('p',result.limited?
   'Only '+s.records+' records are loaded so far. More may exist; click Load 50 older records. These are NOT all-time totals.':
-  'All pages of the ordered ledger query have been loaded ('+s.records+' records). Data may change while paging; refresh for the latest state. No additional Firebase reads for dashboard calculations.','muted notice'));
+  'All pages of the timestamp-ordered ledger query have been loaded ('+s.records+' records). Documents without a client capture timestamp are not included. Data may change while paging; refresh for the latest state. No additional Firebase reads for dashboard calculations.','muted notice'));
  dashboard.append(researchCreate('p',ci?
   'Approximate 95% Wilson interval for observed selection wins: '+pct(ci[0],1)+'–'+
    pct(ci[1],1)+' (n='+observed+'). This assumes independent outcomes, which may not hold for overlapping player props.':
