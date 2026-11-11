@@ -1787,6 +1787,7 @@ function batchSelectDraft(item,i){
  lrPlayer.value=item.player;lrTeam.value=item.team;lrMarket.value=item.market;
  lrLine.value=String(item.line);lrSide.value=item.side;lrOdds.value=String(item.odds);
  if(item.eventId&&ledgerEvents.has(item.eventId))ledgerFixture.value=item.eventId;
+ else ledgerFixture.value=''; // Never carry over another player's previously selected event.
  lrQuoteContext=null;lrLatestResearch=null;lrResults.replaceChildren();
  ledgerQuoteConfirmed.checked=false;
  lrStatus.textContent='Local draft selected. Reconfirm the actual Betano quote and run fresh individual ESPN research within five minutes before trusted capture.';
