@@ -350,6 +350,7 @@ test("searchable composer accepts exact ESPN roster player, team and fixture",()
  assert.equal(draft.odds,1.82);
  assert.equal(draft.eventId,"401000001");
  assert.equal(draft.espnAthleteId,"1234567");
+ assert.equal(draft.fixtureLabel,"Boston Celtics @ New York Knicks");
  assert.equal(Object.hasOwn(draft,"modelOver"),false);
  assert.equal(Object.hasOwn(draft,"resultWon"),false);
 });
