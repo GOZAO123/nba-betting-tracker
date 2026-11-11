@@ -423,3 +423,137 @@ test("composer reuses existing verified ESPN fixture map and resets on signout",
  assert.match(html,/function batchReset\(\)[\s\S]*?batchComposerReset\(\)/);
  assert.match(html,/batchComposerRoster|batchRosterNames/);
 });
+
+
+// Update 35.0D: deterministic synthetic research fixtures, never bookmaker data.
+const {batchResearchPlan,batchResearchMatchRoster,batchResearchEvaluate}=(()=>{
+ const between=(a,b)=>{const i=html.indexOf(a),j=html.indexOf(b,i+a.length);
+  assert.ok(i>=0&&j>i,"Missing testable research helper "+a);return html.slice(i,j);};
+ const script=[
+  between("function canonicalPlayerName(","const ESPN_NBA_TEAM_IDS="),
+  between("function btNormalCdf(","// One forecast for the NEXT game"),
+  between("function lrValidateLine(","function lrDraw("),
+  between("function batchParseOffers(","// Update 35.0B pure parser END"),
+  between("const BATCH_ESPN_MAX_ROWS=","// Update 35.0D pure batch research END")
+ ].join("\n");
+ return new Function(script+
+  "\nreturn {batchResearchPlan,batchResearchMatchRoster,batchResearchEvaluate};")();
+})();
+const staged=(player,team="Indiana Pacers",market="PTS",line=16.5,side="Over",odds=1.82)=>({
+ key:[player,team,market,line,side].join("|"),
+ player,team,market,line,side,odds
+});
+
+test("batch ESPN plan deduplicates players across markets and counts bounded lookups",()=>{
+ const rows=[
+  staged("Andrew Nembhard"),staged("Andrew Nembhard","Indiana Pacers","AST",4.5),
+  staged("Example Two","New York Knicks","REB",5.5)
+ ];
+ const p=batchResearchPlan(rows,{"Indiana Pacers":"11","New York Knicks":"18"});
+ assert.equal(p.teams.length,2);
+ assert.equal(p.players.length,2);
+ assert.equal(p.potentialRequests,6); // 2 rosters and 2 logs each
+ assert.equal(p.players.find(x=>x.teamId==="11").name,"Andrew Nembhard");
+});
+
+test("20 unique players across nine teams stay inside the 52-lookup hard cap",()=>{
+ const teams=Object.fromEntries(Array.from({length:9},(_,i)=>["Team "+i,String(i+1)]));
+ const rows=Array.from({length:20},(_,i)=>staged("Example Player "+i,"Team "+(i%9)));
+ const p=batchResearchPlan(rows,teams);
+ assert.equal(p.teams.length,9);
+ assert.equal(p.players.length,20);
+ assert.equal(p.potentialRequests,49);
+});
+
+test("batch research fails closed for excess teams, rows, malformed quotes and mismatched IDs",()=>{
+ const teams=Object.fromEntries(Array.from({length:13},(_,i)=>["Team "+i,String(i+1)]));
+ assert.throws(()=>batchResearchPlan([],teams),/1–20/);
+ assert.throws(()=>batchResearchPlan(Array.from({length:21},(_,i)=>
+  staged("Athlete "+i,"Team "+(i%13))),teams),/1–20/);
+ assert.throws(()=>batchResearchPlan(Array.from({length:13},(_,i)=>
+  staged("Athlete "+i,"Team "+i)),teams),/lookup ceiling/);
+ assert.throws(()=>batchResearchPlan([staged("Athlete","Missing Team")],teams),/invalid player/i);
+ assert.throws(()=>batchResearchPlan([staged("Athlete","Team 0","PTS",20, "Over")],teams),/invalid player/i);
+ assert.throws(()=>batchResearchPlan([staged("Athlete","Team 0","PTS",20.5,"Over",1)],teams),/invalid player/i);
+ const a={...staged("Athlete","Team 0","PTS"),espnAthleteId:"101"};
+ const b={...staged("Athlete","Team 0","REB"),espnAthleteId:"999"};
+ assert.throws(()=>batchResearchPlan([a,b],teams),/Conflicting ESPN player IDs/);
+});
+
+test("batch ESPN player identity is exact and rejects ambiguous or changed rosters",()=>{
+ const roster={team:{id:"11",displayName:"Indiana Pacers"},
+  athletes:[{items:[{id:"123",displayName:"Andrew Nembhard"},
+   {id:"456",displayName:"Aaron Nesmith"}]}]};
+ const verified=batchResearchMatchRoster(roster,"Indiana Pacers","11","Andrew Nembhard","123");
+ assert.deepEqual(verified,{id:"123",name:"Andrew Nembhard"});
+ assert.throws(()=>batchResearchMatchRoster(roster,"New York Knicks","11","Andrew Nembhard"),/team roster/);
+ assert.throws(()=>batchResearchMatchRoster(roster,"Indiana Pacers","18","Andrew Nembhard"),/team roster/);
+ assert.throws(()=>batchResearchMatchRoster(roster,"Indiana Pacers","11","Different Player"),/uniquely matched/);
+ assert.throws(()=>batchResearchMatchRoster(roster,"Indiana Pacers","11","Andrew Nembhard","999"),/Staged ESPN athlete ID/);
+ const ambiguous={...roster,athletes:[{items:[{id:"123",displayName:"Andrew Nembhard"},
+  {id:"999",displayName:"Andrew Nembhard"}]}]};
+ assert.throws(()=>batchResearchMatchRoster(ambiguous,"Indiana Pacers","11","Andrew Nembhard"),/uniquely matched/);
+});
+
+test("batch preview computes historical Over/Under side hits from the same preserved model",()=>{
+ const now=Date.now();
+ const games=Array.from({length:30},(_,i)=>({
+  id:String(401000000+i),date:now-(30-i)*86400000,stats:{
+   PTS:i%2===0?22:12,REB:i%3===0?9:5,AST:i%4===0?7:3,
+   "3PT":i%2===0?3:0,PR:27,PA:25,RA:10,PRA:35,MIN:30
+  }
+ }));
+ const over=batchResearchEvaluate(staged("Player","Indiana Pacers","PTS",16.5,"Over"),games);
+ const under=batchResearchEvaluate(staged("Player","Indiana Pacers","PTS",16.5,"Under"),games);
+ assert.equal(over.status,"ready");
+ assert.equal(under.status,"ready");
+ assert.equal(over.games,30);
+ assert.equal(over.sample12,12);
+ assert.equal(over.sample24,24);
+ assert.equal(over.hits12+under.hits12,12);
+ assert.equal(over.hits24+under.hits24,24);
+ assert.ok(Math.abs(over.estimate+under.estimate-1)<1e-12);
+ assert.ok(Math.abs(over.estimate24+under.estimate24-1)<1e-12);
+});
+
+test("missing ESPN history never creates a numerical research estimate",()=>{
+ const now=Date.now();
+ const tiny=Array.from({length:11},(_,i)=>({
+  id:String(500000+i),date:now-(12-i)*86400000,stats:{PTS:20}
+ }));
+ const result=batchResearchEvaluate(staged("Player"),tiny);
+ assert.equal(result.status,"insufficient");
+ assert.equal(result.games,11);
+ assert.equal(Object.hasOwn(result,"estimate"),false);
+});
+
+test("batch research runs only after explicit click, with two workers and no capture calls",()=>{
+ const begin=html.indexOf("// Update 35.0D: one explicitly triggered");
+ const end=html.indexOf("// Update 34.3:",begin);
+ assert.ok(begin>0&&end>begin);
+ const code=html.slice(begin,end);
+ assert.match(code,/batchResearchRun.addEventListener\('click',async/);
+ assert.match(code,/batchResearchPlan\(batchOffers,ESPN_NBA_TEAM_IDS\)/);
+ assert.match(code,/readEspnIdentity\(RESEARCH_ESPN_BASE/);
+ assert.match(code,/encodeURIComponent\(athlete.id\).*gamelog\?season=/s);
+ assert.match(code,/btParseGamelog\(payload,athlete.id,season\)/);
+ assert.match(code,/Math\.min\(2,plan\.players\.length\)/);
+ assert.match(code,/batchResearchMatchRoster/);
+ assert.match(code,/auth\.currentUser\?\.uid===uid&&ledgerSession===session&&/);
+ assert.doesNotMatch(code,/httpsCallable|getDocsFromServer|setDoc|runTransaction|oddsPapi[A-Z]|setInterval/);
+});
+
+test("batch output is purely descriptive and original capture still requires fresh individual research",()=>{
+ assert.match(html,/id="batchResearchRun"/);
+ assert.match(html,/id="batchResearchResults"/);
+ assert.match(html,/52 potential ESPN lookups/);
+ assert.match(html,/No bookmaker verification or cloud research capture/);
+ assert.match(html,/run the original individual ESPN line research within 5 minutes/);
+ assert.match(html,/batchResearchInvalidate\('A draft price changed/);
+ assert.match(html,/batchResearchInvalidate\('New pasted drafts prepared/);
+ assert.match(html,/batchResearchInvalidate\('A new local offer was added/);
+ assert.match(html,/function batchReset\(\)[\s\S]*?batchResearchReset\(\)/);
+ assert.match(html,/httpsCallable\(oddsFunctions,'ledgerCaptureProspective'\)/);
+ assert.match(html,/Date\.now\(\)-\(snap\?\.at\|\|0\)>5\*60000/);
+ assert.match(html,/confirmedObservedQuote:true/);
+});
