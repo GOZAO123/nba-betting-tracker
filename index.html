@@ -1554,6 +1554,24 @@ function batchResearchPlan(rows,teams){
   throw Error('Batch exceeds the ESPN lookup ceiling (12 teams, 52 potential calls). Split it into smaller local batches.');
  return {teams:[...byTeam.values()],players:[...byPlayer.values()],potentialRequests};
 }
+function batchResearchMatchRoster(roster,team,teamId,player,expectedId=null){
+ if((roster?.team?.id&&String(roster.team.id)!==teamId)||
+    (roster?.team?.displayName&&
+     canonicalPlayerName(roster.team.displayName)!==canonicalPlayerName(team)))
+  throw Error('ESPN team roster identity mismatch.');
+ const matches=new Map();
+ for(const athlete of (roster?.athletes||[]).flatMap(group=>
+  Array.isArray(group?.items)?group.items:[group])){
+  if(!/^\d+$/.test(String(athlete?.id||''))||!athlete?.displayName)continue;
+  if(canonicalPlayerName(athlete.displayName)!==canonicalPlayerName(player))continue;
+  matches.set(String(athlete.id),{id:String(athlete.id),name:String(athlete.displayName)});
+ }
+ if(matches.size!==1)throw Error('Player not uniquely matched to the selected ESPN team.');
+ const verified=[...matches.values()][0];
+ if(expectedId&&verified.id!==String(expectedId))
+  throw Error('Staged ESPN athlete ID does not match the current team roster.');
+ return verified;
+}
 function batchResearchEvaluate(item,games,cutoff=Date.now()){
  const research=lrResearch(games,item.market,item.line,cutoff);
  if(!research.w12||!Number.isFinite(research.w12.model))
@@ -1723,6 +1741,129 @@ batchOfferPrepare.addEventListener('click',()=>{
 batchOfferClear.addEventListener('click',()=>{
  if(ledgerBusy||ledgerPageBusy||lrRun.disabled||batchResearchBusy)return;
  batchReset();
+});
+
+// Update 35.0D: one explicitly triggered, bounded and non-capturing ESPN run.
+// 12 distinct team rosters + two season logs per unique player <= 52 URL lookups.
+// Existing readEspnIdentity reuses cached successful responses for 30 minutes.
+batchResearchRun.addEventListener('click',async()=>{
+ const user=auth.currentUser;
+ if(!user||batchResearchBusy||ledgerBusy||ledgerPageBusy||lrRun.disabled)return;
+ let plan;
+ try{plan=batchResearchPlan(batchOffers,ESPN_NBA_TEAM_IDS)}
+ catch(error){batchResearchStatus.textContent=error.message||String(error);return}
+ if(!confirm('Research '+batchOffers.length+' local offers using ESPN only? '+
+   'Up to '+plan.potentialRequests+' ESPN URL lookups may be needed (some may be cached). '+
+   'No OddsPapi calls, betting recommendations or Firebase research writes.'))return;
+ const uid=user.uid,session=ledgerSession,run=++batchResearchEpoch,
+  snapshots=batchOffers.map(item=>({...item})),cutoff=Date.now();
+ const stillCurrent=()=>auth.currentUser?.uid===uid&&ledgerSession===session&&
+  batchResearchEpoch===run;
+ batchResearchBusy=true;batchResearchRun.disabled=true;
+ batchResearchRun.textContent='Researching ESPN batch…';
+ batchResearchPreview.clear();batchResearchResults.replaceChildren();
+ try{
+  const rosters=new Map();
+  for(const [idx,team] of plan.teams.entries()){
+   if(!stillCurrent())return;
+   batchResearchStatus.textContent='ESPN roster '+(idx+1)+'/'+plan.teams.length+
+    ' · '+team.name+' · capped, manual research only.';
+   try{
+    rosters.set(team.id,{data:await readEspnIdentity(
+     RESEARCH_ESPN_BASE+'teams/'+encodeURIComponent(team.id)+'/roster')});
+   }catch(error){
+    rosters.set(team.id,{error:'ESPN roster unavailable: '+(error.message||String(error))});
+   }
+  }
+  if(!stillCurrent())return;
+  const playerResearch=new Map();
+  let next=0,finished=0;
+  const completed=btCompletedSeason(),seasons=[completed,completed+1];
+  async function worker(){
+   while(stillCurrent()&&next<plan.players.length){
+    const player=plan.players[next++];
+    try{
+     const teamRoster=rosters.get(player.teamId);
+     if(!teamRoster?.data)throw Error(teamRoster?.error||'ESPN roster not loaded.');
+     const athlete=batchResearchMatchRoster(teamRoster.data,player.team,
+      player.teamId,player.name,player.expectedId);
+     const games=[],notes=[];
+     for(const season of seasons){
+      if(!stillCurrent())return;
+      const url='https://site.web.api.espn.com/apis/common/v3/sports/basketball/nba/athletes/'+
+       encodeURIComponent(athlete.id)+'/gamelog?season='+season;
+      try{
+       const payload=await readEspnIdentity(url);
+       if(!stillCurrent())return;
+       const parsed=btParseGamelog(payload,athlete.id,season);
+       games.push(...parsed);
+       notes.push((season-1)+'–'+String(season).slice(-2)+': '+parsed.length+' verified games');
+      }catch(error){
+       if(!stillCurrent())return;
+       notes.push((season-1)+'–'+String(season).slice(-2)+' unavailable');
+      }
+     }
+     if(!games.length)throw Error('No verified ESPN regular-season game logs for this player.');
+     playerResearch.set(player.key,{athlete,games,notes});
+    }catch(error){
+     playerResearch.set(player.key,{error:error.message||String(error)});
+    }
+    if(!stillCurrent())return;
+    finished++;
+    batchResearchStatus.textContent='Processed '+finished+'/'+plan.players.length+
+     ' unique ESPN players. Drafts remain unsaved; zero OddsPapi calls.';
+   }
+  }
+  // Two player workers; each performs at most two sequential gamelog requests.
+  await Promise.all(Array.from({length:Math.min(2,plan.players.length)},()=>worker()));
+  if(!stillCurrent())return;
+  const preview=new Map();
+  let ready=0,insufficient=0,failed=0;
+  for(const item of snapshots){
+   const teamId=ESPN_NBA_TEAM_IDS[item.team],
+    identityKey=teamId+'|'+canonicalPlayerName(item.player),
+    player=playerResearch.get(identityKey);
+   let result;
+   try{
+    if(!player?.games)throw Error(player?.error||'No verified ESPN player data.');
+    if(item.eventId&&(!Number.isFinite(item.eventStartMs)||
+       item.eventStartMs<=Date.now()+LEDGER_GRACE))
+     throw Error('Linked game is no longer safely before tipoff. Not eligible for prospective capture.');
+    const linked=ledgerEvents.get(item.eventId);
+    if(linked&&(![linked.homeId,linked.awayId].includes(teamId)||
+       linked.start!==item.eventStartMs))
+     throw Error('Linked ESPN fixture identity changed. Reload it before capture.');
+    result=batchResearchEvaluate(item,player.games,cutoff);
+    if(result.status==='ready')ready++;
+    else insufficient++;
+    result.message=result.status==='ready'?
+     (item.eventId&&linked?'ESPN history verified · fixture linked':
+      'ESPN history verified · select/recheck upcoming fixture before capture')+
+      ' · manual bookmaker quote NOT verified':
+     result.message;
+   }catch(error){
+    failed++;result={status:'error',message:error.message||String(error)};
+   }
+   preview.set(item.key,result);
+  }
+  if(!stillCurrent())return;
+  batchResearchPreview=preview;
+  batchResearchDraw();
+  batchResearchStatus.textContent='ESPN-only batch preview: '+ready+' historical estimates, '+
+   insufficient+' with insufficient data, '+failed+' rejected ('+snapshots.length+
+   ' local offers). Up to '+plan.potentialRequests+' endpoint lookups; cached replies reused. '+
+   'No bookmaker verification or cloud research capture. For every prospective save, '+
+   'run the original individual ESPN line research within 5 minutes and reconfirm the price.';
+ }catch(error){
+  if(stillCurrent())batchResearchStatus.textContent=
+   'ESPN batch preview interrupted: '+(error.message||String(error))+
+   '. No saved research observations were created.';
+ }finally{
+  if(stillCurrent()){
+   batchResearchBusy=false;batchResearchRun.disabled=!batchOffers.length;
+   batchResearchRun.textContent='Research entire batch (ESPN only)';
+  }
+ }
 });
 
 
