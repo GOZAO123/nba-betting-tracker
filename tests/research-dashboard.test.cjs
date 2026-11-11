@@ -115,9 +115,92 @@ test("latest 50 records are labeled a sample, never an all-time total",()=>{
 });
 
 test("ledger dashboard renders from existing loaded rows without changing cloud query limit",()=>{
- assert.match(html,/ledgerRenderDashboard\(ledgerResults,ledgerDashboardMetrics\(ledgerRows,ledgerState\)\)/);
- assert.match(html,/orderBy\('clientCapturedMs','desc'\),limit\(50\)/);
+ assert.match(html,/ledgerRenderDashboard\(ledgerResults,ledgerDashboardMetrics\(ledgerRows,ledgerState,ledgerMoreAvailable\)\)/);
+ assert.match(html,/const constraints=\[orderBy\('clientCapturedMs','desc'\)\]/);
+ assert.match(html,/constraints.push\(limit\(LEDGER_PAGE_SIZE\)\)/);
+ assert.match(html,/constraints.push\(startAfter\(ledgerLastDoc\)\)/);
  assert.match(html,/ledgerSettleProspective/);
  assert.match(html,/ledgerCaptureProspective/);
  assert.match(html,/width=800,initial-scale/);
+});
+
+test("pagination combines three 50/50/20 pages into 120 unique records", () => {
+ const begin=html.indexOf("function ledgerCombinePages(");
+ const end=html.indexOf("async function ledgerLoad(",begin);
+ assert.ok(begin>0&&end>begin);
+ const combine=new Function("const LEDGER_PAGE_SIZE=50;\n"+
+  html.slice(begin,end)+"\nreturn ledgerCombinePages;")();
+ const docs=Array.from({length:120},(_,i)=>({
+  id:"record-"+i,data:()=>row({player:"Player "+i,modelSelected:i%2?.6:.4})
+ }));
+ const first=combine([],docs.slice(0,50),false);
+ assert.equal(first.records.length,50);
+ assert.equal(first.moreAvailable,true);
+ const second=combine(first.records,docs.slice(50,100),true);
+ assert.equal(second.records.length,100);
+ assert.equal(second.moreAvailable,true);
+ const third=combine(second.records,docs.slice(100),true);
+ assert.equal(third.records.length,120);
+ assert.equal(third.moreAvailable,false);
+ assert.equal(new Set(third.records.map(r=>r.id)).size,120);
+ const metrics=ledgerDashboardMetrics(third.records,status,third.moreAvailable);
+ assert.equal(metrics.overall.records,120);
+ assert.equal(metrics.limited,false);
+});
+
+test("pagination avoids duplicated document IDs when appending or resetting",()=>{
+ const begin=html.indexOf("function ledgerCombinePages(");
+ const end=html.indexOf("async function ledgerLoad(",begin);
+ const combine=new Function("const LEDGER_PAGE_SIZE=50;\n"+
+  html.slice(begin,end)+"\nreturn ledgerCombinePages;")();
+ const docs=[{id:"one",data:()=>row({player:"First"})},
+  {id:"two",data:()=>row({player:"Second"})}];
+ const first=combine([],docs,false);
+ assert.deepEqual(first.records.map(r=>r.id),["one","two"]);
+ assert.deepEqual(combine(first.records,[docs[0]],true).records.map(r=>r.id),["one","two"]);
+ assert.deepEqual(combine(first.records,[docs[0]],false).records.map(r=>r.id),["one"]);
+ assert.equal(combine(first.records,[],true).moreAvailable,false);
+});
+
+test("exactly 50 records requires one explicit click to determine whether older exist",()=>{
+ const begin=html.indexOf("function ledgerCombinePages(");
+ const end=html.indexOf("async function ledgerLoad(",begin);
+ const combine=new Function("const LEDGER_PAGE_SIZE=50;\n"+
+  html.slice(begin,end)+"\nreturn ledgerCombinePages;")();
+ const first=combine([],Array.from({length:50},(_,i)=>({id:String(i),data:()=>row()})),false);
+ assert.equal(first.moreAvailable,true);
+ const second=combine(first.records,[],true);
+ assert.equal(second.moreAvailable,false);
+ assert.equal(second.records.length,50);
+});
+
+test("dashboard highlights partially loaded data even when more than 50 entries are loaded",()=>{
+ const rows=Array.from({length:105},(_,i)=>row({player:"P"+i}));
+ const result=ledgerDashboardMetrics(rows,status,true);
+ assert.equal(result.loaded,105);
+ assert.equal(result.limited,true);
+ assert.equal(ledgerDashboardMetrics(rows,status,false).limited,false);
+ const msg=html.slice(html.indexOf("function ledgerRenderDashboard("),
+  html.indexOf("// Descriptive calibration only."));
+ assert.match(msg,/More may exist/);
+ assert.match(msg,/Documents without a client capture timestamp are not included/);
+});
+
+test("paginator guards account changes, duplicate requests and leaves reads explicit",()=>{
+ const begin=html.indexOf("// Update 35.0A:");
+ const end=html.indexOf("// Update 34.7 pure dashboard metrics BEGIN",begin);
+ const block=html.slice(begin,end);
+ assert.ok(begin>0&&end>begin);
+ assert.match(block,/ledgerPageBusy=true;ledgerRefresh.disabled=true;ledgerLoadMore.disabled=true/);
+ assert.match(block,/auth\.currentUser\?\.uid!==uid\|\|session!==ledgerSession/);
+ assert.match(block,/getDocsFromServer/);
+ assert.match(block,/ledgerLoadMore\.addEventListener\('click'/);
+ assert.match(block,/ledgerRefresh\.addEventListener\('click'/);
+ assert.match(block,/if\(append\)constraints\.push\(startAfter\(ledgerLastDoc\)\)/);
+ assert.match(block,/ledgerLastDoc=page\.docs\.at\(-1\)/);
+ assert.doesNotMatch(block,/getDocs\s*\(|httpsCallable|fetch\s*\(/);
+ const reset=html.slice(html.indexOf("function ledgerReset(){"),
+  html.indexOf("ledgerDate.addEventListener('change'"));
+ assert.match(reset,/ledgerLastDoc=null;ledgerMoreAvailable=false;ledgerPageBusy=false/);
+ assert.match(reset,/ledgerLoadMore.hidden=true/);
 });
