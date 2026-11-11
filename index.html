@@ -374,7 +374,7 @@ main{width:100%;min-width:0}
 
  <div class="scanner-workspace">
   <details id="batchOfferPanel" class="batch-offer-panel">
-   <summary>📋 Batch quote preparation · local drafts (no API calls)</summary>
+   <summary>📋 Batch quote preparation · local drafts (no OddsPapi calls)</summary>
    <div id="batchComposer" class="batch-composer" aria-label="Add manually observed player prop">
     <h4>Add one offer with searchable ESPN player</h4>
     <p class="muted notice">Choose a real upcoming fixture, then one team and a player from its verified ESPN roster. Loading fixtures and players is manual; no OddsPapi requests.</p>
@@ -1836,11 +1836,12 @@ batchResearchRun.addEventListener('click',async()=>{
     result=batchResearchEvaluate(item,player.games,cutoff);
     if(result.status==='ready')ready++;
     else insufficient++;
+    const seasonNotes=player.notes.join('; ');
     result.message=result.status==='ready'?
      (item.eventId&&linked?'ESPN history verified · fixture linked':
       'ESPN history verified · select/recheck upcoming fixture before capture')+
-      ' · manual bookmaker quote NOT verified':
-     result.message;
+      ' · '+seasonNotes+' · manual bookmaker quote NOT verified':
+     result.message+' · '+seasonNotes;
    }catch(error){
     failed++;result={status:'error',message:error.message||String(error)};
    }
