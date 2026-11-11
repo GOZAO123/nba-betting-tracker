@@ -1711,6 +1711,180 @@ ledgerFind.addEventListener('click',async()=>{
   ledgerBusy=false;ledgerFind.disabled=false;
  }
 });
+// Update 35.0C pure offer validation BEGIN
+function batchComposerCandidate(fields,athlete,fixture,rows,teams,now=Date.now()){
+ if(rows.length>=20)throw Error('Batch already contains 20 drafts.');
+ const id=teams[fields.team];
+ if(!fixture||!Number.isFinite(fixture.start)||fixture.start<=now+5*60000||
+    !id||![fixture.homeId,fixture.awayId].includes(id))
+  throw Error('Choose a valid upcoming ESPN fixture and participating team.');
+ if(!athlete||!/^\d+$/.test(String(athlete.id))||
+    canonicalPlayerName(athlete.name)!==canonicalPlayerName(fields.player))
+  throw Error('Choose an exact player from the verified ESPN roster.');
+ const result=batchParseOffers([athlete.name,fields.team,fields.market,
+  fields.line,fields.side,fields.odds].join(' | '),teams);
+ if(result.errors.length||result.rows.length!==1)
+  throw Error(result.errors[0]||'Invalid player prop details.');
+ const draft=result.rows[0];
+ if(rows.some(r=>r.key===draft.key))throw Error('This player prop is already in the local batch.');
+ return {...draft,eventId:fixture.id,eventStartMs:fixture.start,espnAthleteId:String(athlete.id)};
+}
+// Update 35.0C pure offer validation END
+
+const batchComposerDate=document.getElementById('batchComposerDate'),
+ batchComposerFind=document.getElementById('batchComposerFind'),
+ batchComposerFixture=document.getElementById('batchComposerFixture'),
+ batchComposerTeam=document.getElementById('batchComposerTeam'),
+ batchComposerLoadRoster=document.getElementById('batchComposerLoadRoster'),
+ batchComposerPlayer=document.getElementById('batchComposerPlayer'),
+ batchComposerPlayers=document.getElementById('batchComposerPlayers'),
+ batchComposerMarket=document.getElementById('batchComposerMarket'),
+ batchComposerSide=document.getElementById('batchComposerSide'),
+ batchComposerLine=document.getElementById('batchComposerLine'),
+ batchComposerOdds=document.getElementById('batchComposerOdds'),
+ batchComposerConfirmed=document.getElementById('batchComposerConfirmed'),
+ batchComposerAdd=document.getElementById('batchComposerAdd'),
+ batchComposerStatus=document.getElementById('batchComposerStatus');
+let batchRosterNames=new Map(),batchRosterTeam='',batchRosterEpoch=0;
+function batchComposerClearRoster(){
+ batchRosterEpoch++;batchRosterTeam='';batchRosterNames.clear();
+ batchComposerPlayer.value='';batchComposerPlayers.replaceChildren();
+ batchComposerLoadRoster.disabled=!batchComposerTeam.value;
+}
+function batchComposerFixtureChanged(){
+ const fixture=ledgerEvents.get(batchComposerFixture.value);
+ batchComposerTeam.replaceChildren();
+ batchComposerTeam.add(new Option(fixture?'Choose a fixture team':'Choose fixture first',''));
+ if(fixture&&fixture.start>Date.now()+LEDGER_GRACE){
+  const choices=Object.entries(ESPN_NBA_TEAM_IDS)
+   .filter(([,id])=>id===fixture.homeId||id===fixture.awayId)
+   .sort(([a],[b])=>a.localeCompare(b));
+  if(choices.length===2)for(const [name] of choices)batchComposerTeam.add(new Option(name,name));
+ }
+ batchComposerClearRoster();
+}
+function batchComposerSyncFixtures(){
+ const selected=batchComposerFixture.value;
+ batchComposerFixture.replaceChildren();
+ batchComposerFixture.add(new Option('Choose an upcoming verified NBA fixture',''));
+ const available=[...ledgerEvents.values()].filter(e=>e.start>Date.now()+LEDGER_GRACE)
+  .sort((a,b)=>a.start-b.start);
+ for(const e of available)batchComposerFixture.add(
+  new Option(e.away+' @ '+e.home+' · '+ledgerLisbonTime(e.start),e.id));
+ if(available.some(e=>e.id===selected))batchComposerFixture.value=selected;
+ batchComposerFixtureChanged();
+ batchComposerStatus.textContent=available.length?
+  available.length+' upcoming ESPN fixtures. Choose one, choose a team, then load the roster.':
+  'No upcoming fixtures loaded. Select the US Eastern date and click Find upcoming fixtures.';
+}
+function batchComposerReset(){
+ batchRosterEpoch++;batchRosterTeam='';batchRosterNames.clear();
+ batchComposerPlayer.value='';batchComposerPlayers.replaceChildren();
+ batchComposerDate.value=ledgerToday();
+ batchComposerFixture.replaceChildren();batchComposerFixture.add(new Option('Find fixtures first',''));
+ batchComposerTeam.replaceChildren();batchComposerTeam.add(new Option('Choose fixture first',''));
+ batchComposerLoadRoster.disabled=true;
+ batchComposerMarket.value='PTS';batchComposerSide.value='Over';
+ batchComposerLine.value='';batchComposerOdds.value='';batchComposerConfirmed.checked=false;
+ batchComposerStatus.textContent='Choose a fixture, then load its verified ESPN team roster.';
+}
+batchComposerDate.value=ledgerDate.value;
+batchComposerDate.addEventListener('change',()=>{
+ if(ledgerBusy||ledgerPageBusy)return;
+ ledgerDate.value=batchComposerDate.value;
+ ledgerDate.dispatchEvent(new Event('change'));
+ batchComposerSyncFixtures();
+});
+ledgerDate.addEventListener('change',()=>{
+ batchComposerDate.value=ledgerDate.value;batchComposerSyncFixtures();
+});
+batchComposerFind.addEventListener('click',()=>{
+ if(!auth.currentUser){batchComposerStatus.textContent='Sign in first.';return}
+ if(ledgerBusy||ledgerPageBusy)return;
+ if(batchComposerDate.value!==ledgerDate.value){
+  ledgerDate.value=batchComposerDate.value;ledgerDate.dispatchEvent(new Event('change'));
+ }
+ batchComposerStatus.textContent='Checking the selected date through the existing ESPN fixture lookup…';
+ ledgerFind.click(); // Explicit user click, never automatic lookup or polling.
+});
+batchComposerFixture.addEventListener('change',()=>{
+ batchComposerFixtureChanged();
+ batchComposerStatus.textContent='Now choose one of the two participating teams.';
+});
+batchComposerTeam.addEventListener('change',()=>{
+ batchComposerClearRoster();
+ batchComposerStatus.textContent='Click Load ESPN team roster to enable searchable player names.';
+});
+batchComposerLoadRoster.addEventListener('click',async()=>{
+ const uid=auth.currentUser?.uid,session=ledgerSession;
+ const fixture=ledgerEvents.get(batchComposerFixture.value);
+ const team=batchComposerTeam.value,id=ESPN_NBA_TEAM_IDS[team];
+ if(!uid||ledgerBusy||ledgerPageBusy||!fixture||
+    fixture.start<=Date.now()+LEDGER_GRACE||
+    ![fixture.homeId,fixture.awayId].includes(id)){
+  batchComposerStatus.textContent='Choose a verified future fixture and participating team first.';return;
+ }
+ const epoch=++batchRosterEpoch,selectedFixtureId=fixture.id;
+ batchRosterNames.clear();batchRosterTeam='';
+ batchComposerPlayer.value='';batchComposerPlayers.replaceChildren();
+ batchComposerLoadRoster.disabled=true;
+ batchComposerStatus.textContent='Verifying '+team+' ESPN roster (reusing the existing 30-minute cache if present)…';
+ try{
+  const roster=await readEspnIdentity(RESEARCH_ESPN_BASE+'teams/'+encodeURIComponent(id)+'/roster');
+  if(uid!==auth.currentUser?.uid||session!==ledgerSession||
+     epoch!==batchRosterEpoch||batchComposerTeam.value!==team||
+     batchComposerFixture.value!==selectedFixtureId)return;
+  if((roster.team?.id&&String(roster.team.id)!==id)||
+     (roster.team?.displayName&&canonicalPlayerName(roster.team.displayName)!==canonicalPlayerName(team)))
+   throw Error('ESPN returned a different team. Roster rejected.');
+  const identities=new Map();
+  for(const a of (roster.athletes||[]).flatMap(x=>Array.isArray(x.items)?x.items:[x])){
+   const athleteId=String(a?.id||''),name=String(a?.displayName||'').trim(),key=canonicalPlayerName(name);
+   if(!/^\d+$/.test(athleteId)||!name||name.length>64||!key)continue;
+   if(identities.has(key)){
+    if(identities.get(key)?.id!==athleteId)identities.set(key,null); // ambiguous: reject
+   }else identities.set(key,{id:athleteId,name});
+  }
+  const verified=[...identities.values()].filter(Boolean).sort((a,b)=>a.name.localeCompare(b.name));
+  if(!verified.length)throw Error('No unique ESPN player identities available for this team.');
+  batchRosterNames=identities;batchRosterTeam=team;
+  for(const a of verified){
+   const option=document.createElement('option');option.value=a.name;
+   batchComposerPlayers.append(option);
+  }
+  batchComposerStatus.textContent=verified.length+' uniquely identified ESPN roster players. Search and select an exact name; no bookmaker check was made.';
+ }catch(e){
+  if(uid===auth.currentUser?.uid&&session===ledgerSession&&epoch===batchRosterEpoch)
+   batchComposerStatus.textContent='Roster unavailable: '+(e.message||String(e))+'. Nothing added.';
+ }finally{
+  if(uid===auth.currentUser?.uid&&session===ledgerSession&&epoch===batchRosterEpoch)
+   batchComposerLoadRoster.disabled=false;
+ }
+});
+batchComposerAdd.addEventListener('click',()=>{
+ if(!auth.currentUser||ledgerBusy||ledgerPageBusy||lrRun.disabled)return;
+ if(!batchComposerConfirmed.checked){
+  batchComposerStatus.textContent='Confirm that this Betano line and decimal price were genuinely observed.';
+  return;
+ }
+ if(batchRosterTeam!==batchComposerTeam.value){
+  batchComposerStatus.textContent='Load the chosen ESPN team roster first.';return;
+ }
+ try{
+  const athlete=batchRosterNames.get(canonicalPlayerName(batchComposerPlayer.value));
+  const draft=batchComposerCandidate({
+   player:batchComposerPlayer.value,team:batchComposerTeam.value,
+   market:batchComposerMarket.value,line:batchComposerLine.value.trim().replace(',','.'),
+   side:batchComposerSide.value,odds:batchComposerOdds.value.trim().replace(',','.')
+  },athlete,ledgerEvents.get(batchComposerFixture.value),batchOffers,ESPN_NBA_TEAM_IDS);
+  batchOffers.push(draft);batchComposerConfirmed.checked=false;
+  batchComposerPlayer.value='';batchComposerLine.value='';batchComposerOdds.value='';
+  batchComposerStatus.textContent='Added '+draft.player+' as an unsaved local draft. Current bookmaker price still needs reconfirmation before capture.';
+  batchOfferStatus.textContent=batchOffers.length+' local drafts prepared. None automatically researched or captured.';
+  batchRender();
+ }catch(e){batchComposerStatus.textContent='Not added: '+(e.message||String(e))}
+});
+
 function ledgerSameResearch(v){
  return !!v&&canonicalPlayerName(v.name)===canonicalPlayerName(lrPlayer.value.trim())&&
   v.team===lrTeam.value&&v.market===lrMarket.value&&
