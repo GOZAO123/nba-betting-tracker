@@ -295,6 +295,20 @@ main{width:100%;min-width:0}
 .ledger-dashboard .boxscore{width:100%;max-width:100%;min-width:0;overflow-x:auto}
 .ledger-dashboard .boxscore th:first-child,.ledger-dashboard .boxscore td:first-child{white-space:normal;min-width:110px;overflow-wrap:anywhere}
 @media(max-width:700px){.ledger-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.ledger-kpi{padding:10px}}
+
+/* Update 35.0B: optional in-memory batch quote preparation, no API requests. */
+.batch-offer-panel{min-width:0;max-width:100%}
+.batch-offer-panel>summary{font-weight:750;min-height:35px}
+.batch-offer-panel[open]>summary{margin-bottom:12px}
+.batch-offer-panel textarea{width:100%;min-width:0;min-height:110px;resize:vertical;font:inherit;font-size:.86rem;line-height:1.6;background:#1b2e46;color:#fff;border:1px solid #38516d;border-radius:9px;padding:11px}
+.batch-offer-panel textarea:focus-visible{outline:2px solid #70d9ff}
+.batch-offer-list{display:grid;gap:8px;margin-top:12px}
+.batch-offer-item{display:flex;align-items:center;gap:10px;flex-wrap:wrap;min-width:0;background:#1b2b42;border:1px solid #35516b;border-radius:10px;padding:10px}
+.batch-offer-item[data-active="true"]{border-color:#4bb59a}
+.batch-offer-info{flex:1;min-width:180px;overflow-wrap:anywhere;font-size:.86rem}
+.batch-offer-info span{display:block;font-size:.78rem;color:#abc2d8;margin-top:3px}
+.batch-offer-item button{min-height:38px}
+@media(max-width:700px){.batch-offer-info{min-width:100%}.batch-offer-item button{width:100%}}
 </style></head><body><main><div class="bar"><div><h1>🏀 NBA Betting Tracker</h1><p>One player, one check — synced across devices</p></div><div class="header-actions"><button id="layoutModeToggle" type="button" class="mini" aria-label="Switch between wide and mobile layouts">📱 Mobile view</button><button id="updateAppButton" type="button" class="mini" title="Load the newest app version from GitHub Pages">↻ Update app</button><button id="signout" hidden>Sign out</button></div></div><section class="panel" id="login"><h2>Sign in</h2><p>Use the same Google account on Android and PC to see the same checklist.</p><button class="primary" id="signin">Continue with Google</button><p class="muted" id="loginmsg"></p></section><div id="app"><nav class="tabs" aria-label="App sections"><button type="button" data-tab="scanner" aria-selected="true">🤖 AI Scanner</button><button type="button" data-tab="games" aria-selected="false">🏀 NBA Games</button><button type="button" data-tab="analyzer" aria-selected="false">📊 Props Analyzer</button><button type="button" data-tab="checklist" aria-selected="false">✅ Checklist</button></nav><section id="scannerTab" class="panel scanner-panel">
  <header class="scanner-hero"><div><span class="scanner-eyebrow">NBA ANALYTICS · BETANO PT</span><h2>🤖 AI Scanner</h2><p class="muted">Your workspace for NBA player-prop research.</p></div><span class="scanner-badge">● Manual mode</span></header>
  <div class="scanner-overview" aria-label="Scanner overview">
@@ -330,6 +344,20 @@ main{width:100%;min-width:0}
   <p id="lineResearchStatus" class="muted" role="status">Manual · at most 1 current-team ESPN roster and 2 season game logs · zero OddsPapi requests. Historical quote snapshots expire; enter a fresh line manually when needed.</p>
   <div id="lineResearchResults" class="research-results"></div>
   <p class="warning">Research estimates here are UNVALIDATED for real bookmaker lines. No EV, staking guidance, automatic betting picks, or claims of a positive edge.</p>
+ </div>
+
+ <div class="scanner-workspace">
+  <details id="batchOfferPanel" class="batch-offer-panel">
+   <summary>📋 Batch quote preparation · local drafts (no API calls)</summary>
+   <p class="muted notice">Paste up to 20 Betano offers you personally observed, one per line, using TAB or | between these six fields: <strong>Player | Full NBA team | Market | Half-point line | Over/Under | Decimal odds</strong>. Decimal commas and points are accepted. No example is automatically submitted.</p>
+   <textarea id="batchOfferInput" rows="5" maxlength="5000" spellcheck="false" aria-label="Manually observed Betano player props, one per line" placeholder="Player name | Full NBA team | PTS | 20.5 | Over | 1.80"></textarea>
+   <p class="muted notice">Markets: PTS, REB, AST, 3PT, PR, PA, RA, PRA. Use full official NBA team names, not abbreviations.</p>
+   <label class="notice"><input id="batchOfferConfirmed" type="checkbox"> I personally observed all entered lines and prices at Betano, not invented test offers. I will recheck each price before saving.</label>
+   <div class="row"><button id="batchOfferPrepare" class="primary" type="button">Prepare drafts locally</button><button id="batchOfferClear" class="mini" type="button">Clear drafts</button></div>
+   <p id="batchOfferStatus" class="muted" role="status">No drafts staged. Preparation never contacts Firebase, ESPN or OddsPapi.</p>
+   <div id="batchOfferRows" class="batch-offer-list" aria-label="Prepared research drafts"></div>
+   <p class="warning notice">Drafts are in memory only and disappear on page refresh or sign-out. Select an offer, run existing ESPN-only Actual line research, choose its verified upcoming fixture and reconfirm the Betano quote before each trusted backend capture. Keep every observed selection in the sample to reduce model-driven selection bias.</p>
+  </details>
  </div>
  <div class="scanner-workspace"><div class="scanner-section-head"><div><h3>📓 Prospective player-prop research ledger</h3><p class="muted">Save manually observed Betano quotes and ESPN-only research through the trusted server before tip-off; verify final results through the server. Nothing places wagers.</p></div></div>
   <div class="row"><label for="ledgerDate">NBA fixture date (US Eastern):</label><input id="ledgerDate" type="date"><button id="ledgerFind" class="mini" type="button">Find upcoming fixtures (ESPN)</button></div>
@@ -1400,6 +1428,100 @@ lrRun.addEventListener('click',async()=>{
 });
 
 
+// Update 35.0B — pure parser; no ESPN, Firebase or OddsPapi requests.
+function batchParseOffers(input,teams){
+ const text=String(input||''),errors=[],rows=[];
+ if(text.length>5000)return {rows:[],errors:['Maximum input size is 5000 characters.']};
+ const lines=text.split(/\r?\n/).map(x=>x.trim()).filter(Boolean);
+ if(!lines.length)return {rows:[],errors:['Paste at least one observed quote.']};
+ if(lines.length>20)return {rows:[],errors:['Maximum 20 offers per batch.']};
+ const validMarkets=new Set(['PTS','REB','AST','3PT','PR','PA','RA','PRA']);
+ const names=new Map(Object.keys(teams).map(t=>[canonicalPlayerName(t),t]));
+ const seen=new Set();
+ for(const [i,lineText] of lines.entries()){
+  const sep=lineText.includes('\t')?'\t':lineText.includes('|')?'|':null;
+  const cols=sep?lineText.split(sep).map(x=>x.trim()):[];
+  if(cols.length!==6){errors.push('Row '+(i+1)+': expected 6 TAB- or |-separated fields.');continue}
+  const [player,rawTeam,rawMarket,rawLine,rawSide,rawOdds]=cols;
+  const playerKey=canonicalPlayerName(player),team=names.get(canonicalPlayerName(rawTeam)),
+   market=rawMarket.toUpperCase(),side=/^over$/i.test(rawSide)?'Over':/^under$/i.test(rawSide)?'Under':null,
+   numberLine=lrValidateLine(rawLine.replace(',','.')),
+   odds=lrValidateOdds(rawOdds.replace(',','.'));
+  if(player.length<2||player.length>64||playerKey.length<2||/[<>]/.test(player)||
+    !team||!validMarkets.has(market)||numberLine===null||!side||!Number.isFinite(odds)){
+   errors.push('Row '+(i+1)+': invalid player, exact NBA team, market, half-point line, side or decimal price.');
+   continue;
+  }
+  const key=[playerKey,team,market,numberLine,side].join('|');
+  if(seen.has(key)){errors.push('Row '+(i+1)+': duplicate selection in this batch.');continue}
+  seen.add(key);
+  rows.push({key,player,team,market,line:numberLine,side,odds});
+ }
+ return {rows:errors.length?[]:rows,errors};
+}
+// Update 35.0B pure parser END
+
+const batchOfferInput=document.getElementById('batchOfferInput'),
+ batchOfferConfirmed=document.getElementById('batchOfferConfirmed'),
+ batchOfferPrepare=document.getElementById('batchOfferPrepare'),
+ batchOfferClear=document.getElementById('batchOfferClear'),
+ batchOfferStatus=document.getElementById('batchOfferStatus'),
+ batchOfferRows=document.getElementById('batchOfferRows');
+let batchOffers=[],batchActiveKey=null;
+function batchReset(){
+ batchOffers=[];batchActiveKey=null;batchOfferInput.value='';batchOfferConfirmed.checked=false;
+ batchOfferRows.replaceChildren();
+ batchOfferStatus.textContent='No drafts staged. Nothing was saved.';
+}
+function batchRender(){
+ batchOfferRows.replaceChildren();
+ for(const [i,item] of batchOffers.entries()){
+  const row=researchCreate('div',null,'batch-offer-item');
+  if(item.key===batchActiveKey)row.dataset.active='true';
+  const description=researchCreate('div',null,'batch-offer-info');
+  description.append(researchCreate('strong',(i+1)+'. '+item.player+' · '+item.team),
+   researchCreate('span',item.market+' '+item.line+' '+item.side+
+    ' @ '+String(item.odds)+' manually entered decimal odds'),
+   researchCreate('span',item.key===batchActiveKey?'Selected for manual research':'Local draft · not saved'));
+  const select=researchCreate('button','Use for research','mini');
+  select.type='button';
+  select.addEventListener('click',()=>{
+   if(!auth.currentUser||ledgerBusy||ledgerPageBusy||lrRun.disabled)return;
+   batchActiveKey=item.key;
+   lrPlayer.value=item.player;lrTeam.value=item.team;lrMarket.value=item.market;
+   lrLine.value=String(item.line);lrSide.value=item.side;lrOdds.value=String(item.odds);
+   lrQuoteContext=null;lrLatestResearch=null;lrResults.replaceChildren();
+   ledgerQuoteConfirmed.checked=false;
+   lrStatus.textContent='Local quote draft copied. Recheck Betano price, then click Research this line (ESPN only). A new player identity/history check is required before saving.';
+   batchOfferStatus.textContent='Row '+(i+1)+' copied to Actual line research. No API or Firebase request made.';
+   batchRender();
+   lrPlayer.scrollIntoView({behavior:'smooth',block:'center'});
+  });
+  row.append(description,select);batchOfferRows.append(row);
+ }
+}
+batchOfferPrepare.addEventListener('click',()=>{
+ if(!auth.currentUser||ledgerBusy||ledgerPageBusy||lrRun.disabled)return;
+ if(!batchOfferConfirmed.checked){
+  batchOfferStatus.textContent='Confirm these are genuinely observed Betano offers before preparing drafts.';
+  return;
+ }
+ const parsed=batchParseOffers(batchOfferInput.value,ESPN_NBA_TEAM_IDS);
+ if(parsed.errors.length){
+  batchOfferStatus.textContent='No drafts changed. '+parsed.errors.slice(0,5).join(' ')+
+   (parsed.errors.length>5?' Plus '+(parsed.errors.length-5)+' more errors.':'');
+  return;
+ }
+ batchOffers=parsed.rows;batchActiveKey=null;batchOfferConfirmed.checked=false;
+ batchOfferStatus.textContent=batchOffers.length+' drafts prepared in this tab only. None captured. Select each row to run ESPN research.';
+ batchRender();
+});
+batchOfferClear.addEventListener('click',()=>{
+ if(ledgerBusy||ledgerPageBusy||lrRun.disabled)return;
+ batchReset();
+});
+
+
 // Update 34.3: manual, ESPN-verified prospective prop research ledger.
 const ledgerDate=document.getElementById('ledgerDate'),
  ledgerFind=document.getElementById('ledgerFind'),
@@ -1454,7 +1576,7 @@ function ledgerEvent(e,day,now=Date.now()){
  return {id:String(e.id),start,homeId:hid,awayId:aid,home,away};
 }
 function ledgerReset(){
- ledgerTestReset();
+ ledgerTestReset();batchReset();
  ledgerSession++;ledgerEvents.clear();ledgerRows=[];
  ledgerLastDoc=null;ledgerMoreAvailable=false;ledgerPageBusy=false;
  ledgerRefresh.disabled=false;ledgerLoadMore.disabled=true;ledgerLoadMore.hidden=true;
