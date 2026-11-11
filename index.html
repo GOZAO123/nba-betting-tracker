@@ -1524,9 +1524,102 @@ const batchOfferInput=document.getElementById('batchOfferInput'),
  batchOfferStatus=document.getElementById('batchOfferStatus'),
  batchOfferRows=document.getElementById('batchOfferRows');
 let batchOffers=[],batchActiveKey=null;
+// Update 35.0D: pure research planning and scoring, no network or Firestore calls.
+const BATCH_ESPN_MAX_ROWS=20,BATCH_ESPN_MAX_TEAMS=12,BATCH_ESPN_MAX_LOOKUPS=52;
+function batchResearchPlan(rows,teams){
+ if(!Array.isArray(rows)||!rows.length||rows.length>BATCH_ESPN_MAX_ROWS)
+  throw Error('Prepare 1–20 real, manually observed offers before running batch research.');
+ const byTeam=new Map(),byPlayer=new Map();
+ for(const item of rows){
+  const teamId=teams[item?.team],name=canonicalPlayerName(item?.player);
+  if(!teamId||!name||!/^\d+$/.test(teamId)||
+     !['PTS','REB','AST','3PT','PR','PA','RA','PRA'].includes(item.market)||
+     !['Over','Under'].includes(item.side)||
+     lrValidateLine(item.line)===null||!Number.isFinite(lrValidateOdds(item.odds)))
+   throw Error('Invalid player, team, market or price in batch. Nothing researched.');
+  if(item.espnAthleteId&&!/^\d+$/.test(String(item.espnAthleteId)))
+   throw Error('Invalid staged ESPN athlete ID. Nothing researched.');
+  byTeam.set(teamId,{id:teamId,name:item.team});
+  const key=teamId+'|'+name;
+  const id=item.espnAthleteId?String(item.espnAthleteId):null;
+  if(byPlayer.has(key)){
+   const prior=byPlayer.get(key);
+   if(prior.expectedId&&id&&prior.expectedId!==id)
+    throw Error('Conflicting ESPN player IDs in batch. Nothing researched.');
+   if(id)prior.expectedId=id;
+  }else byPlayer.set(key,{key,name:item.player,team:item.team,teamId,expectedId:id});
+ }
+ const potentialRequests=byTeam.size+byPlayer.size*2;
+ if(byTeam.size>BATCH_ESPN_MAX_TEAMS||potentialRequests>BATCH_ESPN_MAX_LOOKUPS)
+  throw Error('Batch exceeds the ESPN lookup ceiling (12 teams, 52 potential calls). Split it into smaller local batches.');
+ return {teams:[...byTeam.values()],players:[...byPlayer.values()],potentialRequests};
+}
+function batchResearchEvaluate(item,games,cutoff=Date.now()){
+ const research=lrResearch(games,item.market,item.line,cutoff);
+ if(!research.w12||!Number.isFinite(research.w12.model))
+  return {status:'insufficient',games:research.eligibleGames,
+   message:'Fewer than 12 valid prior games for this exact market; no estimate.'};
+ const selected=win=>item.side==='Over'?win.hits:win.n-win.hits;
+ const model=win=>item.side==='Over'?win.model:1-win.model;
+ return {status:'ready',games:research.eligibleGames,
+  hits12:selected(research.w12),sample12:research.w12.n,
+  estimate:model(research.w12),
+  hits24:research.w24?selected(research.w24):null,
+  sample24:research.w24?.n||null,
+  estimate24:research.w24?model(research.w24):null};
+}
+// Update 35.0D pure batch research END
+
+const batchResearchRun=document.getElementById('batchResearchRun'),
+ batchResearchStatus=document.getElementById('batchResearchStatus'),
+ batchResearchResults=document.getElementById('batchResearchResults');
+let batchResearchBusy=false,batchResearchEpoch=0,batchResearchPreview=new Map();
+function batchResearchInvalidate(message='Draft list changed. Research batch again when ready.'){
+ batchResearchEpoch++;
+ batchResearchPreview.clear();batchResearchResults.replaceChildren();
+ batchResearchRun.disabled=batchResearchBusy||!batchOffers.length;
+ batchResearchStatus.textContent=message;
+}
+function batchResearchReset(){
+ batchResearchEpoch++;batchResearchBusy=false;batchResearchPreview.clear();
+ batchResearchResults.replaceChildren();
+ batchResearchRun.disabled=true;
+ batchResearchRun.textContent='Research entire batch (ESPN only)';
+ batchResearchStatus.textContent='Prepare genuine local drafts, then run the ESPN-only preview. Nothing saved.';
+}
+function batchResearchDraw(){
+ batchResearchResults.replaceChildren();
+ if(!batchResearchPreview.size)return;
+ const table=researchCreate('table'),head=researchCreate('thead'),hr=researchCreate('tr');
+ for(const title of ['Player · prop','ESPN status','Past games','Last 12 side hits','Last 24 side hits',
+  'Unvalidated estimate (last 12)','ESPN notes']){
+  hr.append(researchCreate('th',title));
+ }
+ head.append(hr);table.append(head);
+ const body=researchCreate('tbody');
+ for(const item of batchOffers){
+  const outcome=batchResearchPreview.get(item.key);
+  if(!outcome)continue;
+  const tr=researchCreate('tr');
+  const cells=[
+   item.player+' · '+item.market+' '+item.line+' '+item.side,
+   outcome.status==='ready'?'ESPN research available':
+    outcome.status==='insufficient'?'Insufficient ESPN history':'Not verified',
+   Number.isInteger(outcome.games)?String(outcome.games):'—',
+   outcome.status==='ready'?outcome.hits12+'/'+outcome.sample12:'—',
+   outcome.status==='ready'&&outcome.sample24?outcome.hits24+'/'+outcome.sample24:'—',
+   outcome.status==='ready'?(100*outcome.estimate).toFixed(1)+'%':'—',
+   outcome.message||'Research only · manually entered quote not bookmaker-verified'
+  ];
+  for(const [i,cell] of cells.entries())tr.append(
+   researchCreate('td',cell,i===6&&outcome.status!=='ready'?'batch-research-error':null));
+  body.append(tr);
+ }
+ table.append(body);batchResearchResults.append(table);
+}
 function batchReset(){
  batchOffers=[];batchActiveKey=null;batchOfferInput.value='';batchOfferConfirmed.checked=false;
- batchOfferRows.replaceChildren();batchComposerReset();
+ batchOfferRows.replaceChildren();batchComposerReset();batchResearchReset();
  batchOfferStatus.textContent='No drafts staged. Nothing was saved.';
 }
 function batchRender(){
