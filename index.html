@@ -335,7 +335,7 @@ main{width:100%;min-width:0}
   <div class="row"><label for="ledgerDate">NBA fixture date (US Eastern):</label><input id="ledgerDate" type="date"><button id="ledgerFind" class="mini" type="button">Find upcoming fixtures (ESPN)</button></div>
   <div class="row"><label for="ledgerFixture">ESPN fixture:</label><select id="ledgerFixture" aria-label="Upcoming ESPN fixture" style="min-width:300px"><option value="">Load fixtures first</option></select></div>
   <div class="row"><label><input type="checkbox" id="ledgerQuoteConfirmed"> I actually observed this Betano line and price before tip-off (not a made-up test quote).</label></div>
-  <div class="row"><button id="ledgerSave" type="button" class="primary">Save via trusted backend</button><button id="ledgerRefresh" class="mini" type="button">↻ Load my cloud ledger</button></div>
+  <div class="row"><button id="ledgerSave" type="button" class="primary">Save via trusted backend</button><button id="ledgerRefresh" class="mini" type="button">↻ Load my cloud ledger</button><button id="ledgerLoadMore" class="mini" type="button" hidden disabled>Load 50 older records</button></div>
   <p id="ledgerStatus" class="muted" role="status">First run Actual line research above using the genuine line, side and decimal odds. Then choose an upcoming ESPN game and confirm your observed price. No automatic saving.</p>
   <div id="ledgerResults" class="research-results"></div>
   <details class="scanner-dev" id="ledgerDryRunPanel">
@@ -409,7 +409,7 @@ main{width:100%;min-width:0}
 </script><script type="module">
 import {initializeApp} from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-app.js';
 import {getAuth,GoogleAuthProvider,signInWithPopup,signInWithRedirect,getRedirectResult,onAuthStateChanged,signOut} from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js';
-import {getFirestore,doc,collection,query,orderBy,limit,getDocsFromServer,onSnapshot,runTransaction,serverTimestamp} from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js';
+import {getFirestore,doc,collection,query,orderBy,limit,startAfter,getDocsFromServer,onSnapshot,runTransaction,serverTimestamp} from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js';
 import {getFunctions,httpsCallable} from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-functions.js';
 const firebaseConfig={apiKey:'AIzaSyCW2dgvRxO_Lh5i79wAMpX4tc6VgP7K8wk',authDomain:'nba-betting-tracker-3979d.firebaseapp.com',projectId:'nba-betting-tracker-3979d',storageBucket:'nba-betting-tracker-3979d.firebasestorage.app',messagingSenderId:'846190824224',appId:'1:846190824224:web:71a3a188df36519f0a2545'};
 const app=initializeApp(firebaseConfig),auth=getAuth(app),db=getFirestore(app),provider=new GoogleAuthProvider();
@@ -1407,10 +1407,13 @@ const ledgerDate=document.getElementById('ledgerDate'),
  ledgerQuoteConfirmed=document.getElementById('ledgerQuoteConfirmed'),
  ledgerSave=document.getElementById('ledgerSave'),
  ledgerRefresh=document.getElementById('ledgerRefresh'),
+ ledgerLoadMore=document.getElementById('ledgerLoadMore'),
  ledgerStatus=document.getElementById('ledgerStatus'),
  ledgerResults=document.getElementById('ledgerResults');
 const LEDGER_GRACE=5*60*1000;
+const LEDGER_PAGE_SIZE=50;
 let ledgerEvents=new Map(),ledgerRows=[],ledgerBusy=false,ledgerSession=0;
+let ledgerLastDoc=null,ledgerMoreAvailable=false,ledgerPageBusy=false;
 function ledgerNbaDay(date){
  const p=new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',
   year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(date);
@@ -1453,6 +1456,8 @@ function ledgerEvent(e,day,now=Date.now()){
 function ledgerReset(){
  ledgerTestReset();
  ledgerSession++;ledgerEvents.clear();ledgerRows=[];
+ ledgerLastDoc=null;ledgerMoreAvailable=false;ledgerPageBusy=false;
+ ledgerRefresh.disabled=false;ledgerLoadMore.disabled=true;ledgerLoadMore.hidden=true;
  ledgerResults.replaceChildren();ledgerFixture.replaceChildren();
  ledgerFixture.add(new Option('Load upcoming games',''));
  ledgerQuoteConfirmed.checked=false;ledgerDate.value=ledgerToday();
@@ -1512,7 +1517,7 @@ function ledgerRef(uid,id){return doc(db,'users',uid,'propResearchLedger',id)}
 // remain readable. Existing Firestore owner-write permissions need migration.
 ledgerSave.addEventListener('click',async()=>{
  const user=auth.currentUser,snap=lrLatestResearch,event=ledgerEvents.get(ledgerFixture.value);
- if(!user||ledgerBusy)return;
+ if(!user||ledgerBusy||ledgerPageBusy)return;
  if(!ledgerSameResearch(snap)||Date.now()-(snap?.at||0)>5*60000){
   ledgerStatus.textContent='Run Actual line research with unchanged inputs and a real price within five minutes.';return;
  }
@@ -1564,20 +1569,58 @@ ledgerSave.addEventListener('click',async()=>{
     '. Load your cloud ledger before retrying.';
  }finally{ledgerBusy=false;ledgerSave.disabled=false}
 });
-async function ledgerLoad(){
+// Update 35.0A: deliberate Firestore cursor pagination, 50 records per click.
+// QueryDocumentSnapshot cursors preserve stable order when receipt timestamps tie.
+function ledgerCombinePages(current,docs,append){
+ const records=append?current.slice():[],seen=new Set(records.map(r=>r.id));
+ for(const snap of docs){
+  if(!snap?.id||typeof snap.data!=='function'||seen.has(snap.id))continue;
+  records.push({...snap.data(),id:snap.id});seen.add(snap.id);
+ }
+ return {records,moreAvailable:docs.length===LEDGER_PAGE_SIZE};
+}
+async function ledgerLoad(append=false){
  const uid=auth.currentUser?.uid,session=ledgerSession;
- if(!uid){ledgerResults.replaceChildren();return}
- const rows=await getDocsFromServer(query(collection(db,'users',uid,'propResearchLedger'),
-  orderBy('clientCapturedMs','desc'),limit(50)));
- if(auth.currentUser?.uid!==uid||session!==ledgerSession)return;
- ledgerRows=rows.docs.map(d=>({id:d.id,...d.data()}));ledgerDraw();
+ if(!uid){ledgerResults.replaceChildren();return false}
+ if(ledgerPageBusy)return false;
+ if(append&&(!ledgerMoreAvailable||!ledgerLastDoc))return false;
+ ledgerPageBusy=true;ledgerRefresh.disabled=true;ledgerLoadMore.disabled=true;
+ try{
+  const constraints=[orderBy('clientCapturedMs','desc')];
+  if(append)constraints.push(startAfter(ledgerLastDoc));
+  constraints.push(limit(LEDGER_PAGE_SIZE));
+  const page=await getDocsFromServer(query(
+   collection(db,'users',uid,'propResearchLedger'),...constraints));
+  if(auth.currentUser?.uid!==uid||session!==ledgerSession)return false;
+  const next=ledgerCombinePages(ledgerRows,page.docs,append);
+  ledgerRows=next.records;
+  ledgerLastDoc=page.docs.at(-1)||(append?ledgerLastDoc:null);
+  ledgerMoreAvailable=next.moreAvailable;
+  ledgerLoadMore.hidden=!ledgerMoreAvailable;
+  ledgerDraw();
+  return true;
+ }finally{
+  if(auth.currentUser?.uid===uid&&session===ledgerSession){
+   ledgerPageBusy=false;ledgerRefresh.disabled=false;
+   ledgerLoadMore.disabled=!ledgerMoreAvailable;
+  }
+ }
+}
+function ledgerLoadedMessage(){
+ return 'Cloud ledger loaded: '+ledgerRows.length+' records'+
+  (ledgerMoreAvailable?' · older records may exist; load 50 more when needed.':
+   ' · no further records in the ordered query.');
 }
 ledgerRefresh.addEventListener('click',async()=>{
- if(ledgerBusy||!auth.currentUser)return;
- ledgerRefresh.disabled=true;
- try{await ledgerLoad();ledgerStatus.textContent='Cloud ledger loaded: '+ledgerRows.length+' entries (latest 50).';}
+ if(ledgerBusy||ledgerPageBusy||!auth.currentUser)return;
+ try{if(await ledgerLoad(false))ledgerStatus.textContent=ledgerLoadedMessage()}
  catch(err){ledgerStatus.textContent='Cloud ledger error: '+(err.message||String(err))}
- finally{ledgerRefresh.disabled=false}
+});
+ledgerLoadMore.addEventListener('click',async()=>{
+ if(ledgerBusy||ledgerPageBusy||!auth.currentUser||!ledgerMoreAvailable)return;
+ try{if(await ledgerLoad(true))ledgerStatus.textContent=ledgerLoadedMessage()}
+ catch(err){ledgerStatus.textContent='Older cloud records could not be loaded: '+
+  (err.message||String(err))+'. Previously loaded records were preserved.'}
 });
 // Update 34.7 pure dashboard metrics BEGIN
 function ledgerWilson95(wins,n){
@@ -1587,7 +1630,7 @@ function ledgerWilson95(wins,n){
  const radius=z*Math.sqrt(p*(1-p)/n+z2/(4*n*n))/divisor;
  return [Math.max(0,middle-radius),Math.min(1,middle+radius)];
 }
-function ledgerDashboardMetrics(rows,stateOf){
+function ledgerDashboardMetrics(rows,stateOf,hasMore=rows.length>=LEDGER_PAGE_SIZE){
  const blank=()=>({records:0,pending:0,settled:0,excluded:0,wins:0,losses:0,scored:0,squaredError:0});
  const overall=blank(),maps={market:new Map(),player:new Map(),team:new Map(),capture:new Map()};
  const named=s=>typeof s==='string'&&s.trim()?s.trim():'Unknown';
@@ -1618,7 +1661,7 @@ function ledgerDashboardMetrics(rows,stateOf){
   groups[type]=[...maps[type]].map(([name,s])=>({name,...s}))
    .sort((a,b)=>b.records-a.records||a.name.localeCompare(b.name));
  }
- return {overall,groups,loaded:rows.length,limited:rows.length>=50};
+ return {overall,groups,loaded:rows.length,limited:Boolean(hasMore)};
 }
 // Update 34.7 pure dashboard metrics END
 
@@ -1647,8 +1690,8 @@ function ledgerRenderDashboard(container,result){
  }
  dashboard.append(tiles);
  dashboard.append(researchCreate('p',result.limited?
-  'Only the latest 50 records are loaded. These counts and breakdowns are NOT all-time totals.':
-  'Based on '+s.records+' loaded cloud records only. No additional Firebase reads.','muted notice'));
+  'Only '+s.records+' records are loaded so far. More may exist; click Load 50 older records. These are NOT all-time totals.':
+  'All pages of the ordered ledger query have been loaded ('+s.records+' records). Data may change while paging; refresh for the latest state. No additional Firebase reads for dashboard calculations.','muted notice'));
  dashboard.append(researchCreate('p',ci?
   'Approximate 95% Wilson interval for observed selection wins: '+pct(ci[0],1)+'–'+
    pct(ci[1],1)+' (n='+observed+'). This assumes independent outcomes, which may not hold for overlapping player props.':
@@ -1695,7 +1738,7 @@ function ledgerCalibration(entries){
 }
 function ledgerDraw(){
  ledgerResults.replaceChildren();
- ledgerRenderDashboard(ledgerResults,ledgerDashboardMetrics(ledgerRows,ledgerState));
+ ledgerRenderDashboard(ledgerResults,ledgerDashboardMetrics(ledgerRows,ledgerState,ledgerMoreAvailable));
  if(!ledgerRows.length){
   ledgerResults.append(researchCreate('p','No research entries yet. Do not invent test odds; only record actual observed offers.','muted'));return;
  }
@@ -1818,7 +1861,7 @@ function ledgerExtractFinal(box,record){
 }
 async function ledgerSettle(id){
  const user=auth.currentUser,row=ledgerRows.find(x=>x.id===id);
- if(!user||ledgerBusy||!row||ledgerState(row)!=='PENDING')return;
+ if(!user||ledgerBusy||ledgerPageBusy||!row||ledgerState(row)!=='PENDING')return;
  if(Date.now()<row.eventStartMs+70*60000){
   ledgerStatus.textContent='Too early to check the final outcome.';return;
  }
