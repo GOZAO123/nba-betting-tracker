@@ -315,3 +315,111 @@ test("batch queue requires explicit quote confirmation and only prefills existin
  assert.match(html,/ledgerCaptureProspective/);
  assert.match(html,/confirmedObservedQuote:true/);
 });
+
+
+// Update 35.0C: synthetic inputs exercise UI-only offer validation.
+// No real sportsbook odds or player-team facts are asserted by these tests.
+const testComposer=(()=>{
+ const begin=html.indexOf("// Update 35.0C pure offer validation BEGIN");
+ const end=html.indexOf("// Update 35.0C pure offer validation END",begin);
+ assert.ok(begin>0&&end>begin);
+ const validator=html.slice(begin,end);
+ const script=html.slice(html.indexOf("function canonicalPlayerName("),
+  html.indexOf("const ESPN_NBA_TEAM_IDS="))+
+  html.slice(html.indexOf("function lrValidateLine("),html.indexOf("function lrNormalOver("))+
+  html.slice(html.indexOf("function batchParseOffers("),
+   html.indexOf("// Update 35.0B pure parser END"))+
+  validator+"\nreturn batchComposerCandidate;";
+ return new Function(script)();
+})();
+const fixtureAt=(start=Date.now()+8*3600000)=>({
+ id:"401000001",start,homeId:"18",awayId:"2",home:"New York Knicks",away:"Boston Celtics"
+});
+const quote={
+ player:"Example Player",team:"Boston Celtics",market:"PTS",
+ line:"20.5",side:"Over",odds:"1.82"
+};
+const idTeams={"Boston Celtics":"2","New York Knicks":"18"};
+const athlete={id:"1234567",name:"Example Player"};
+
+test("searchable composer accepts exact ESPN roster player, team and fixture",()=>{
+ const draft=testComposer(quote,athlete,fixtureAt(),[],idTeams);
+ assert.equal(draft.player,"Example Player");
+ assert.equal(draft.team,"Boston Celtics");
+ assert.equal(draft.market,"PTS");
+ assert.equal(draft.odds,1.82);
+ assert.equal(draft.eventId,"401000001");
+ assert.equal(draft.espnAthleteId,"1234567");
+ assert.equal(draft.fixtureLabel,"Boston Celtics @ New York Knicks");
+ assert.equal(Object.hasOwn(draft,"modelOver"),false);
+ assert.equal(Object.hasOwn(draft,"resultWon"),false);
+});
+
+test("searchable composer fails closed for ambiguous/mismatched player identity",()=>{
+ assert.throws(()=>testComposer({...quote,player:"Other Player"},athlete,fixtureAt(),[],idTeams),/exact player/);
+ assert.throws(()=>testComposer(quote,null,fixtureAt(),[],idTeams),/exact player/);
+ assert.throws(()=>testComposer(quote,{name:"Example Player",id:"invalid"},fixtureAt(),[],idTeams),/exact player/);
+});
+
+test("searchable composer rejects different team and near-tipoff fixtures",()=>{
+ assert.throws(()=>testComposer({...quote,team:"Washington Wizards"},athlete,fixtureAt(),[],{
+  ...idTeams,"Washington Wizards":"27"
+ }),/fixture/);
+ assert.throws(()=>testComposer(quote,athlete,fixtureAt(Date.now()+2*60000),[],idTeams),/fixture/);
+ assert.throws(()=>testComposer(quote,athlete,undefined,[],idTeams),/fixture/);
+});
+
+test("searchable composer rejects malformed lines/odds, duplicates and more than 20 drafts",()=>{
+ assert.throws(()=>testComposer({...quote,line:"20"},athlete,fixtureAt(),[],idTeams),/invalid|half-point/i);
+ assert.throws(()=>testComposer({...quote,odds:"1.00"},athlete,fixtureAt(),[],idTeams),/invalid|price/i);
+ const existing=testComposer(quote,athlete,fixtureAt(),[],idTeams);
+ assert.throws(()=>testComposer(quote,athlete,fixtureAt(),[existing],idTeams),/already/);
+ assert.throws(()=>testComposer(quote,athlete,fixtureAt(),Array(20).fill(existing),idTeams),/20 drafts/);
+});
+
+test("composer preserves explicit user actions, cached roster lookup and no paid API calls",()=>{
+ const begin=html.indexOf("// Update 35.0C pure offer validation BEGIN");
+ const end=html.indexOf("function ledgerSameResearch(",begin);
+ const block=html.slice(begin,end);
+ assert.ok(begin>0&&end>begin);
+ assert.match(block,/batchComposerFind\.addEventListener\('click'/);
+ assert.match(block,/ledgerFind\.click\(\)/);
+ assert.match(block,/batchComposerLoadRoster\.addEventListener\('click'/);
+ assert.match(block,/readEspnIdentity\(RESEARCH_ESPN_BASE/);
+ assert.match(block,/batchComposerAdd\.addEventListener\('click'/);
+ assert.match(block,/batchComposerConfirmed.checked/);
+ assert.match(block,/batchOffers.push\(draft\)/);
+ assert.match(block,/batchRosterEpoch/);
+ assert.match(block,/uid!==auth\.currentUser\?\.uid\|\|session!==ledgerSession/);
+ assert.doesNotMatch(block,/oddsPapi[A-Z]|httpsCallable|getDocsFromServer|setInterval|setTimeout|localStorage|sessionStorage/);
+});
+
+test("composer and price editing do not bypass the original secure capture workflow",()=>{
+ for(const id of ["batchComposerDate","batchComposerFixture","batchComposerTeam",
+  "batchComposerPlayer","batchComposerPlayers","batchComposerMarket",
+  "batchComposerSide","batchComposerLine","batchComposerOdds",
+  "batchComposerConfirmed","batchComposerAdd","batchComposerStatus"]){
+  assert.equal([...html.matchAll(new RegExp('id="'+id+'"','g'))].length,1,
+   id+" must exist exactly once");
+ }
+ assert.match(html,/batchComposerSyncFixtures\(\)/);
+ assert.match(html,/ledgerQuoteConfirmed.checked=false/);
+ assert.match(html,/lrLatestResearch=null;lrQuoteContext=null;lrResults.replaceChildren\(\)/);
+ assert.match(html,/Edit odds/);
+ assert.match(html,/Save new price/);
+ assert.match(html,/confirm\('Confirm this is the updated Betano price/);
+ assert.match(html,/Remove this unsaved local draft/);
+ assert.match(html,/trusted backend capture/);
+ assert.match(html,/httpsCallable\(oddsFunctions,'ledgerCaptureProspective'\)/);
+});
+
+test("composer reuses existing verified ESPN fixture map and resets on signout",()=>{
+ assert.match(html,/const available=\[\.\.\.ledgerEvents.values\(\)\]/);
+ assert.match(html,/fixture\.start>Date\.now\(\)\+LEDGER_GRACE/);
+ assert.match(html,/if\(session===ledgerSession\)batchComposerSyncFixtures\(\)/);
+ const reset=html.slice(html.indexOf("function ledgerReset(){"),
+  html.indexOf("ledgerDate.addEventListener('change'"));
+ assert.match(reset,/batchReset\(\)/);
+ assert.match(html,/function batchReset\(\)[\s\S]*?batchComposerReset\(\)/);
+ assert.match(html,/batchComposerRoster|batchRosterNames/);
+});

@@ -309,6 +309,23 @@ main{width:100%;min-width:0}
 .batch-offer-info span{display:block;font-size:.78rem;color:#abc2d8;margin-top:3px}
 .batch-offer-item button{min-height:38px}
 @media(max-width:700px){.batch-offer-info{min-width:100%}.batch-offer-item button{width:100%}}
+
+/* Update 35.0C — fixture-first searchable composer and editable in-memory offers. */
+.batch-composer{background:#142b3f;border:1px solid #375772;border-radius:12px;padding:12px;display:grid;gap:10px;min-width:0}
+.batch-composer h4{margin:0;font-size:1rem}
+.batch-composer-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;min-width:0}
+.batch-composer-grid label{display:grid;gap:5px;min-width:0;font-size:.82rem;font-weight:700;color:#cce3f2}
+.batch-composer-grid input,.batch-composer-grid select{width:100%;max-width:100%;min-width:0}
+.batch-composer-grid .batch-span{grid-column:1/-1}
+.batch-composer-actions{display:flex;flex-wrap:wrap;gap:9px;align-items:center}
+.batch-composer-actions button{min-height:39px}
+.batch-offer-paste{border-top:1px solid #344e67;padding-top:10px}
+.batch-offer-paste summary{font-weight:700;min-height:32px}
+.batch-offer-paste[open] summary{margin-bottom:9px}
+.batch-offer-edit{display:flex;align-items:center;flex-wrap:wrap;gap:7px;margin-top:8px}
+.batch-offer-edit input{width:105px;min-width:80px;max-width:135px}
+.batch-offer-info{min-width:160px}
+@media(max-width:700px){.batch-composer-grid{grid-template-columns:minmax(0,1fr)}.batch-composer-actions button{flex:1}.batch-offer-item button{width:auto}.batch-offer-info{min-width:100%}}
 </style></head><body><main><div class="bar"><div><h1>🏀 NBA Betting Tracker</h1><p>One player, one check — synced across devices</p></div><div class="header-actions"><button id="layoutModeToggle" type="button" class="mini" aria-label="Switch between wide and mobile layouts">📱 Mobile view</button><button id="updateAppButton" type="button" class="mini" title="Load the newest app version from GitHub Pages">↻ Update app</button><button id="signout" hidden>Sign out</button></div></div><section class="panel" id="login"><h2>Sign in</h2><p>Use the same Google account on Android and PC to see the same checklist.</p><button class="primary" id="signin">Continue with Google</button><p class="muted" id="loginmsg"></p></section><div id="app"><nav class="tabs" aria-label="App sections"><button type="button" data-tab="scanner" aria-selected="true">🤖 AI Scanner</button><button type="button" data-tab="games" aria-selected="false">🏀 NBA Games</button><button type="button" data-tab="analyzer" aria-selected="false">📊 Props Analyzer</button><button type="button" data-tab="checklist" aria-selected="false">✅ Checklist</button></nav><section id="scannerTab" class="panel scanner-panel">
  <header class="scanner-hero"><div><span class="scanner-eyebrow">NBA ANALYTICS · BETANO PT</span><h2>🤖 AI Scanner</h2><p class="muted">Your workspace for NBA player-prop research.</p></div><span class="scanner-badge">● Manual mode</span></header>
  <div class="scanner-overview" aria-label="Scanner overview">
@@ -349,14 +366,37 @@ main{width:100%;min-width:0}
  <div class="scanner-workspace">
   <details id="batchOfferPanel" class="batch-offer-panel">
    <summary>📋 Batch quote preparation · local drafts (no API calls)</summary>
-   <p class="muted notice">Paste up to 20 Betano offers you personally observed, one per line, using TAB or | between these six fields: <strong>Player | Full NBA team | Market | Half-point line | Over/Under | Decimal odds</strong>. Decimal commas and points are accepted. No example is automatically submitted.</p>
-   <textarea id="batchOfferInput" rows="5" maxlength="5000" spellcheck="false" aria-label="Manually observed Betano player props, one per line" placeholder="Player name | Full NBA team | PTS | 20.5 | Over | 1.80"></textarea>
-   <p class="muted notice">Markets: PTS, REB, AST, 3PT, PR, PA, RA, PRA. Use full official NBA team names, not abbreviations.</p>
-   <label class="notice"><input id="batchOfferConfirmed" type="checkbox"> I personally observed all entered lines and prices at Betano, not invented test offers. I will recheck each price before saving.</label>
-   <div class="row"><button id="batchOfferPrepare" class="primary" type="button">Prepare drafts locally</button><button id="batchOfferClear" class="mini" type="button">Clear drafts</button></div>
+   <div id="batchComposer" class="batch-composer" aria-label="Add manually observed player prop">
+    <h4>Add one offer with searchable ESPN player</h4>
+    <p class="muted notice">Choose a real upcoming fixture, then one team and a player from its verified ESPN roster. Loading fixtures and players is manual; no OddsPapi requests.</p>
+    <div class="batch-composer-grid">
+     <label>Fixture date · US Eastern<input type="date" id="batchComposerDate"></label>
+     <div class="batch-composer-actions"><button type="button" id="batchComposerFind" class="mini">Find upcoming fixtures (ESPN)</button></div>
+     <label class="batch-span">Upcoming NBA fixture<select id="batchComposerFixture"><option value="">Find fixtures first</option></select></label>
+     <label>Team · this fixture only<select id="batchComposerTeam"><option value="">Choose fixture first</option></select></label>
+     <div class="batch-composer-actions"><button type="button" id="batchComposerLoadRoster" class="mini" disabled>Load ESPN team roster</button></div>
+     <label class="batch-span">Search verified player<input id="batchComposerPlayer" type="search" list="batchComposerPlayers" maxlength="64" autocomplete="off" spellcheck="false" placeholder="Load roster, then type a player name"><datalist id="batchComposerPlayers"></datalist></label>
+     <label>Market<select id="batchComposerMarket"><option>PTS</option><option>REB</option><option>AST</option><option>3PT</option><option>PR</option><option>PA</option><option>RA</option><option>PRA</option></select></label>
+     <label>Selection<select id="batchComposerSide"><option>Over</option><option>Under</option></select></label>
+     <label>Half-point line<input id="batchComposerLine" type="text" inputmode="decimal" maxlength="8" placeholder="16.5"></label>
+     <label>Decimal odds<input id="batchComposerOdds" type="text" inputmode="decimal" maxlength="12" placeholder="1.82"></label>
+    </div>
+    <label class="notice"><input id="batchComposerConfirmed" type="checkbox"> I have personally observed this exact Betano line and price, and will reconfirm it before trusted backend capture.</label>
+    <div class="batch-composer-actions"><button id="batchComposerAdd" type="button" class="primary">+ Add to batch</button></div>
+    <p id="batchComposerStatus" class="muted" role="status">Find upcoming fixtures for the selected date, choose a team, then load its ESPN roster.</p>
+   </div>
+   <details class="batch-offer-paste" id="batchOfferPastePanel">
+    <summary>Or paste 1–20 offers (existing text method)</summary>
+    <p class="muted notice">Paste Betano offers you personally observed, one per line, using TAB or | between: <strong>Player | Full NBA team | Market | Half-point line | Over/Under | Decimal odds</strong>. Pasting replaces current local drafts only after confirmation.</p>
+    <textarea id="batchOfferInput" rows="5" maxlength="5000" spellcheck="false" aria-label="Manually observed Betano player props, one per line" placeholder="Player name | Full NBA team | PTS | 20.5 | Over | 1.80"></textarea>
+    <p class="muted notice">Markets: PTS, REB, AST, 3PT, PR, PA, RA, PRA. Use full official NBA team names, not abbreviations.</p>
+    <label class="notice"><input id="batchOfferConfirmed" type="checkbox"> I personally observed all entered lines and prices at Betano, not invented test offers. I will recheck each price before saving.</label>
+    <div class="row"><button id="batchOfferPrepare" class="primary" type="button">Prepare drafts locally</button></div>
+   </details>
+   <div class="row"><button id="batchOfferClear" class="mini" type="button">Clear all local drafts</button></div>
    <p id="batchOfferStatus" class="muted" role="status">No drafts staged. Preparation never contacts Firebase, ESPN or OddsPapi.</p>
    <div id="batchOfferRows" class="batch-offer-list" aria-label="Prepared research drafts"></div>
-   <p class="warning notice">Drafts are in memory only and disappear on page refresh or sign-out. Select an offer, run existing ESPN-only Actual line research, choose its verified upcoming fixture and reconfirm the Betano quote before each trusted backend capture. Keep every observed selection in the sample to reduce model-driven selection bias.</p>
+   <p class="warning notice">All offers remain temporary local drafts and disappear on refresh or sign-out. Searchable players are checked against ESPN's team roster, not a verified Betano feed. For each offer, still run Actual line research, choose the verified upcoming fixture and reconfirm the current bookmaker price before separate trusted backend capture. Keep track of rejected/unavailable quotes to avoid selection bias.</p>
   </details>
  </div>
  <div class="scanner-workspace"><div class="scanner-section-head"><div><h3>📓 Prospective player-prop research ledger</h3><p class="muted">Save manually observed Betano quotes and ESPN-only research through the trusted server before tip-off; verify final results through the server. Nothing places wagers.</p></div></div>
@@ -1470,7 +1510,7 @@ const batchOfferInput=document.getElementById('batchOfferInput'),
 let batchOffers=[],batchActiveKey=null;
 function batchReset(){
  batchOffers=[];batchActiveKey=null;batchOfferInput.value='';batchOfferConfirmed.checked=false;
- batchOfferRows.replaceChildren();
+ batchOfferRows.replaceChildren();batchComposerReset();
  batchOfferStatus.textContent='No drafts staged. Nothing was saved.';
 }
 function batchRender(){
@@ -1483,6 +1523,9 @@ function batchRender(){
    researchCreate('span',item.market+' '+item.line+' '+item.side+
     ' @ '+String(item.odds)+' manually entered decimal odds'),
    researchCreate('span',item.key===batchActiveKey?'Selected for manual research':'Local draft · not saved'));
+  if(item.fixtureLabel&&Number.isFinite(item.eventStartMs))
+   description.append(researchCreate('span',
+    item.fixtureLabel+' · '+ledgerLisbonTime(item.eventStartMs)+' · ESPN fixture (not bookmaker verified)'));
   const select=researchCreate('button','Use for research','mini');
   select.type='button';
   select.addEventListener('click',()=>{
@@ -1490,6 +1533,7 @@ function batchRender(){
    batchActiveKey=item.key;
    lrPlayer.value=item.player;lrTeam.value=item.team;lrMarket.value=item.market;
    lrLine.value=String(item.line);lrSide.value=item.side;lrOdds.value=String(item.odds);
+   if(item.eventId&&ledgerEvents.has(item.eventId))ledgerFixture.value=item.eventId;
    lrQuoteContext=null;lrLatestResearch=null;lrResults.replaceChildren();
    ledgerQuoteConfirmed.checked=false;
    lrStatus.textContent='Local quote draft copied. Recheck Betano price, then click Research this line (ESPN only). A new player identity/history check is required before saving.';
@@ -1497,7 +1541,53 @@ function batchRender(){
    batchRender();
    lrPlayer.scrollIntoView({behavior:'smooth',block:'center'});
   });
-  row.append(description,select);batchOfferRows.append(row);
+  const edit=researchCreate('button','Edit odds','mini');
+  edit.type='button';
+  edit.addEventListener('click',()=>{
+   if(!auth.currentUser||ledgerBusy||ledgerPageBusy||lrRun.disabled)return;
+   const controls=researchCreate('div',null,'batch-offer-edit');
+   const field=researchCreate('input');field.type='text';field.inputMode='decimal';
+   field.maxLength=12;field.value=String(item.odds);
+   field.setAttribute('aria-label','Updated decimal odds for '+item.player);
+   const apply=researchCreate('button','Save new price','mini');
+   apply.type='button';
+   const cancel=researchCreate('button','Cancel','mini');
+   cancel.type='button';cancel.addEventListener('click',()=>batchRender());
+   apply.addEventListener('click',()=>{
+    if(!auth.currentUser||ledgerBusy||ledgerPageBusy)return;
+    const price=lrValidateOdds(field.value.trim().replace(',','.'));
+    if(!Number.isFinite(price)){
+     batchOfferStatus.textContent='Enter valid observed decimal odds from 1.01 to 100.00.';
+     return;
+    }
+    if(price!==item.odds&&!confirm('Confirm this is the updated Betano price you actually observed. Nothing is saved to Firebase.'))return;
+    item.odds=price;
+    if(item.key===batchActiveKey){
+     lrLatestResearch=null;lrQuoteContext=null;lrResults.replaceChildren();
+     ledgerQuoteConfirmed.checked=false;
+     lrStatus.textContent='The local quote changed. Select Use for research and rerun ESPN research before saving.';
+    }
+    batchOfferStatus.textContent='Local price updated for '+item.player+
+     '. Previous research was invalidated if this row was active. No backend write.';
+    batchRender();
+   });
+   controls.append(field,apply,cancel);
+   row.append(controls);field.focus();
+  });
+  const remove=researchCreate('button','Remove','mini');
+  remove.type='button';
+  remove.addEventListener('click',()=>{
+   if(ledgerBusy||ledgerPageBusy||lrRun.disabled)return;
+   if(!confirm('Remove this unsaved local draft for '+item.player+'?'))return;
+   batchOffers=batchOffers.filter(x=>x!==item);
+   if(batchActiveKey===item.key){
+    batchActiveKey=null;lrLatestResearch=null;lrQuoteContext=null;lrResults.replaceChildren();
+    ledgerQuoteConfirmed.checked=false;
+   }
+   batchOfferStatus.textContent='One local draft removed. No Firebase record was deleted.';
+   batchRender();
+  });
+  row.append(description,select,edit,remove);batchOfferRows.append(row);
  }
 }
 batchOfferPrepare.addEventListener('click',()=>{
@@ -1512,6 +1602,7 @@ batchOfferPrepare.addEventListener('click',()=>{
    (parsed.errors.length>5?' Plus '+(parsed.errors.length-5)+' more errors.':'');
   return;
  }
+ if(batchOffers.length&&!confirm('Replace the '+batchOffers.length+' existing local drafts with this pasted list? Saved Firebase records are unchanged.'))return;
  batchOffers=parsed.rows;batchActiveKey=null;batchOfferConfirmed.checked=false;
  batchOfferStatus.textContent=batchOffers.length+' drafts prepared in this tab only. None captured. Select each row to run ESPN research.';
  batchRender();
@@ -1618,8 +1709,186 @@ ledgerFind.addEventListener('click',async()=>{
   ledgerStatus.textContent=events.size+' upcoming regular-season fixtures · 1 ESPN request, zero OddsPapi calls.';
  }catch(err){
   if(session===ledgerSession)ledgerStatus.textContent='ESPN fixture lookup failed: '+(err.message||String(err));
- }finally{ledgerBusy=false;ledgerFind.disabled=false}
+ }finally{
+  if(session===ledgerSession)batchComposerSyncFixtures();
+  ledgerBusy=false;ledgerFind.disabled=false;
+ }
 });
+// Update 35.0C pure offer validation BEGIN
+function batchComposerCandidate(fields,athlete,fixture,rows,teams,now=Date.now()){
+ if(rows.length>=20)throw Error('Batch already contains 20 drafts.');
+ const id=teams[fields.team];
+ if(!fixture||!Number.isFinite(fixture.start)||fixture.start<=now+5*60000||
+    !id||![fixture.homeId,fixture.awayId].includes(id))
+  throw Error('Choose a valid upcoming ESPN fixture and participating team.');
+ if(!athlete||!/^\d+$/.test(String(athlete.id))||
+    canonicalPlayerName(athlete.name)!==canonicalPlayerName(fields.player))
+  throw Error('Choose an exact player from the verified ESPN roster.');
+ const result=batchParseOffers([athlete.name,fields.team,fields.market,
+  fields.line,fields.side,fields.odds].join(' | '),teams);
+ if(result.errors.length||result.rows.length!==1)
+  throw Error(result.errors[0]||'Invalid player prop details.');
+ const draft=result.rows[0];
+ if(rows.some(r=>r.key===draft.key))throw Error('This player prop is already in the local batch.');
+ return {...draft,eventId:fixture.id,eventStartMs:fixture.start,
+  fixtureLabel:fixture.away+' @ '+fixture.home,espnAthleteId:String(athlete.id)};
+}
+// Update 35.0C pure offer validation END
+
+const batchComposerDate=document.getElementById('batchComposerDate'),
+ batchComposerFind=document.getElementById('batchComposerFind'),
+ batchComposerFixture=document.getElementById('batchComposerFixture'),
+ batchComposerTeam=document.getElementById('batchComposerTeam'),
+ batchComposerLoadRoster=document.getElementById('batchComposerLoadRoster'),
+ batchComposerPlayer=document.getElementById('batchComposerPlayer'),
+ batchComposerPlayers=document.getElementById('batchComposerPlayers'),
+ batchComposerMarket=document.getElementById('batchComposerMarket'),
+ batchComposerSide=document.getElementById('batchComposerSide'),
+ batchComposerLine=document.getElementById('batchComposerLine'),
+ batchComposerOdds=document.getElementById('batchComposerOdds'),
+ batchComposerConfirmed=document.getElementById('batchComposerConfirmed'),
+ batchComposerAdd=document.getElementById('batchComposerAdd'),
+ batchComposerStatus=document.getElementById('batchComposerStatus');
+let batchRosterNames=new Map(),batchRosterTeam='',batchRosterEpoch=0;
+function batchComposerClearRoster(){
+ batchRosterEpoch++;batchRosterTeam='';batchRosterNames.clear();
+ batchComposerPlayer.value='';batchComposerPlayers.replaceChildren();
+ batchComposerLoadRoster.disabled=!batchComposerTeam.value;
+}
+function batchComposerFixtureChanged(){
+ const fixture=ledgerEvents.get(batchComposerFixture.value);
+ batchComposerTeam.replaceChildren();
+ batchComposerTeam.add(new Option(fixture?'Choose a fixture team':'Choose fixture first',''));
+ if(fixture&&fixture.start>Date.now()+LEDGER_GRACE){
+  const choices=Object.entries(ESPN_NBA_TEAM_IDS)
+   .filter(([,id])=>id===fixture.homeId||id===fixture.awayId)
+   .sort(([a],[b])=>a.localeCompare(b));
+  if(choices.length===2)for(const [name] of choices)batchComposerTeam.add(new Option(name,name));
+ }
+ batchComposerClearRoster();
+}
+function batchComposerSyncFixtures(){
+ const selected=batchComposerFixture.value;
+ batchComposerFixture.replaceChildren();
+ batchComposerFixture.add(new Option('Choose an upcoming verified NBA fixture',''));
+ const available=[...ledgerEvents.values()].filter(e=>e.start>Date.now()+LEDGER_GRACE)
+  .sort((a,b)=>a.start-b.start);
+ for(const e of available)batchComposerFixture.add(
+  new Option(e.away+' @ '+e.home+' · '+ledgerLisbonTime(e.start),e.id));
+ if(available.some(e=>e.id===selected))batchComposerFixture.value=selected;
+ batchComposerFixtureChanged();
+ batchComposerStatus.textContent=available.length?
+  available.length+' upcoming ESPN fixtures. Choose one, choose a team, then load the roster.':
+  'No upcoming fixtures loaded. Select the US Eastern date and click Find upcoming fixtures.';
+}
+function batchComposerReset(){
+ batchRosterEpoch++;batchRosterTeam='';batchRosterNames.clear();
+ batchComposerPlayer.value='';batchComposerPlayers.replaceChildren();
+ batchComposerDate.value=ledgerToday();
+ batchComposerFixture.replaceChildren();batchComposerFixture.add(new Option('Find fixtures first',''));
+ batchComposerTeam.replaceChildren();batchComposerTeam.add(new Option('Choose fixture first',''));
+ batchComposerLoadRoster.disabled=true;
+ batchComposerMarket.value='PTS';batchComposerSide.value='Over';
+ batchComposerLine.value='';batchComposerOdds.value='';batchComposerConfirmed.checked=false;
+ batchComposerStatus.textContent='Choose a fixture, then load its verified ESPN team roster.';
+}
+batchComposerDate.value=ledgerDate.value;
+batchComposerDate.addEventListener('change',()=>{
+ if(ledgerBusy||ledgerPageBusy)return;
+ ledgerDate.value=batchComposerDate.value;
+ ledgerDate.dispatchEvent(new Event('change'));
+ batchComposerSyncFixtures();
+});
+ledgerDate.addEventListener('change',()=>{
+ batchComposerDate.value=ledgerDate.value;batchComposerSyncFixtures();
+});
+batchComposerFind.addEventListener('click',()=>{
+ if(!auth.currentUser){batchComposerStatus.textContent='Sign in first.';return}
+ if(ledgerBusy||ledgerPageBusy)return;
+ if(batchComposerDate.value!==ledgerDate.value){
+  ledgerDate.value=batchComposerDate.value;ledgerDate.dispatchEvent(new Event('change'));
+ }
+ batchComposerStatus.textContent='Checking the selected date through the existing ESPN fixture lookup…';
+ ledgerFind.click(); // Explicit user click, never automatic lookup or polling.
+});
+batchComposerFixture.addEventListener('change',()=>{
+ batchComposerFixtureChanged();
+ batchComposerStatus.textContent='Now choose one of the two participating teams.';
+});
+batchComposerTeam.addEventListener('change',()=>{
+ batchComposerClearRoster();
+ batchComposerStatus.textContent='Click Load ESPN team roster to enable searchable player names.';
+});
+batchComposerLoadRoster.addEventListener('click',async()=>{
+ const uid=auth.currentUser?.uid,session=ledgerSession;
+ const fixture=ledgerEvents.get(batchComposerFixture.value);
+ const team=batchComposerTeam.value,id=ESPN_NBA_TEAM_IDS[team];
+ if(!uid||ledgerBusy||ledgerPageBusy||!fixture||
+    fixture.start<=Date.now()+LEDGER_GRACE||
+    ![fixture.homeId,fixture.awayId].includes(id)){
+  batchComposerStatus.textContent='Choose a verified future fixture and participating team first.';return;
+ }
+ const epoch=++batchRosterEpoch,selectedFixtureId=fixture.id;
+ batchRosterNames.clear();batchRosterTeam='';
+ batchComposerPlayer.value='';batchComposerPlayers.replaceChildren();
+ batchComposerLoadRoster.disabled=true;
+ batchComposerStatus.textContent='Verifying '+team+' ESPN roster (reusing the existing 30-minute cache if present)…';
+ try{
+  const roster=await readEspnIdentity(RESEARCH_ESPN_BASE+'teams/'+encodeURIComponent(id)+'/roster');
+  if(uid!==auth.currentUser?.uid||session!==ledgerSession||
+     epoch!==batchRosterEpoch||batchComposerTeam.value!==team||
+     batchComposerFixture.value!==selectedFixtureId)return;
+  if((roster.team?.id&&String(roster.team.id)!==id)||
+     (roster.team?.displayName&&canonicalPlayerName(roster.team.displayName)!==canonicalPlayerName(team)))
+   throw Error('ESPN returned a different team. Roster rejected.');
+  const identities=new Map();
+  for(const a of (roster.athletes||[]).flatMap(x=>Array.isArray(x.items)?x.items:[x])){
+   const athleteId=String(a?.id||''),name=String(a?.displayName||'').trim(),key=canonicalPlayerName(name);
+   if(!/^\d+$/.test(athleteId)||!name||name.length>64||!key)continue;
+   if(identities.has(key)){
+    if(identities.get(key)?.id!==athleteId)identities.set(key,null); // ambiguous: reject
+   }else identities.set(key,{id:athleteId,name});
+  }
+  const verified=[...identities.values()].filter(Boolean).sort((a,b)=>a.name.localeCompare(b.name));
+  if(!verified.length)throw Error('No unique ESPN player identities available for this team.');
+  batchRosterNames=identities;batchRosterTeam=team;
+  for(const a of verified){
+   const option=document.createElement('option');option.value=a.name;
+   batchComposerPlayers.append(option);
+  }
+  batchComposerStatus.textContent=verified.length+' uniquely identified ESPN roster players. Search and select an exact name; no bookmaker check was made.';
+ }catch(e){
+  if(uid===auth.currentUser?.uid&&session===ledgerSession&&epoch===batchRosterEpoch)
+   batchComposerStatus.textContent='Roster unavailable: '+(e.message||String(e))+'. Nothing added.';
+ }finally{
+  if(uid===auth.currentUser?.uid&&session===ledgerSession&&epoch===batchRosterEpoch)
+   batchComposerLoadRoster.disabled=false;
+ }
+});
+batchComposerAdd.addEventListener('click',()=>{
+ if(!auth.currentUser||ledgerBusy||ledgerPageBusy||lrRun.disabled)return;
+ if(!batchComposerConfirmed.checked){
+  batchComposerStatus.textContent='Confirm that this Betano line and decimal price were genuinely observed.';
+  return;
+ }
+ if(batchRosterTeam!==batchComposerTeam.value){
+  batchComposerStatus.textContent='Load the chosen ESPN team roster first.';return;
+ }
+ try{
+  const athlete=batchRosterNames.get(canonicalPlayerName(batchComposerPlayer.value));
+  const draft=batchComposerCandidate({
+   player:batchComposerPlayer.value,team:batchComposerTeam.value,
+   market:batchComposerMarket.value,line:batchComposerLine.value.trim().replace(',','.'),
+   side:batchComposerSide.value,odds:batchComposerOdds.value.trim().replace(',','.')
+  },athlete,ledgerEvents.get(batchComposerFixture.value),batchOffers,ESPN_NBA_TEAM_IDS);
+  batchOffers.push(draft);batchComposerConfirmed.checked=false;
+  batchComposerPlayer.value='';batchComposerLine.value='';batchComposerOdds.value='';
+  batchComposerStatus.textContent='Added '+draft.player+' as an unsaved local draft. Current bookmaker price still needs reconfirmation before capture.';
+  batchOfferStatus.textContent=batchOffers.length+' local drafts prepared. None automatically researched or captured.';
+  batchRender();
+ }catch(e){batchComposerStatus.textContent='Not added: '+(e.message||String(e))}
+});
+
 function ledgerSameResearch(v){
  return !!v&&canonicalPlayerName(v.name)===canonicalPlayerName(lrPlayer.value.trim())&&
   v.team===lrTeam.value&&v.market===lrMarket.value&&
