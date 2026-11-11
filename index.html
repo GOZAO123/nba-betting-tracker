@@ -1695,6 +1695,105 @@ function batchResearchDraw(){
  table.append(body);batchResearchResults.append(table);
  batchReviewDraw();
 }
+function batchReviewDraw(){
+ batchReviewRows.replaceChildren();
+ if(!batchOffers.length){
+  batchReviewSummary.textContent='No local drafts to review. Nothing has been captured.';
+  return;
+ }
+ const now=Date.now(),table=researchCreate('table'),
+  head=researchCreate('thead'),header=researchCreate('tr');
+ for(const name of ['Offer and manual odds','ESPN research preview','Verified upcoming fixture',
+  'Manually rechecked quote','Review state','Actions'])header.append(researchCreate('th',name));
+ head.append(header);table.append(head);
+ const body=researchCreate('tbody');
+ let historical=0,linked=0,quoted=0,prepared=0;
+ for(const [i,item] of batchOffers.entries()){
+  const preview=batchResearchPreview.get(item.key),
+   fixture=item.eventId?ledgerEvents.get(item.eventId):null,
+   recheck=batchQuoteRechecks.get(item.key),
+   result=batchReviewAssess(item,preview,fixture,recheck,ESPN_NBA_TEAM_IDS,now,LEDGER_GRACE);
+  if(result.research)historical++;
+  if(result.fixtureValid)linked++;
+  if(result.quoteValid)quoted++;
+  if(result.preparedForIndividual)prepared++;
+  const row=researchCreate('tr');
+  row.append(researchCreate('td',item.player+' · '+item.market+' '+item.line+
+   ' '+item.side+' @ '+Number(item.odds).toFixed(2)+' (manual)'));
+  const research=researchCreate('td');
+  research.append(researchCreate('strong',result.research?
+   (100*preview.estimate).toFixed(1)+'% experimental · n='+preview.sample12:
+   preview?.status==='insufficient'?'Insufficient ESPN sample':
+   preview?.status==='error'?'ESPN verification error':'Not researched / invalid'));
+  if(preview?.status==='error'||preview?.status==='insufficient')
+   research.append(researchCreate('span',' · '+(preview.message||'No score'),'batch-review-warn'));
+  if(result.research)research.append(researchCreate('span',
+   ' Historical research preview only; fresh individual research required.'));
+  row.append(research);
+  const fixtureCell=researchCreate('td',result.fixtureValid?
+   fixture.away+' @ '+fixture.home+' · '+ledgerLisbonTime(fixture.start):
+   'Missing, changed or too near tipoff. Verify upcoming ESPN fixture.');
+  if(!result.fixtureValid)fixtureCell.classList.add('batch-review-warn');
+  row.append(fixtureCell);
+  const quote=researchCreate('td');
+  const reviewedAt=recheck&&Number.isFinite(recheck.at)?
+   new Intl.DateTimeFormat('en-GB',{
+    timeZone:'Europe/Lisbon',hour:'2-digit',minute:'2-digit',hour12:false
+   }).format(new Date(recheck.at)):null;
+  quote.append(researchCreate('strong',result.quoteValid?
+   'Rechecked '+reviewedAt+' Lisbon · user acknowledgement only':
+   reviewedAt?'Recheck expired or draft changed':'Not recently rechecked'));
+  quote.append(researchCreate('span',
+   ' This is not independently verified Betano availability.'));
+  row.append(quote);
+  const status=researchCreate('td',null,'batch-review-status');
+  const heading=researchCreate('strong',result.preparedForIndividual?
+   'Prepared for individual verification':'Review incomplete',
+   result.preparedForIndividual?'batch-review-good':'batch-review-warn');
+  status.append(heading,researchCreate('span',
+   result.preparedForIndividual?
+    'Must still rerun individual ESPN research and approve secure backend capture.':
+    result.reasons.join('; ')));
+  row.append(status);
+  const actions=researchCreate('td');
+  const check=researchCreate('button','Recheck price','mini');
+  check.type='button';check.disabled=batchResearchBusy||ledgerBusy||ledgerPageBusy;
+  check.addEventListener('click',()=>{
+   if(!auth.currentUser||batchResearchBusy||ledgerBusy||ledgerPageBusy||lrRun.disabled)return;
+   if(!batchOffers.includes(item))return;
+   if(!confirm('Confirm you just checked Betano and this EXACT current quote is still available: '+
+     item.player+' · '+item.market+' '+item.line+' '+item.side+
+     ' @ '+Number(item.odds).toFixed(2)+
+     '. This only marks a temporary manual recheck, NOT a bookmaker verification or Firebase capture.'))return;
+   batchQuoteRechecks.set(item.key,{signature:batchReviewSignature(item),at:Date.now()});
+   batchReviewDraw();
+  });
+  const single=researchCreate('button','Use for research','mini');
+  single.type='button';single.disabled=batchResearchBusy||ledgerBusy||ledgerPageBusy;
+  single.addEventListener('click',()=>batchSelectDraft(item,i));
+  actions.append(check,single);row.append(actions);body.append(row);
+ }
+ table.append(body);batchReviewRows.append(table);
+ batchReviewSummary.textContent=batchOffers.length+' local offers · '+historical+
+  ' ESPN historical previews · '+linked+' matching future fixtures · '+quoted+
+  ' recently user-rechecked quotes · '+prepared+
+  ' prepared for INDIVIDUAL verification. Zero approved secure captures. '+
+  'No Firebase writes or OddsPapi calls; statuses are reassessed when you interact.';
+}
+function batchSelectDraft(item,i){
+ if(!auth.currentUser||ledgerBusy||ledgerPageBusy||lrRun.disabled||batchResearchBusy)return;
+ if(!batchOffers.includes(item))return;
+ batchActiveKey=item.key;
+ lrPlayer.value=item.player;lrTeam.value=item.team;lrMarket.value=item.market;
+ lrLine.value=String(item.line);lrSide.value=item.side;lrOdds.value=String(item.odds);
+ if(item.eventId&&ledgerEvents.has(item.eventId))ledgerFixture.value=item.eventId;
+ lrQuoteContext=null;lrLatestResearch=null;lrResults.replaceChildren();
+ ledgerQuoteConfirmed.checked=false;
+ lrStatus.textContent='Local draft selected. Reconfirm the actual Betano quote and run fresh individual ESPN research within five minutes before trusted capture.';
+ batchOfferStatus.textContent='Row '+(i+1)+' copied for individual verification. No API or Firebase request made.';
+ batchRender();
+ lrPlayer.scrollIntoView({behavior:'smooth',block:'center'});
+}
 function batchReset(){
  batchOffers=[];batchActiveKey=null;batchOfferInput.value='';batchOfferConfirmed.checked=false;
  batchOfferRows.replaceChildren();batchComposerReset();batchResearchReset();
@@ -1716,19 +1815,7 @@ function batchRender(){
     item.fixtureLabel+' · '+ledgerLisbonTime(item.eventStartMs)+' · ESPN fixture (not bookmaker verified)'));
   const select=researchCreate('button','Use for research','mini');
   select.type='button';
-  select.addEventListener('click',()=>{
-   if(!auth.currentUser||ledgerBusy||ledgerPageBusy||lrRun.disabled||batchResearchBusy)return;
-   batchActiveKey=item.key;
-   lrPlayer.value=item.player;lrTeam.value=item.team;lrMarket.value=item.market;
-   lrLine.value=String(item.line);lrSide.value=item.side;lrOdds.value=String(item.odds);
-   if(item.eventId&&ledgerEvents.has(item.eventId))ledgerFixture.value=item.eventId;
-   lrQuoteContext=null;lrLatestResearch=null;lrResults.replaceChildren();
-   ledgerQuoteConfirmed.checked=false;
-   lrStatus.textContent='Local quote draft copied. Recheck Betano price, then click Research this line (ESPN only). A new player identity/history check is required before saving.';
-   batchOfferStatus.textContent='Row '+(i+1)+' copied to Actual line research. No API or Firebase request made.';
-   batchRender();
-   lrPlayer.scrollIntoView({behavior:'smooth',block:'center'});
-  });
+  select.addEventListener('click',()=>batchSelectDraft(item,i));
   const edit=researchCreate('button','Edit odds','mini');
   edit.type='button';
   edit.addEventListener('click',()=>{
@@ -1779,6 +1866,7 @@ function batchRender(){
   });
   row.append(description,select,edit,remove);batchOfferRows.append(row);
  }
+ batchReviewDraw();
 }
 batchOfferPrepare.addEventListener('click',()=>{
  if(!auth.currentUser||ledgerBusy||ledgerPageBusy||lrRun.disabled||batchResearchBusy)return;
