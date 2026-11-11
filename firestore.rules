@@ -1,0 +1,29 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isOwner(userId) {
+      return request.auth != null && request.auth.uid == userId;
+    }
+
+    // NBA Betting Tracker checklist. The signed-in owner may keep syncing
+    // this document from browser or Android as before.
+    match /users/{userId}/data/checklist {
+      allow read, write: if isOwner(userId);
+    }
+
+    // Prospective NBA player-prop research. Browsers may read their own
+    // ledger, but can NEVER create, edit, or delete these records directly.
+    // The authorized Cloud Functions use the Admin SDK (server IAM) for
+    // capture and ESPN Final settlement; they do not require a write rule.
+    match /users/{userId}/propResearchLedger/{recordId} {
+      allow read: if isOwner(userId);
+      allow create, update, delete: if false;
+    }
+
+    // Everything else is denied by default.
+    // Do NOT re-add a permissive recursive /users/{userId}/{document=**}
+    // write rule: Firestore ORs overlapping allow permissions.
+  }
+}
