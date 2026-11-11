@@ -335,6 +335,22 @@ main{width:100%;min-width:0}
 .batch-research-table th:first-child,.batch-research-table td:first-child{white-space:normal;min-width:130px}
 .batch-research-table .batch-research-error{color:#ffc999;white-space:normal;overflow-wrap:anywhere;min-width:170px}
 @media(max-width:700px){.batch-research-actions button{width:100%}}
+
+/* Update 35.0E: local-only pre-capture review, not a server capture authorization. */
+.batch-review-panel{border:1px solid #385874;border-radius:11px;padding:12px;min-width:0}
+.batch-review-panel>summary{font-weight:700;font-size:1rem;min-height:30px}
+.batch-review-panel[open]>summary{margin-bottom:10px}
+.batch-review-table{max-width:100%;width:100%;overflow-x:auto;overscroll-behavior-x:contain}
+.batch-review-table table{min-width:760px;font-size:.81rem}
+.batch-review-table th:first-child,.batch-review-table td:first-child{min-width:150px;white-space:normal;overflow-wrap:anywhere}
+.batch-review-table td{vertical-align:top;white-space:normal;overflow-wrap:anywhere}
+.batch-review-table td.batch-review-status{min-width:150px}
+.batch-review-table td.batch-review-status strong{display:block}
+.batch-review-table td.batch-review-status span{display:block;margin-top:5px;font-size:.75rem;color:#a9c6da}
+.batch-review-table button{min-width:135px;white-space:normal}
+.batch-review-good{color:#7ce0be}
+.batch-review-warn{color:#ffc58e}
+.batch-review-metrics{font-size:.86rem;margin:9px 0}
 </style></head><body><main><div class="bar"><div><h1>🏀 NBA Betting Tracker</h1><p>One player, one check — synced across devices</p></div><div class="header-actions"><button id="layoutModeToggle" type="button" class="mini" aria-label="Switch between wide and mobile layouts">📱 Mobile view</button><button id="updateAppButton" type="button" class="mini" title="Load the newest app version from GitHub Pages">↻ Update app</button><button id="signout" hidden>Sign out</button></div></div><section class="panel" id="login"><h2>Sign in</h2><p>Use the same Google account on Android and PC to see the same checklist.</p><button class="primary" id="signin">Continue with Google</button><p class="muted" id="loginmsg"></p></section><div id="app"><nav class="tabs" aria-label="App sections"><button type="button" data-tab="scanner" aria-selected="true">🤖 AI Scanner</button><button type="button" data-tab="games" aria-selected="false">🏀 NBA Games</button><button type="button" data-tab="analyzer" aria-selected="false">📊 Props Analyzer</button><button type="button" data-tab="checklist" aria-selected="false">✅ Checklist</button></nav><section id="scannerTab" class="panel scanner-panel">
  <header class="scanner-hero"><div><span class="scanner-eyebrow">NBA ANALYTICS · BETANO PT</span><h2>🤖 AI Scanner</h2><p class="muted">Your workspace for NBA player-prop research.</p></div><span class="scanner-badge">● Manual mode</span></header>
  <div class="scanner-overview" aria-label="Scanner overview">
@@ -411,6 +427,13 @@ main{width:100%;min-width:0}
    </div>
    <p id="batchResearchStatus" class="muted" role="status">Prepare at least one genuine local offer, then start the bounded research preview.</p>
    <div id="batchResearchResults" class="batch-research-table" aria-label="Descriptive batch ESPN research results"></div>
+   <details id="batchCaptureReview" class="batch-review-panel">
+    <summary>🛡️ Review batch before individual secure capture</summary>
+    <p class="muted notice">This is a local preparation checklist, NOT a capture permission. Examine the ESPN preview, fixture, and manually observed Betano price separately. Rechecking a quote below records only your own temporary acknowledgement, not independent bookmaker verification.</p>
+    <p id="batchReviewSummary" class="batch-review-metrics muted" role="status">No drafts to review. Add genuine observations first.</p>
+    <div id="batchReviewRows" class="batch-review-table" aria-label="Per-offer pre-capture review table"></div>
+    <p class="warning notice">Even a fully reviewed row is NOT eligible for automatic saving. You must still click Use for research, rerun the exact individual ESPN research within five minutes, choose the verified upcoming fixture, reconfirm the current line and odds and explicitly save through the trusted backend. No batch Firebase writes exist.</p>
+   </details>
    <p class="warning notice">Batch results are temporary ESPN-only exploratory estimates, NOT verified sportsbook odds, calibrated probabilities, betting picks or saved research. A result never authorizes cloud capture: each prospective observation still requires fresh individual Actual line research, a verified ESPN fixture and explicit trusted backend confirmation.</p>
    <p class="warning notice">All offers remain temporary local drafts and disappear on refresh or sign-out. Searchable players are checked against ESPN's team roster, not a verified Betano feed. For each offer, still run Actual line research, choose the verified upcoming fixture and reconfirm the current bookmaker price before separate trusted backend capture. Keep track of rejected/unavailable quotes to avoid selection bias.</p>
   </details>
@@ -1588,26 +1611,62 @@ function batchResearchEvaluate(item,games,cutoff=Date.now()){
 }
 // Update 35.0D pure batch research END
 
+// Update 35.0E: pure, conservative pre-capture review of in-memory drafts.
+// IMPORTANT: this is never a backend permission, settlement or capture instruction.
+function batchReviewSignature(item){
+ return JSON.stringify([item?.player,item?.team,item?.market,item?.line,
+  item?.side,item?.odds,item?.eventId||null,item?.eventStartMs??null]);
+}
+function batchReviewAssess(item,preview,fixture,recheck,teams,now=Date.now(),grace=300000){
+ const id=teams[item?.team],signature=batchReviewSignature(item);
+ const research=preview?.status==='ready'&&Number.isFinite(preview.estimate)&&
+  preview.estimate>=0&&preview.estimate<=1&&preview.sample12>=12&&
+  Number.isFinite(preview.asOf)&&preview.asOf<=now;
+ const fixtureValid=Boolean(fixture&&item?.eventId&&fixture.id===item.eventId&&
+  Number.isFinite(item.eventStartMs)&&fixture.start===item.eventStartMs&&
+  Number.isFinite(fixture.start)&&fixture.start>now+grace&&
+  [fixture.homeId,fixture.awayId].includes(id));
+ const quoteValid=Boolean(Number.isFinite(item?.odds)&&
+  recheck?.signature===signature&&Number.isFinite(recheck.at)&&
+  recheck.at<=now&&now-recheck.at<=5*60000);
+ const reasons=[];
+ if(!research)reasons.push(!preview?'Run batch ESPN research':
+  preview.status==='insufficient'?'Insufficient verified ESPN history':
+  preview.status==='error'?'ESPN identity or history error':
+  'Rerun ESPN research preview');
+ if(!fixtureValid)reasons.push('Verify an upcoming ESPN fixture for this team');
+ if(!quoteValid)reasons.push('Recheck the exact current Betano line and price');
+ return {research,fixtureValid,quoteValid,
+  preparedForIndividual:reasons.length===0,
+  reasons,needsIndividualResearch:true,captureAuthorized:false};
+}
+// Update 35.0E pure review END
+
 const batchResearchRun=document.getElementById('batchResearchRun'),
  batchResearchStatus=document.getElementById('batchResearchStatus'),
  batchResearchResults=document.getElementById('batchResearchResults');
 let batchResearchBusy=false,batchResearchEpoch=0,batchResearchPreview=new Map();
+const batchReviewSummary=document.getElementById('batchReviewSummary'),
+ batchReviewRows=document.getElementById('batchReviewRows'),
+ batchCaptureReview=document.getElementById('batchCaptureReview');
+let batchQuoteRechecks=new Map();
 function batchResearchInvalidate(message='Draft list changed. Research batch again when ready.'){
  batchResearchEpoch++;
  batchResearchPreview.clear();batchResearchResults.replaceChildren();
+ batchQuoteRechecks.clear();batchReviewDraw();
  batchResearchRun.disabled=batchResearchBusy||!batchOffers.length;
  batchResearchStatus.textContent=message;
 }
 function batchResearchReset(){
  batchResearchEpoch++;batchResearchBusy=false;batchResearchPreview.clear();
- batchResearchResults.replaceChildren();
+ batchQuoteRechecks.clear();batchResearchResults.replaceChildren();batchReviewDraw();
  batchResearchRun.disabled=true;
  batchResearchRun.textContent='Research entire batch (ESPN only)';
  batchResearchStatus.textContent='Prepare genuine local drafts, then run the ESPN-only preview. Nothing saved.';
 }
 function batchResearchDraw(){
  batchResearchResults.replaceChildren();
- if(!batchResearchPreview.size)return;
+ if(!batchResearchPreview.size){batchReviewDraw();return;}
  const table=researchCreate('table'),head=researchCreate('thead'),hr=researchCreate('tr');
  for(const title of ['Player · prop','ESPN status','Past games','Last 12 side hits','Last 24 side hits',
   'Unvalidated estimate (last 12)','ESPN notes']){
@@ -1634,6 +1693,107 @@ function batchResearchDraw(){
   body.append(tr);
  }
  table.append(body);batchResearchResults.append(table);
+ batchReviewDraw();
+}
+function batchReviewDraw(){
+ batchReviewRows.replaceChildren();
+ if(!batchOffers.length){
+  batchReviewSummary.textContent='No local drafts to review. Nothing has been captured.';
+  return;
+ }
+ const now=Date.now(),table=researchCreate('table'),
+  head=researchCreate('thead'),header=researchCreate('tr');
+ for(const name of ['Offer and manual odds','ESPN research preview','Verified upcoming fixture',
+  'Manually rechecked quote','Review state','Actions'])header.append(researchCreate('th',name));
+ head.append(header);table.append(head);
+ const body=researchCreate('tbody');
+ let historical=0,linked=0,quoted=0,prepared=0;
+ for(const [i,item] of batchOffers.entries()){
+  const preview=batchResearchPreview.get(item.key),
+   fixture=item.eventId?ledgerEvents.get(item.eventId):null,
+   recheck=batchQuoteRechecks.get(item.key),
+   result=batchReviewAssess(item,preview,fixture,recheck,ESPN_NBA_TEAM_IDS,now,LEDGER_GRACE);
+  if(result.research)historical++;
+  if(result.fixtureValid)linked++;
+  if(result.quoteValid)quoted++;
+  if(result.preparedForIndividual)prepared++;
+  const row=researchCreate('tr');
+  row.append(researchCreate('td',item.player+' · '+item.market+' '+item.line+
+   ' '+item.side+' @ '+Number(item.odds).toFixed(2)+' (manual)'));
+  const research=researchCreate('td');
+  research.append(researchCreate('strong',result.research?
+   (100*preview.estimate).toFixed(1)+'% experimental · n='+preview.sample12:
+   preview?.status==='insufficient'?'Insufficient ESPN sample':
+   preview?.status==='error'?'ESPN verification error':'Not researched / invalid'));
+  if(preview?.status==='error'||preview?.status==='insufficient')
+   research.append(researchCreate('span',' · '+(preview.message||'No score'),'batch-review-warn'));
+  if(result.research)research.append(researchCreate('span',
+   ' Historical research preview only; fresh individual research required.'));
+  row.append(research);
+  const fixtureCell=researchCreate('td',result.fixtureValid?
+   fixture.away+' @ '+fixture.home+' · '+ledgerLisbonTime(fixture.start):
+   'Missing, changed or too near tipoff. Verify upcoming ESPN fixture.');
+  if(!result.fixtureValid)fixtureCell.classList.add('batch-review-warn');
+  row.append(fixtureCell);
+  const quote=researchCreate('td');
+  const reviewedAt=recheck&&Number.isFinite(recheck.at)?
+   new Intl.DateTimeFormat('en-GB',{
+    timeZone:'Europe/Lisbon',hour:'2-digit',minute:'2-digit',hour12:false
+   }).format(new Date(recheck.at)):null;
+  quote.append(researchCreate('strong',result.quoteValid?
+   'Rechecked '+reviewedAt+' Lisbon · user acknowledgement only':
+   reviewedAt?'Recheck expired or draft changed':'Not recently rechecked'));
+  quote.append(researchCreate('span',
+   ' This is not independently verified Betano availability.'));
+  row.append(quote);
+  const status=researchCreate('td',null,'batch-review-status');
+  const heading=researchCreate('strong',result.preparedForIndividual?
+   'Prepared for individual verification':'Review incomplete',
+   result.preparedForIndividual?'batch-review-good':'batch-review-warn');
+  status.append(heading,researchCreate('span',
+   result.preparedForIndividual?
+    'Must still rerun individual ESPN research and approve secure backend capture.':
+    result.reasons.join('; ')));
+  row.append(status);
+  const actions=researchCreate('td');
+  const check=researchCreate('button','Recheck price','mini');
+  check.type='button';check.disabled=batchResearchBusy||ledgerBusy||ledgerPageBusy;
+  check.addEventListener('click',()=>{
+   if(!auth.currentUser||batchResearchBusy||ledgerBusy||ledgerPageBusy||lrRun.disabled)return;
+   if(!batchOffers.includes(item))return;
+   if(!confirm('Confirm you just checked Betano and this EXACT current quote is still available: '+
+     item.player+' · '+item.market+' '+item.line+' '+item.side+
+     ' @ '+Number(item.odds).toFixed(2)+
+     '. This only marks a temporary manual recheck, NOT a bookmaker verification or Firebase capture.'))return;
+   batchQuoteRechecks.set(item.key,{signature:batchReviewSignature(item),at:Date.now()});
+   batchReviewDraw();
+  });
+  const single=researchCreate('button','Use for research','mini');
+  single.type='button';single.disabled=batchResearchBusy||ledgerBusy||ledgerPageBusy;
+  single.addEventListener('click',()=>batchSelectDraft(item,i));
+  actions.append(check,single);row.append(actions);body.append(row);
+ }
+ table.append(body);batchReviewRows.append(table);
+ batchReviewSummary.textContent=batchOffers.length+' local offers · '+historical+
+  ' ESPN historical previews · '+linked+' matching future fixtures · '+quoted+
+  ' recently user-rechecked quotes · '+prepared+
+  ' prepared for INDIVIDUAL verification. Zero approved secure captures. '+
+  'No Firebase writes or OddsPapi calls; statuses are reassessed when you interact.';
+}
+function batchSelectDraft(item,i){
+ if(!auth.currentUser||ledgerBusy||ledgerPageBusy||lrRun.disabled||batchResearchBusy)return;
+ if(!batchOffers.includes(item))return;
+ batchActiveKey=item.key;
+ lrPlayer.value=item.player;lrTeam.value=item.team;lrMarket.value=item.market;
+ lrLine.value=String(item.line);lrSide.value=item.side;lrOdds.value=String(item.odds);
+ if(item.eventId&&ledgerEvents.has(item.eventId))ledgerFixture.value=item.eventId;
+ else ledgerFixture.value=''; // Never carry over another player's previously selected event.
+ lrQuoteContext=null;lrLatestResearch=null;lrResults.replaceChildren();
+ ledgerQuoteConfirmed.checked=false;
+ lrStatus.textContent='Local draft selected. Reconfirm the actual Betano quote and run fresh individual ESPN research within five minutes before trusted capture.';
+ batchOfferStatus.textContent='Row '+(i+1)+' copied for individual verification. No API or Firebase request made.';
+ batchRender();
+ lrPlayer.scrollIntoView({behavior:'smooth',block:'center'});
 }
 function batchReset(){
  batchOffers=[];batchActiveKey=null;batchOfferInput.value='';batchOfferConfirmed.checked=false;
@@ -1656,19 +1816,7 @@ function batchRender(){
     item.fixtureLabel+' · '+ledgerLisbonTime(item.eventStartMs)+' · ESPN fixture (not bookmaker verified)'));
   const select=researchCreate('button','Use for research','mini');
   select.type='button';
-  select.addEventListener('click',()=>{
-   if(!auth.currentUser||ledgerBusy||ledgerPageBusy||lrRun.disabled||batchResearchBusy)return;
-   batchActiveKey=item.key;
-   lrPlayer.value=item.player;lrTeam.value=item.team;lrMarket.value=item.market;
-   lrLine.value=String(item.line);lrSide.value=item.side;lrOdds.value=String(item.odds);
-   if(item.eventId&&ledgerEvents.has(item.eventId))ledgerFixture.value=item.eventId;
-   lrQuoteContext=null;lrLatestResearch=null;lrResults.replaceChildren();
-   ledgerQuoteConfirmed.checked=false;
-   lrStatus.textContent='Local quote draft copied. Recheck Betano price, then click Research this line (ESPN only). A new player identity/history check is required before saving.';
-   batchOfferStatus.textContent='Row '+(i+1)+' copied to Actual line research. No API or Firebase request made.';
-   batchRender();
-   lrPlayer.scrollIntoView({behavior:'smooth',block:'center'});
-  });
+  select.addEventListener('click',()=>batchSelectDraft(item,i));
   const edit=researchCreate('button','Edit odds','mini');
   edit.type='button';
   edit.addEventListener('click',()=>{
@@ -1719,6 +1867,7 @@ function batchRender(){
   });
   row.append(description,select,edit,remove);batchOfferRows.append(row);
  }
+ batchReviewDraw();
 }
 batchOfferPrepare.addEventListener('click',()=>{
  if(!auth.currentUser||ledgerBusy||ledgerPageBusy||lrRun.disabled||batchResearchBusy)return;
@@ -1761,7 +1910,7 @@ batchResearchRun.addEventListener('click',async()=>{
   batchResearchEpoch===run;
  batchResearchBusy=true;batchResearchRun.disabled=true;
  batchResearchRun.textContent='Researching ESPN batch…';
- batchResearchPreview.clear();batchResearchResults.replaceChildren();
+ batchResearchPreview.clear();batchResearchResults.replaceChildren();batchReviewDraw();
  try{
   const rosters=new Map();
   for(const [idx,team] of plan.teams.entries()){
@@ -1845,7 +1994,7 @@ batchResearchRun.addEventListener('click',async()=>{
    }catch(error){
     failed++;result={status:'error',message:error.message||String(error)};
    }
-   preview.set(item.key,result);
+   preview.set(item.key,{...result,asOf:cutoff});
   }
   if(!stillCurrent())return;
   batchResearchPreview=preview;
