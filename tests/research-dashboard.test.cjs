@@ -557,3 +557,147 @@ test("batch output is purely descriptive and original capture still requires fre
  assert.match(html,/Date\.now\(\)-\(snap\?\.at\|\|0\)>5\*60000/);
  assert.match(html,/confirmedObservedQuote:true/);
 });
+
+
+// Update 35.0E: all offer and fixture values below are synthetic offline fixtures.
+const {batchReviewSignature,batchReviewAssess}=(()=>{
+ const a=html.indexOf("// Update 35.0E: pure, conservative pre-capture review");
+ const b=html.indexOf("// Update 35.0E pure review END",a);
+ assert.ok(a>0&&b>a,"35.0E pure review helpers exist");
+ return new Function(html.slice(a,b)+"\nreturn {batchReviewSignature,batchReviewAssess};")();
+})();
+const reviewNow=Date.UTC(2026,10,11,20,0);
+const reviewFixture={id:"401234567",start:reviewNow+90*60000,homeId:"11",awayId:"27",
+ home:"Indiana Pacers",away:"Washington Wizards"};
+const reviewDraft={
+ key:"synthetic-1",player:"Example Player",team:"Indiana Pacers",
+ market:"PTS",line:16.5,side:"Over",odds:1.82,
+ eventId:reviewFixture.id,eventStartMs:reviewFixture.start
+};
+const reviewPreview={status:"ready",estimate:0.47,sample12:12,asOf:reviewNow-2*60000};
+const reviewTeams={"Indiana Pacers":"11","Washington Wizards":"27"};
+const quoteRecheck=(item,at=reviewNow-60000)=>({signature:batchReviewSignature(item),at});
+
+test("35.0E review has no capture authorization, even after all local checks",()=>{
+ const result=batchReviewAssess(reviewDraft,reviewPreview,reviewFixture,
+  quoteRecheck(reviewDraft),reviewTeams,reviewNow,300000);
+ assert.equal(result.research,true);
+ assert.equal(result.fixtureValid,true);
+ assert.equal(result.quoteValid,true);
+ assert.equal(result.preparedForIndividual,true);
+ assert.equal(result.needsIndividualResearch,true);
+ assert.equal(result.captureAuthorized,false);
+ assert.deepEqual(result.reasons,[]);
+});
+
+test("35.0E reviewer requires a verified matching future fixture, never just a staged ID",()=>{
+ const mismatch={...reviewFixture,id:"999"};
+ const wrongTeam={...reviewFixture,homeId:"2",awayId:"18"};
+ const tooNear={...reviewFixture,start:reviewNow+200000};
+ const cases=[null,mismatch,wrongTeam,tooNear];
+ for(const fixture of cases){
+  const actual=batchReviewAssess(reviewDraft,reviewPreview,fixture,
+   quoteRecheck(reviewDraft),reviewTeams,reviewNow,300000);
+  assert.equal(actual.fixtureValid,false);
+  assert.equal(actual.preparedForIndividual,false);
+  assert.ok(actual.reasons.some(x=>/fixture/.test(x)));
+ }
+});
+
+test("35.0E quote recheck expires after five minutes and binds exact offer fields",()=>{
+ const stale=quoteRecheck(reviewDraft,reviewNow-300001);
+ assert.equal(batchReviewAssess(reviewDraft,reviewPreview,reviewFixture,stale,
+  reviewTeams,reviewNow).quoteValid,false);
+ const future=quoteRecheck(reviewDraft,reviewNow+1);
+ assert.equal(batchReviewAssess(reviewDraft,reviewPreview,reviewFixture,future,
+  reviewTeams,reviewNow).quoteValid,false);
+ const changed={...reviewDraft,odds:1.85};
+ assert.equal(batchReviewAssess(changed,reviewPreview,reviewFixture,
+  quoteRecheck(reviewDraft),reviewTeams,reviewNow).quoteValid,false);
+ assert.equal(batchReviewAssess(reviewDraft,reviewPreview,reviewFixture,
+  quoteRecheck(reviewDraft,reviewNow-300000),reviewTeams,reviewNow).quoteValid,true);
+ assert.notEqual(batchReviewSignature(reviewDraft),batchReviewSignature(changed));
+});
+
+test("35.0E incomplete and failed ESPN research never pass review",()=>{
+ for(const preview of [null,
+  {status:"insufficient",games:11},
+  {status:"error",message:"Player identity mismatch"},
+  {status:"ready",estimate:NaN,sample12:12,asOf:reviewNow},
+  {status:"ready",estimate:0.7,sample12:11,asOf:reviewNow},
+  {status:"ready",estimate:0.7,sample12:12,asOf:reviewNow+1}]){
+  const result=batchReviewAssess(reviewDraft,preview,reviewFixture,
+   quoteRecheck(reviewDraft),reviewTeams,reviewNow);
+  assert.equal(result.research,false);
+  assert.equal(result.captureAuthorized,false);
+  assert.equal(result.preparedForIndividual,false);
+  assert.ok(result.reasons.length>0);
+ }
+});
+
+test("35.0E unlinked pasted drafts remain incomplete even with ESPN and quote review",()=>{
+ const item={...reviewDraft,eventId:undefined,eventStartMs:undefined};
+ const result=batchReviewAssess(item,reviewPreview,undefined,
+  quoteRecheck(item),reviewTeams,reviewNow);
+ assert.equal(result.quoteValid,true);
+ assert.equal(result.research,true);
+ assert.equal(result.fixtureValid,false);
+ assert.equal(result.preparedForIndividual,false);
+});
+
+test("35.0E review UI uses safe DOM text, explicit quote recheck and local-only state",()=>{
+ for(const id of ["batchCaptureReview","batchReviewSummary","batchReviewRows"])
+  assert.equal([...html.matchAll(new RegExp('id="'+id+'"','g'))].length,1);
+ const begin=html.indexOf("function batchReviewDraw(){");
+ const end=html.indexOf("function batchReset(){",begin);
+ assert.ok(begin>0&&end>begin);
+ const block=html.slice(begin,end);
+ assert.match(block,/batchReviewAssess\(/);
+ assert.match(block,/batchQuoteRechecks\.set\(item.key/);
+ assert.match(block,/confirm\('Confirm you just checked Betano/);
+ assert.match(block,/batchSelectDraft\(item,i\)/);
+ assert.match(block,/batchReviewSummary\.textContent/);
+ assert.doesNotMatch(block,/innerHTML|insertAdjacentHTML/);
+ assert.doesNotMatch(block,/httpsCallable|fetch\s*\(|getDocsFromServer|runTransaction|setDoc|setInterval/);
+ assert.match(html,/No batch Firebase writes exist/);
+});
+
+test("35.0E invalidates local review on edits, replacement, removal and sign-out",()=>{
+ const invalidate=html.slice(html.indexOf("function batchResearchInvalidate("),
+  html.indexOf("function batchResearchReset(",html.indexOf("function batchResearchInvalidate(")));
+ assert.match(invalidate,/batchQuoteRechecks\.clear\(\)/);
+ assert.match(invalidate,/batchReviewDraw\(\)/);
+ const reset=html.slice(html.indexOf("function batchResearchReset("),
+  html.indexOf("function batchResearchDraw(",html.indexOf("function batchResearchReset(")));
+ assert.match(reset,/batchQuoteRechecks\.clear\(\)/);
+ const resetAll=html.slice(html.indexOf("function batchReset(){"),
+  html.indexOf("function batchRender(){"));
+ assert.match(resetAll,/batchResearchReset\(\)/);
+ assert.match(html,/batchResearchInvalidate\('A draft price changed/);
+ assert.match(html,/batchResearchInvalidate\('New pasted drafts prepared/);
+ assert.match(html,/batchResearchInvalidate\('One draft removed/);
+ assert.match(html,/batchResearchInvalidate\('A new local offer was added/);
+});
+
+test("35.0E prevents previously chosen fixtures from leaking into another player's capture",()=>{
+ const a=html.indexOf("function batchSelectDraft(");
+ const b=html.indexOf("function batchReset(){",a);
+ const block=html.slice(a,b);
+ assert.match(block,/if\(item\.eventId&&ledgerEvents\.has\(item\.eventId\)\)ledgerFixture\.value=item\.eventId/);
+ assert.match(block,/else ledgerFixture\.value=''/);
+ assert.match(block,/lrQuoteContext=null;lrLatestResearch=null;lrResults\.replaceChildren\(\)/);
+ assert.match(block,/ledgerQuoteConfirmed\.checked=false/);
+ const backend=html.slice(html.indexOf("ledgerSave.addEventListener('click'"),
+  html.indexOf("// Update 35.0A:",html.indexOf("ledgerSave.addEventListener('click'")));
+ assert.match(backend,/Date\.now\(\)-\(snap\?\.at\|\|0\)>5\*60000/);
+ assert.match(backend,/confirmedObservedQuote:true/);
+ assert.match(backend,/httpsCallable\(oddsFunctions,'ledgerCaptureProspective'\)/);
+ assert.doesNotMatch(block,/httpsCallable|fetch\s*\(/);
+});
+
+test("35.0E batch preview retains as-of timestamp for conservative review",()=>{
+ assert.match(html,/preview\.set\(item\.key,\{\.\.\.result,asOf:cutoff\}\)/);
+ assert.match(html,/batchReviewDraw\(\)/);
+ assert.match(html,/preparedForIndividual/);
+ assert.match(html,/captureAuthorized:false/);
+});
