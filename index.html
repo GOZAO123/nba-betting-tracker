@@ -1706,7 +1706,10 @@ ledgerFind.addEventListener('click',async()=>{
   ledgerStatus.textContent=events.size+' upcoming regular-season fixtures · 1 ESPN request, zero OddsPapi calls.';
  }catch(err){
   if(session===ledgerSession)ledgerStatus.textContent='ESPN fixture lookup failed: '+(err.message||String(err));
- }finally{ledgerBusy=false;ledgerFind.disabled=false}
+ }finally{
+  if(session===ledgerSession)batchComposerSyncFixtures();
+  ledgerBusy=false;ledgerFind.disabled=false;
+ }
 });
 function ledgerSameResearch(v){
  return !!v&&canonicalPlayerName(v.name)===canonicalPlayerName(lrPlayer.value.trim())&&
