@@ -1523,6 +1523,9 @@ function batchRender(){
    researchCreate('span',item.market+' '+item.line+' '+item.side+
     ' @ '+String(item.odds)+' manually entered decimal odds'),
    researchCreate('span',item.key===batchActiveKey?'Selected for manual research':'Local draft · not saved'));
+  if(item.fixtureLabel&&Number.isFinite(item.eventStartMs))
+   description.append(researchCreate('span',
+    item.fixtureLabel+' · '+ledgerLisbonTime(item.eventStartMs)+' · ESPN fixture (not bookmaker verified)'));
   const select=researchCreate('button','Use for research','mini');
   select.type='button';
   select.addEventListener('click',()=>{
@@ -1727,7 +1730,8 @@ function batchComposerCandidate(fields,athlete,fixture,rows,teams,now=Date.now()
   throw Error(result.errors[0]||'Invalid player prop details.');
  const draft=result.rows[0];
  if(rows.some(r=>r.key===draft.key))throw Error('This player prop is already in the local batch.');
- return {...draft,eventId:fixture.id,eventStartMs:fixture.start,espnAthleteId:String(athlete.id)};
+ return {...draft,eventId:fixture.id,eventStartMs:fixture.start,
+  fixtureLabel:fixture.away+' @ '+fixture.home,espnAthleteId:String(athlete.id)};
 }
 // Update 35.0C pure offer validation END
 
