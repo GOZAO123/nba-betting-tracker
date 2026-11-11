@@ -316,11 +316,11 @@ main{width:100%;min-width:0}
   <div id="lineResearchResults" class="research-results"></div>
   <p class="warning">Research estimates here are UNVALIDATED for real bookmaker lines. No EV, staking guidance, automatic betting picks, or claims of a positive edge.</p>
  </div>
- <div class="scanner-workspace"><div class="scanner-section-head"><div><h3>📓 Prospective player-prop research ledger</h3><p class="muted">Save a manually observed Betano line, the ESPN-only research estimate and an upcoming verified fixture before tip-off; check the final result later. Nothing here places wagers.</p></div></div>
+ <div class="scanner-workspace"><div class="scanner-section-head"><div><h3>📓 Prospective player-prop research ledger</h3><p class="muted">Save manually observed Betano quotes and ESPN-only research through the trusted server before tip-off; verify final results through the server. Nothing places wagers.</p></div></div>
   <div class="row"><label for="ledgerDate">NBA fixture date (US Eastern):</label><input id="ledgerDate" type="date"><button id="ledgerFind" class="mini" type="button">Find upcoming fixtures (ESPN)</button></div>
   <div class="row"><label for="ledgerFixture">ESPN fixture:</label><select id="ledgerFixture" aria-label="Upcoming ESPN fixture" style="min-width:300px"><option value="">Load fixtures first</option></select></div>
   <div class="row"><label><input type="checkbox" id="ledgerQuoteConfirmed"> I actually observed this Betano line and price before tip-off (not a made-up test quote).</label></div>
-  <div class="row"><button id="ledgerSave" type="button" class="primary">Save research snapshot</button><button id="ledgerRefresh" class="mini" type="button">↻ Load my cloud ledger</button></div>
+  <div class="row"><button id="ledgerSave" type="button" class="primary">Save via trusted backend</button><button id="ledgerRefresh" class="mini" type="button">↻ Load my cloud ledger</button></div>
   <p id="ledgerStatus" class="muted" role="status">First run Actual line research above using the genuine line, side and decimal odds. Then choose an upcoming ESPN game and confirm your observed price. No automatic saving.</p>
   <div id="ledgerResults" class="research-results"></div>
   <details class="scanner-dev" id="ledgerDryRunPanel">
@@ -334,7 +334,7 @@ main{width:100%;min-width:0}
     <div id="ledgerTestResults" class="research-results"></div>
    </div>
   </details>
-  <p class="warning">Research only. These Firebase records are CLIENT-managed, not independently timestamp-audited or tamper-proof. Manual Betano quotes are NOT verified against the bookmaker. The model estimate is uncalibrated, not a betting recommendation or reliable EV.</p>
+  <p class="warning">Research only. New captures and settlements use trusted Firebase functions, but current Firestore owner-write rules STILL allow edits, so this ledger is not yet immutable or independently audited. Manually entered Betano prices and client-generated model estimates are NOT independently verified. No betting recommendations or reliable EV.</p>
  </div>
  <div class="scanner-workspace"><div class="scanner-section-head"><div><h3>🧪 Model laboratory · Walk-forward backtest</h3><p class="muted">Evaluate a simple statistical baseline on the completed NBA regular season. This does not use Betano prices or create betting picks.</p></div></div>
   <div class="row"><input id="btPlayer" type="text" placeholder="Player name, e.g. Jalen Brunson" aria-label="Player to backtest" style="min-width:230px"><select id="btTeam" aria-label="NBA team for backtest"><option value="">Choose NBA team</option></select><button id="btRun" type="button" class="primary">Backtest player (ESPN only)</button></div>
@@ -1493,8 +1493,8 @@ function ledgerState(row){
 function ledgerRef(uid,id){return doc(db,'users',uid,'propResearchLedger',id)}
 
 
-// Append-only in this app: one frozen quote per fixture/player/market/side/line.
-// Firestore security currently permits user edits outside the app: NOT audit-proof.
+// New captures and settlements use trusted Firebase functions; legacy entries
+// remain readable. Existing Firestore owner-write permissions need migration.
 ledgerSave.addEventListener('click',async()=>{
  const user=auth.currentUser,snap=lrLatestResearch,event=ledgerEvents.get(ledgerFixture.value);
  if(!user||ledgerBusy)return;
@@ -1519,43 +1519,29 @@ ledgerSave.addEventListener('click',async()=>{
  ledgerBusy=true;ledgerSave.disabled=true;
  const uid=user.uid,session=ledgerSession;
  try{
-  ledgerStatus.textContent='Rechecking the game and tip-off with ESPN…';
-  const day=ledgerNbaDay(new Date(event.start));
-  const board=await ledgerFetch(RESEARCH_ESPN_BASE+'scoreboard?dates='+day);
-  if(!Array.isArray(board?.events))throw Error('ESPN game not verifiable');
-  const checked=board.events.map(e=>ledgerEvent(e,day)).find(e=>e?.id===event.id);
-  if(!checked||checked.start!==event.start||checked.homeId!==event.homeId||
-     checked.awayId!==event.awayId)
-   throw Error('Fixture started or changed. Entry not saved.');
+  // Update 34.5B: future research records are created only by the server.
   if(auth.currentUser?.uid!==uid||session!==ledgerSession||
      !ledgerSameResearch(snap)||!ledgerQuoteConfirmed.checked||
-     Date.now()-snap.at>5*60000)throw Error('Account or inputs changed. Entry not saved.');
-  const recordId=[
-   event.id,snap.athleteId,snap.market,String(snap.line).replace('.','p'),snap.side
-  ].join('_');
-  if(!/^[a-zA-Z0-9_]{8,100}$/.test(recordId))throw Error('Invalid ESPN selection ID');
-  const p=snap.researched.w12.model,reference=ledgerRef(uid,recordId);
-  const entry={
-   schemaVersion:1,status:'pending',source:'manual_betano_unverified',
-   player:snap.name,athleteId:snap.athleteId,team:snap.team,teamId,
+     Date.now()-snap.at>5*60000)
+    throw Error('Account or research inputs changed. Entry not saved.');
+  ledgerStatus.textContent='Trusted server checking ESPN fixture, roster and quote receipt…';
+  const payload={
+   player:snap.name,team:snap.team,athleteId:String(snap.athleteId),
+   teamId:String(teamId),eventId:event.id,eventStartMs:event.start,
+   homeId:event.homeId,awayId:event.awayId,
    market:snap.market,line:snap.line,side:snap.side,odds:snap.odds,
-   eventId:event.id,eventStartMs:event.start,
-   home:event.home,away:event.away,homeId:event.homeId,awayId:event.awayId,
-   modelOver:p,modelSelected:snap.side==='Over'?p:1-p,
+   modelOver:snap.researched.w12.model,
    hits12:snap.researched.w12.hits,games12:12,
    hits24:snap.researched.w24?.hits??null,games24:snap.researched.w24?.n??null,
-   clientCapturedMs:Date.now(),capturedServerAt:serverTimestamp(),
-   settledAt:null,resultStat:null,resultWon:null,
-   disclaimer:'Experimental heuristic, not calibrated to bookmaker lines; manual unverified odds.'
+   confirmedObservedQuote:true
   };
-  await runTransaction(db,async tx=>{
-   if((await tx.get(reference)).exists())throw Error('This exact event/player/line/side is already recorded. First snapshot preserved.');
-   if(auth.currentUser?.uid!==uid||ledgerSession!==session)throw Error('Account changed');
-   tx.set(reference,entry);
-  },{maxAttempts:3});
+  const {data}=await httpsCallable(oddsFunctions,'ledgerCaptureProspective')(payload);
+  if(auth.currentUser?.uid!==uid||session!==ledgerSession)return;
+  if(data?.saved!==true||!Number.isFinite(data.serverCapturedMs))
+   throw Error('Trusted server did not confirm a capture receipt');
   if(auth.currentUser?.uid!==uid||session!==ledgerSession)return;
   ledgerQuoteConfirmed.checked=false;
-  ledgerStatus.textContent='Prospective research snapshot saved. Check Firebase server receipt in the cloud ledger. Zero OddsPapi calls.';
+  ledgerStatus.textContent='Trusted server confirmed the ESPN research snapshot and capture timestamp. Zero OddsPapi calls.';
   await ledgerLoad();
  }catch(err){
   if(auth.currentUser?.uid===uid&&session===ledgerSession)
@@ -1616,7 +1602,7 @@ function ledgerDraw(){
    Number(row.odds).toFixed(2)+' (manual)',
    Number.isFinite(row.modelSelected)?(100*row.modelSelected).toFixed(1)+'%':'—',
    Number.isFinite(row.capturedServerAt?.toMillis?.())
-    ?ledgerLisbonTime(row.capturedServerAt.toMillis()):'Server receipt not available',
+    ?ledgerLisbonTime(row.capturedServerAt.toMillis())+(row.capturedVia==='trusted_firebase_callable'?' · Backend':' · Legacy'):'Server receipt not available',
    state,state==='SETTLED'?row.resultStat+' · '+(row.resultWon?'Won':'Lost'):'—'
   ])tr.append(researchCreate('td',v));
   const buttonCell=researchCreate('td');
@@ -1721,26 +1707,12 @@ async function ledgerSettle(id){
  if(!confirm('Check ESPN final box score and save the verified research outcome? No OddsPapi requests or wagers.'))return;
  ledgerBusy=true;const uid=user.uid,session=ledgerSession;
  try{
-  ledgerStatus.textContent='Checking ESPN Final and player game statistics…';
-  const box=await ledgerFetch(RESEARCH_ESPN_BASE+'summary?event='+encodeURIComponent(row.eventId));
-  const final=ledgerExtractFinal(box,row);
-  if(auth.currentUser?.uid!==uid||session!==ledgerSession)throw Error('Signed-in account changed');
-  const reference=ledgerRef(uid,id);
-  await runTransaction(db,async tx=>{
-   const snap=await tx.get(reference);
-   if(!snap.exists())throw Error('Record no longer exists');
-   const saved=snap.data(),capture=saved.capturedServerAt?.toMillis?.();
-   if(!Number.isFinite(capture)||capture>=saved.eventStartMs-LEDGER_GRACE)
-    throw Error('Missing verified before-tipoff Firestore server receipt');
-   for(const key of ['eventId','eventStartMs','athleteId','teamId','market','line','side']){
-    if(saved[key]!==row[key])throw Error('Captured record changed; settlement rejected');
-   }
-   if(saved.status!=='pending')throw Error('Already settled or unavailable');
-   if(auth.currentUser?.uid!==uid||session!==ledgerSession)throw Error('Account changed');
-   tx.update(reference,{status:'settled',resultStat:final.resultStat,
-    resultWon:final.resultWon,settledAt:serverTimestamp(),
-    settlementSource:'ESPN Final box score, exact player/team/event'});
-  },{maxAttempts:3});
+  ledgerStatus.textContent='Trusted server verifying ESPN Final, event, athlete and player box score…';
+  const {data}=await httpsCallable(oddsFunctions,'ledgerSettleProspective')({recordId:id});
+  if(data?.settled!==true||!Number.isFinite(data.resultStat)||
+     typeof data.resultWon!=='boolean')
+   throw Error('Trusted server did not confirm settlement');
+  const final={resultStat:data.resultStat,resultWon:data.resultWon};
   if(auth.currentUser?.uid!==uid||session!==ledgerSession)return;
   ledgerStatus.textContent=row.player+' · '+row.market+' '+row.line+' '+row.side+
    ' · ESPN final '+final.resultStat+' → '+(final.resultWon?'Win':'Loss')+
