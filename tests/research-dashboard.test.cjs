@@ -197,7 +197,7 @@ test("paginator guards account changes, duplicate requests and leaves reads expl
  assert.match(block,/ledgerLoadMore\.addEventListener\('click'/);
  assert.match(block,/ledgerRefresh\.addEventListener\('click'/);
  assert.match(block,/if\(append\)constraints\.push\(startAfter\(ledgerLastDoc\)\)/);
- assert.match(block,/ledgerLastDoc=page\.docs\.at\(-1\)/);
+ assert.match(block,/ledgerLastDoc=page\.docs\.length\?page\.docs\[page\.docs\.length-1\]/);
  assert.doesNotMatch(block,/getDocs\s*\(|httpsCallable|fetch\s*\(/);
  const reset=html.slice(html.indexOf("function ledgerReset(){"),
   html.indexOf("ledgerDate.addEventListener('change'"));
