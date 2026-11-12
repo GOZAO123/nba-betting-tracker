@@ -1635,7 +1635,8 @@ function batchResearchEvaluate(item,games,cutoff=Date.now()){
 // IMPORTANT: this is never a backend permission, settlement or capture instruction.
 function batchReviewSignature(item){
  return JSON.stringify([item?.player,item?.team,item?.market,item?.line,
-  item?.side,item?.odds,item?.eventId||null,item?.eventStartMs??null]);
+  item?.side,item?.odds,item?.eventId||null,item?.eventStartMs??null,
+  item?.espnAthleteId||null]);
 }
 function batchReviewAssess(item,preview,fixture,recheck,teams,now=Date.now(),grace=300000){
  const id=teams[item?.team],signature=batchReviewSignature(item);
@@ -1721,6 +1722,36 @@ function batchCaptureAssess(item,stage,fixture,recheck,teams,now=Date.now(),grac
 }
 // Update 35.0F2 pure eligibility END
 
+function batchCaptureSelectedPlan(items,approvals,stages,rechecks,events,teams,
+ now=Date.now(),grace=300000){
+ const accepted=[],problems=[],ids=new Set(),uniqueEvents=new Set(),uniqueTeams=new Set();
+ for(const [i,item] of items.entries()){
+  if(approvals.get(item.key)!==batchReviewSignature(item))continue;
+  const stage=stages.get(item.key);
+  const checks=batchCaptureAssess(item,stage,events.get(item.eventId),
+   rechecks.get(item.key),teams,now,grace);
+  if(!checks.ready){
+   problems.push('Row '+(i+1)+': '+checks.reasons.join('; '));
+   continue;
+  }
+  const payload=stage.payload;
+  const id=[payload.eventId,payload.athleteId,payload.market,
+   String(payload.line).replace('.','p'),payload.side].join('_');
+  if(ids.has(id)){
+   problems.push('Row '+(i+1)+': duplicate prospective record identifier.');
+   continue;
+  }
+  ids.add(id);uniqueEvents.add(payload.eventId);uniqueTeams.add(payload.teamId);
+  accepted.push({...payload}); // snapshot only: never a backend call in 35.0F2
+ }
+ if(!accepted.length)problems.push('No currently approved, verified observations.');
+ if(accepted.length>20||uniqueEvents.size>12||uniqueTeams.size>12)
+  problems.push('Secure batch safety cap exceeded (20 records, 12 events, 12 teams).');
+ return {ready:!problems.length,count:accepted.length,items:accepted,problems};
+}
+// Update 35.0F2 pure selection END
+
+
 
 const batchResearchRun=document.getElementById('batchResearchRun'),
  batchResearchStatus=document.getElementById('batchResearchStatus'),
@@ -1792,15 +1823,17 @@ function batchReviewDraw(){
  batchReviewRows.replaceChildren();
  if(!batchOffers.length){
   batchReviewSummary.textContent='No local drafts to review. Nothing has been captured.';
+  batchCaptureDryRun.disabled=true;batchCaptureSubmit.disabled=true;
+  batchCaptureStatus.textContent='No local approvals; Firebase batch capture remains disabled.';
   return;
  }
  const now=Date.now(),table=researchCreate('table'),
   head=researchCreate('thead'),header=researchCreate('tr');
  for(const name of ['Offer and manual odds','ESPN research preview','Verified upcoming fixture',
-  'Manually rechecked quote','Review state','Actions'])header.append(researchCreate('th',name));
+  'Manually rechecked quote','Review state','Actions','Secure batch approval (local only)'])header.append(researchCreate('th',name));
  head.append(header);table.append(head);
  const body=researchCreate('tbody');
- let historical=0,linked=0,quoted=0,prepared=0;
+ let historical=0,linked=0,quoted=0,prepared=0,readyForBatch=0;
  for(const [i,item] of batchOffers.entries()){
   const preview=batchResearchPreview.get(item.key),
    fixture=item.eventId?ledgerEvents.get(item.eventId):null,
@@ -1865,13 +1898,57 @@ function batchReviewDraw(){
   const single=researchCreate('button','Use for research','mini');
   single.type='button';single.disabled=batchResearchBusy||ledgerBusy||ledgerPageBusy;
   single.addEventListener('click',()=>batchSelectDraft(item,i));
-  actions.append(check,single);row.append(actions);body.append(row);
+  actions.append(check,single);row.append(actions);
+  const eligibility=batchCaptureAssess(item,batchCaptureStages.get(item.key),
+   fixture,recheck,ESPN_NBA_TEAM_IDS,now,LEDGER_GRACE);
+  const signature=batchReviewSignature(item),approval=batchCaptureApprovals.get(item.key);
+  if(!eligibility.ready&&approval)batchCaptureApprovals.delete(item.key);
+  if(eligibility.ready)readyForBatch++;
+  const approvalCell=researchCreate('td');
+  const approvalBox=researchCreate('div',null,'batch-capture-approval');
+  const tick=document.createElement('input');
+  tick.type='checkbox';tick.checked=eligibility.ready&&approval===signature;
+  tick.disabled=!eligibility.ready||batchResearchBusy||ledgerBusy||ledgerPageBusy||lrRun.disabled;
+  tick.setAttribute('aria-label','Approve '+item.player+' for future secure batch capture');
+  const description=researchCreate('label',
+    eligibility.ready?'Approve this exact current quote and frozen research snapshot':
+    'Approval unavailable: '+eligibility.reasons.join('; '));
+  tick.addEventListener('change',()=>{
+   if(!auth.currentUser||batchResearchBusy||ledgerBusy||ledgerPageBusy||lrRun.disabled)return;
+   const current=batchCaptureAssess(item,batchCaptureStages.get(item.key),
+    item.eventId?ledgerEvents.get(item.eventId):null,
+    batchQuoteRechecks.get(item.key),ESPN_NBA_TEAM_IDS,Date.now(),LEDGER_GRACE);
+   if(tick.checked){
+    if(!current.ready||!batchOffers.includes(item)){
+     batchCaptureStatus.textContent='Checks expired or draft changed. Refresh the ESPN and Betano quote before approving.';
+     tick.checked=false;batchReviewDraw();return;
+    }
+    if(!confirm('Approve this specific genuine Betano observation for FUTURE secure batch capture? '+
+      item.player+' · '+item.market+' '+item.line+' '+item.side+
+      ' @ '+Number(item.odds).toFixed(2)+'. Experimental ESPN estimates are NOT calibrated. '+
+      'This is only local preparation; no Firebase write will occur.')){
+      tick.checked=false;return;
+    }
+    batchCaptureApprovals.set(item.key,batchReviewSignature(item));
+   }else batchCaptureApprovals.delete(item.key);
+   batchReviewDraw();
+  });
+  approvalBox.append(tick,description);approvalCell.append(approvalBox);
+  row.append(approvalCell);body.append(row);
  }
  table.append(body);batchReviewRows.append(table);
+ const approved=[...batchCaptureApprovals.entries()].filter(([key,sig])=>
+  batchOffers.some(item=>item.key===key&&batchReviewSignature(item)===sig)).length;
+ batchCaptureDryRun.disabled=approved===0||batchResearchBusy||ledgerBusy||ledgerPageBusy;
+ batchCaptureSubmit.disabled=true; // 35.0F2 does NOT invoke undeployed Firebase code.
+ batchCaptureStatus.textContent=approved+' locally approved of '+readyForBatch+
+  ' fresh, eligible observations. No cloud capture can occur in this version. '+
+  'Production deployment and an explicitly reviewed enablement remain required.';
  batchReviewSummary.textContent=batchOffers.length+' local offers · '+historical+
   ' ESPN historical previews · '+linked+' matching future fixtures · '+quoted+
   ' recently user-rechecked quotes · '+prepared+
-  ' prepared for INDIVIDUAL verification. Zero approved secure captures. '+
+  ' prepared for INDIVIDUAL verification · '+approved+
+  ' locally approved for a FUTURE secure batch. Zero Firebase batch captures. '+
   'No Firebase writes or OddsPapi calls; statuses are reassessed when you interact.';
 }
 function batchSelectDraft(item,i){
