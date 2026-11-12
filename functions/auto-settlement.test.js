@@ -157,7 +157,7 @@ test("caps ESPN event requests at 16 and rejects larger overrides", async () => 
 function getProductionExtractor() {
   const source = fs.readFileSync(path.join(__dirname, "index.js"), "utf8");
   const first = source.indexOf("function ledgerParseStat(");
-  const last = source.indexOf("exports.ledgerSettleProspective=onCall(", first);
+  const last = source.indexOf("// Update 34.6E — optional, MANUAL-ONLY", first);
   assert.ok(first > 0 && last > first);
   class HttpsError extends Error {
     constructor(code, message) { super(message); this.code = code; }
