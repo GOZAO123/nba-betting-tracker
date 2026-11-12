@@ -2102,10 +2102,20 @@ function batchRender(){
   const row=researchCreate('div',null,'batch-offer-item');
   if(item.key===batchActiveKey)row.dataset.active='true';
   const description=researchCreate('div',null,'batch-offer-info');
+  const attemptIndex=batchCaptureAttempt?.items.findIndex(p=>
+   p.player===item.player&&p.team===item.team&&
+   p.eventId===item.eventId&&p.market===item.market&&
+   p.line===item.line&&p.side===item.side&&p.odds===item.odds)??-1;
+  const attemptResult=attemptIndex>=0?batchCaptureAttempt.results[attemptIndex]:null;
+  const draftStatus=attemptResult?
+   (attemptResult.cloudStatus==='verified'?'Verified exact cloud record':
+    attemptResult.status==='saved'?'Trusted server receipt returned — check cloud':
+    'Batch result: '+attemptResult.status.toUpperCase()+' — check cloud ledger'):
+   (item.key===batchActiveKey?'Selected for manual research':'Local draft · not saved');
   description.append(researchCreate('strong',(i+1)+'. '+item.player+' · '+item.team),
    researchCreate('span',item.market+' '+item.line+' '+item.side+
     ' @ '+String(item.odds)+' manually entered decimal odds'),
-   researchCreate('span',item.key===batchActiveKey?'Selected for manual research':'Local draft · not saved'));
+   researchCreate('span',draftStatus));
   if(item.fixtureLabel&&Number.isFinite(item.eventStartMs))
    description.append(researchCreate('span',
     item.fixtureLabel+' · '+ledgerLisbonTime(item.eventStartMs)+' · ESPN fixture (not bookmaker verified)'));
@@ -2471,7 +2481,7 @@ batchCaptureReconcile.addEventListener('click',async()=>{
  }finally{
   if(current()){
    batchCaptureBusy=false;ledgerBusy=false;ledgerSave.disabled=false;
-   batchCaptureDrawReport();batchReviewDraw();
+   batchCaptureDrawReport();batchReviewDraw();batchRender();
    batchCaptureReconcile.disabled=false;
   }
  }
