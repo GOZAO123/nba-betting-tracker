@@ -20,7 +20,8 @@ function row(overrides = {}) {
   capturedVia:"trusted_firebase_callable",...overrides};
 }
 const status = r=>r.status==="settled"?"SETTLED":
- r.status==="pending"?"PENDING":"UNVERIFIED TIMESTAMP";
+ r.status==="pending"?"PENDING":
+ r.status==="void"&&r.voidReason==="ESPN_EXPLICIT_DNP"?"DNP / VOID":"UNVERIFIED TIMESTAMP";
 
 test("all inline frontend JavaScript scripts parse, including ES modules", () => {
  const scripts = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)]
@@ -76,6 +77,34 @@ test("Brier score excludes invalid model estimates and absent ESPN results", () 
  assert.equal(m.overall.losses,2);
  assert.equal(m.overall.scored,1);
  assert.ok(Math.abs(m.overall.squaredError-0.04)<1e-12);
+});
+
+
+test("explicit ESPN DNP is a separate non-scoring category, never a win or loss",()=>{
+ const m=ledgerDashboardMetrics([
+  row({player:"DNP",status:"void",voidReason:"ESPN_EXPLICIT_DNP",
+    resultStat:null,resultWon:null,modelSelected:.65}),
+  row({player:"Pending",status:"pending",resultStat:null,resultWon:null}),
+  row({player:"Played",resultWon:false,modelSelected:.25}),
+  row({player:"Invalid",status:"void",voidReason:"not confirmed",
+    resultStat:null,resultWon:null})
+ ],status,false);
+ assert.deepEqual([m.overall.records,m.overall.pending,m.overall.settled,
+   m.overall.voided,m.overall.excluded,m.overall.wins,m.overall.losses,
+   m.overall.scored],[4,1,1,1,1,0,1,1]);
+ assert.equal(m.overall.squaredError,0.25**2);
+ const dnp=m.groups.player.find(x=>x.name==="DNP");
+ assert.equal(dnp.voided,1);
+ assert.equal(dnp.scored,0);
+ assert.equal(dnp.losses,0);
+ const ledgerStateText=html.slice(html.indexOf("function ledgerState(row)"),
+   html.indexOf("function ledgerRef(",html.indexOf("function ledgerState(row)")));
+ assert.match(ledgerStateText,/row\.status==='void'/);
+ assert.match(ledgerStateText,/voidReason==='ESPN_EXPLICIT_DNP'/);
+ assert.match(html,/\['DNP \/ no action',s\.voided/);
+ assert.match(html,/state==='DNP \/ VOID'\?'DNP · no action'/);
+ assert.match(html,/data\.voided===true/);
+ assert.match(html,/resultStat===null&&data\.resultWon===null/);
 });
 
 test("Wilson uncertainty reports sparse 0/2 outcomes and refuses n=0",()=>{
