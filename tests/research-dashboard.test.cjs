@@ -301,7 +301,7 @@ test("batch queue requires explicit quote confirmation and only prefills existin
  assert.match(html,/maxlength="5000"/);
  assert.match(html,/id="batchOfferRows"/);
  const start=html.indexOf("// Update 35.0B — pure parser;");
- const end=html.indexOf("// Update 34.3:",start);
+ const end=html.indexOf("// Update 35.0F4: trusted callable",start);
  const block=html.slice(start,end);
  assert.ok(start>0&&end>start);
  assert.match(block,/if\(!batchOfferConfirmed.checked\)/);
@@ -529,7 +529,7 @@ test("missing ESPN history never creates a numerical research estimate",()=>{
 
 test("batch research runs only after explicit click, with two workers and no capture calls",()=>{
  const begin=html.indexOf("// Update 35.0D: one explicitly triggered");
- const end=html.indexOf("// Update 34.3:",begin);
+ const end=html.indexOf("// Update 35.0F4: trusted callable",begin);
  assert.ok(begin>0&&end>begin);
  const code=html.slice(begin,end);
  assert.match(code,/batchResearchRun.addEventListener\('click',async/);
