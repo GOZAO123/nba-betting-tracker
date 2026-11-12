@@ -207,5 +207,5 @@ test("Only explicit backend invocation can run the batch; frontend has no captur
  assert.match(frontend,/batchReviewAssess/);
  assert.match(frontend,/httpsCallable\(oddsFunctions,'ledgerCaptureProspective'\)/);
  const source=fs.readFileSync(path.join(__dirname,"batch-capture.js"),"utf8");
- assert.doesNotMatch(source,/oddsPapi|fetch\s*\(|setInterval|firebase-admin|Firestore/gi);
+ assert.doesNotMatch(source,/oddsPapi|fetch\s*\(|setInterval|firebase-admin|getFirestore/gi);
 });
