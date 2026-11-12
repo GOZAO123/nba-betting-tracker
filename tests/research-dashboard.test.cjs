@@ -21,7 +21,7 @@ function row(overrides = {}) {
 }
 const status = r=>r.status==="settled"?"SETTLED":
  r.status==="pending"?"PENDING":
- r.status==="void"&&r.voidReason==="ESPN_EXPLICIT_DNP"?"DNP / VOID":"UNVERIFIED TIMESTAMP";
+ r.status==="void"&&r.voidReason==="ESPN_EXPLICIT_DNP"?"DNP / NO ACTION":"UNVERIFIED TIMESTAMP";
 
 test("all inline frontend JavaScript scripts parse, including ES modules", () => {
  const scripts = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)]
