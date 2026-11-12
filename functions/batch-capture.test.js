@@ -209,3 +209,118 @@ test("Only explicit backend invocation can run the batch; frontend has no captur
  const source=fs.readFileSync(path.join(__dirname,"batch-capture.js"),"utf8");
  assert.doesNotMatch(source,/oddsPapi|fetch\s*\(|setInterval|firebase-admin|getFirestore/gi);
 });
+
+
+// Offline integration tests exercise the actual trusted single/batch write helper
+// with fake ESPN + transactional Firestore. No live Firebase access or API usage.
+function makeCaptureHarness() {
+ const source=fs.readFileSync(path.join(__dirname,"index.js"),"utf8");
+ const begin=source.indexOf("async function ledgerGetCachedEspn(");
+ const end=source.indexOf("exports.ledgerCaptureProspective = onCall(",begin);
+ assert.ok(begin>0&&end>begin);
+ const records=new Map(),calls=[],checks=[];
+ class FakeHttpsError extends Error {
+  constructor(code,message){super(message);this.code=code;}
+ }
+ const db={
+  doc:path=>({path}),
+  runTransaction:async callback=>{
+   const created=[];
+   const tx={
+    get:async ref=>({exists:records.has(ref.path),data:()=>records.get(ref.path)}),
+    create:(ref,data)=>{
+     if(records.has(ref.path))throw new Error("Already exists.");
+     created.push({path:ref.path,data});
+    }
+   };
+   const result=await callback(tx);
+   for(const row of created)records.set(row.path,row.data);
+   return result;
+  }
+ };
+ const capturedMs=Date.UTC(2026,10,12,1,0);
+ const Timestamp={now:()=>({toMillis:()=>capturedMs})};
+ const getEspn=async path=>{
+  calls.push(path);
+  if(path.startsWith("scoreboard?"))return {events:[{id:"401000001"}]};
+  if(path.startsWith("teams/"))return {team:{id:"11"}};
+  throw new Error("Unexpected path");
+ };
+ const fn=new Function(
+  "ledgerNbaDay","ledgerGetEspn","ledgerVerifyFixture",
+  "ledgerVerifyRoster","getFirestore","ledgerDocId","HttpsError",
+  "Timestamp","LEDGER_CAPTURE_GRACE_MS",
+  source.slice(begin,end)+"\nreturn ledgerCaptureValidated;"
+ )(
+  ()=> "20261112",getEspn,
+  (board,r)=>{
+   checks.push("event:"+r.eventId);
+   if(!board.events.some(e=>e.id===r.eventId))
+    throw new FakeHttpsError("failed-precondition","Event mismatch.");
+   return {home:"Sample Home",away:"Sample Away"};
+  },
+  (roster,r)=>{
+   checks.push("roster:"+r.athleteId);
+   if(roster.team.id!==r.teamId)
+    throw new FakeHttpsError("failed-precondition","Roster mismatch.");
+  },
+  ()=>db,makeId,FakeHttpsError,Timestamp,5*60000
+ );
+ return {fn,records,calls,checks,capturedMs};
+}
+
+test("Trusted capture writes exact frozen fields and separate server receipt", async()=>{
+ const h=makeCaptureHarness(),r=good(1,{
+  teamId:"11",start:Date.now()+3600000,
+  homeId:"11",awayId:"27",hits12:6,games12:12,
+  hits24:11,games24:24,modelOver:0.464,team:"Sample Home"
+ });
+ const result=await h.fn("test-account",r);
+ assert.equal(result.saved,true);
+ assert.equal(result.serverCapturedMs,h.capturedMs);
+ assert.equal(result.recordId,makeId(r));
+ assert.equal(h.records.size,1);
+ const [path,entry]=[...h.records.entries()][0];
+ assert.match(path,/users\/test-account\/propResearchLedger/);
+ assert.equal(entry.status,"pending");
+ assert.equal(entry.schemaVersion,2);
+ assert.equal(entry.source,"manual_betano_unverified");
+ assert.equal(entry.capturedVia,"trusted_firebase_callable");
+ assert.equal(entry.odds,1.82);
+ assert.equal(entry.modelOver,0.464);
+ assert.equal(entry.modelSelected,0.464);
+ assert.equal(entry.hits12,6);
+ assert.equal(entry.games12,12);
+ assert.equal(entry.capturedServerAt.toMillis(),h.capturedMs);
+ assert.equal(entry.resultStat,null);
+ assert.equal(entry.settledAt,null);
+ assert.deepEqual(h.calls,["scoreboard?dates=20261112","teams/11/roster"]);
+});
+
+test("Under side stores complement of unvalidated over estimate; ESPN lookups deduplicated",async()=>{
+ const h=makeCaptureHarness(),cache={scoreboards:new Map(),rosters:new Map()};
+ const common={teamId:"11",start:Date.now()+3600000,homeId:"11",awayId:"27",
+  hits12:7,games12:12,hits24:null,games24:null,modelOver:0.41};
+ const a=good(1,{...common,side:"Under"});
+ const b=good(2,{...common,side:"Over"});
+ await h.fn("test-account",a,cache);
+ await h.fn("test-account",b,cache);
+ assert.equal(h.records.size,2);
+ assert.equal(h.calls.length,2);
+ const entries=[...h.records.values()];
+ assert.ok(entries.some(x=>x.modelSelected===0.59));
+ assert.ok(entries.some(x=>x.modelSelected===0.41));
+});
+
+test("Trusted transaction rejects duplicate document and near-tipoff writes",async()=>{
+ const h=makeCaptureHarness();
+ const r=good(1,{teamId:"11",start:Date.now()+3600000,
+  hits12:5,games12:12,modelOver:.5});
+ await h.fn("test-account",r);
+ await assert.rejects(h.fn("test-account",r),err=>err.code==="already-exists");
+ assert.equal(h.records.size,1);
+ const late={...good(2),teamId:"11",start:Date.now()+60000,
+  hits12:5,games12:12,modelOver:.5};
+ await assert.rejects(h.fn("test-account",late),err=>err.code==="failed-precondition");
+ assert.equal(h.records.size,1);
+});
