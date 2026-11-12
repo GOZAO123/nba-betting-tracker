@@ -2088,8 +2088,11 @@ function batchSelectDraft(item,i){
 }
 function batchReset(){
  batchOffers=[];batchActiveKey=null;batchOfferInput.value='';batchOfferConfirmed.checked=false;
+ batchCaptureAttempt=null;batchCaptureBusy=false;
+ batchCaptureReport.replaceChildren();batchCaptureReconcile.disabled=true;batchCaptureSubmit.disabled=true;
  batchOfferRows.replaceChildren();batchComposerReset();batchResearchReset();
- batchOfferStatus.textContent='No drafts staged. Nothing was saved.';
+ batchCaptureStatus.textContent='No capture attempt in this tab. Fresh research and explicit confirmation required for a new batch.';
+ batchOfferStatus.textContent='No drafts staged. Previously captured cloud records, if any, were not deleted.';
 }
 function batchRender(){
  batchOfferRows.replaceChildren();
@@ -2180,7 +2183,15 @@ batchOfferPrepare.addEventListener('click',()=>{
  batchRender();
 });
 batchOfferClear.addEventListener('click',()=>{
- if(ledgerBusy||ledgerPageBusy||lrRun.disabled||batchResearchBusy)return;
+ if(ledgerBusy||ledgerPageBusy||lrRun.disabled||batchResearchBusy||batchCaptureBusy)return;
+ if(batchCaptureAttempt){
+  if(batchCaptureAttempt.results.some(r=>!r.cloudStatus)){
+   batchCaptureStatus.textContent='Check exact cloud receipts first. Clearing now would discard your last submission report. No automatic retries.';
+   return;
+  }
+  if(!confirm('Discard the local capture report and prepare a NEW batch? '+
+   'Cloud records will NOT be deleted. Review missing or mismatched receipts before proceeding.'))return;
+ }
  batchReset();
 });
 
@@ -2522,6 +2533,7 @@ function ledgerEvent(e,day,now=Date.now()){
 }
 function ledgerReset(){
  ledgerTestReset();batchReset();
+ ledgerBusy=false;ledgerSave.disabled=false;
  ledgerSession++;ledgerEvents.clear();ledgerRows=[];
  ledgerLastDoc=null;ledgerMoreAvailable=false;ledgerPageBusy=false;
  ledgerRefresh.disabled=false;ledgerLoadMore.disabled=true;ledgerLoadMore.hidden=true;
