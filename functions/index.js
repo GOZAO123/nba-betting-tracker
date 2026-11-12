@@ -883,6 +883,69 @@ function ledgerExtractFinalFromEspn(summary,entry) {
     throw new HttpsError("failed-precondition","Player stat unavailable or DNP not explicitly verified; record remains pending.");
   return {stat:found,won:entry.side==="Over"?found>entry.line:found<entry.line};
 }
+
+// Update 34.6E — optional, MANUAL-ONLY official NBA inactive fallback.
+// Strictly bounded public reads: at most one league schedule and one game
+// summary. NBA Stats access is not guaranteed in cloud environments, so an
+// unavailable/ambiguous source always leaves the record pending. No polling.
+const {resolveGame:ledgerResolveNbaGame,verifyInactive:ledgerVerifyNbaInactive}=
+  require("./nba-inactive");
+const LEDGER_NBA_SCHEDULE_URL=
+  "https://cdn.nba.com/static/json/staticData/scheduleLeagueV2_1.json";
+const ledgerNbaScheduleCache={data:null,at:0,pending:null};
+async function ledgerNbaJson(url){
+  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),10000);
+  try{
+    const response=await fetch(url,{signal:controller.signal,cache:"no-store",headers:{
+      Accept:"application/json",
+      "User-Agent":"Mozilla/5.0",
+      Origin:"https://www.nba.com/",
+      Referer:"https://www.nba.com/",
+      "x-nba-stats-origin":"stats",
+      "x-nba-stats-token":"true"
+    }});
+    const size=Number(response.headers.get("content-length")||0);
+    if(!response.ok||size>7*1024*1024)throw Error("Official NBA source unavailable");
+    const text=await response.text();
+    if(text.length>7*1024*1024)throw Error("Official NBA response too large");
+    return JSON.parse(text);
+  }finally{clearTimeout(timer)}
+}
+async function ledgerNbaSchedule(){
+  if(ledgerNbaScheduleCache.data&&Date.now()-ledgerNbaScheduleCache.at<4*3600000)
+    return ledgerNbaScheduleCache.data;
+  if(!ledgerNbaScheduleCache.pending){
+    ledgerNbaScheduleCache.pending=ledgerNbaJson(LEDGER_NBA_SCHEDULE_URL)
+      .then(data=>{
+        if(!Array.isArray(data?.leagueSchedule?.gameDates))
+          throw Error("Unrecognized NBA schedule structure");
+        ledgerNbaScheduleCache.data=data;
+        ledgerNbaScheduleCache.at=Date.now();
+        return data;
+      }).finally(()=>{ledgerNbaScheduleCache.pending=null});
+  }
+  return ledgerNbaScheduleCache.pending;
+}
+function ledgerEspnHasAthleteRow(summary,entry){
+  return (summary?.boxscore?.players||[]).some(team=>
+    String(team?.team?.id||"")===String(entry.teamId)&&
+    (team.statistics||[]).some(group=>
+      (group.athletes||[]).some(player=>
+        String(player?.athlete?.id||"")===String(entry.athleteId))));
+}
+async function ledgerTryNbaInactive(summary,entry){
+  // Absence is a prerequisite, NOT evidence: official NBA must explicitly
+  // identify the exact inactive player in the independently matched fixture.
+  if(ledgerEspnHasAthleteRow(summary,entry))return null;
+  try{
+    const game=ledgerResolveNbaGame(await ledgerNbaSchedule(),entry);
+    if(!game)return null;
+    const official=await ledgerNbaJson(
+      "https://stats.nba.com/stats/boxscoresummaryv2?GameID="+game.gameId);
+    return ledgerVerifyNbaInactive(official,game,entry);
+  }catch(_){return null}
+}
+
 exports.ledgerSettleProspective=onCall(
   {region:"europe-west1",maxInstances:1,concurrency:5,timeoutSeconds:40,
     memory:"256MiB",enforceAppCheck:false},
@@ -902,7 +965,17 @@ exports.ledgerSettleProspective=onCall(
     if(!Number.isFinite(receipt)||receipt>=entry.eventStartMs-LEDGER_CAPTURE_GRACE_MS)
       throw new HttpsError("failed-precondition","Missing valid prospective server receipt.");
     const summary=await ledgerGetEspn("summary?event="+encodeURIComponent(entry.eventId));
-    const result=ledgerExtractFinalFromEspn(summary,entry);
+    let result;
+    try{result=ledgerExtractFinalFromEspn(summary,entry)}
+    catch(error){
+      // Only fallback when ESPN verified Final, event/teams, but omitted the
+      // athlete; NEVER bypass an identity mismatch, played stat or postponement.
+      if(error?.code!=="failed-precondition"||
+         error.message!=="Player stat unavailable or DNP not explicitly verified; record remains pending.")
+        throw error;
+      result=await ledgerTryNbaInactive(summary,entry);
+      if(!result)throw error;
+    }
     await db.runTransaction(async tx=>{
       const latest=await tx.get(ref);
       if(!latest.exists)throw new HttpsError("not-found","Research entry missing.");
@@ -918,9 +991,15 @@ exports.ledgerSettleProspective=onCall(
         throw new HttpsError("failed-precondition","Record no longer eligible to settle.");
       if(result.kind==="dnp"){
         // Research no-action only; never claim an independently confirmed Betano void.
-        tx.update(ref,{status:"void",voidReason:"ESPN_EXPLICIT_DNP",
+        tx.update(ref,{
+          status:"void",
+          voidReason:result.reason==="NBA_OFFICIAL_INACTIVE"?
+            "NBA_OFFICIAL_INACTIVE":"ESPN_EXPLICIT_DNP",
           resultStat:null,resultWon:null,settledAt:FieldValue.serverTimestamp(),
-          settlementSource:"ESPN Final verified DNP by server: event/team/athlete"});
+          settlementSource:result.reason==="NBA_OFFICIAL_INACTIVE"?
+            "ESPN Final + official NBA inactive roster verified by trusted server":
+            "ESPN Final verified DNP by server: event/team/athlete"
+        });
       }else{
         tx.update(ref,{status:"settled",resultStat:result.stat,resultWon:result.won,
           settledAt:FieldValue.serverTimestamp(),

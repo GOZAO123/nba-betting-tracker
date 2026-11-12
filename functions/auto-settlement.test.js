@@ -157,7 +157,7 @@ test("caps ESPN event requests at 16 and rejects larger overrides", async () => 
 function getProductionExtractor() {
   const source = fs.readFileSync(path.join(__dirname, "index.js"), "utf8");
   const first = source.indexOf("function ledgerParseStat(");
-  const last = source.indexOf("exports.ledgerSettleProspective=onCall(", first);
+  const last = source.indexOf("// Update 34.6E — optional, MANUAL-ONLY", first);
   assert.ok(first > 0 && last > first);
   class HttpsError extends Error {
     constructor(code, message) { super(message); this.code = code; }
@@ -294,8 +294,11 @@ test("manual trusted settlement includes server-only DNP transaction and no-acti
   assert.match(block, /ledgerAssertOwner\(request\)/);
   assert.match(block, /ledgerExtractFinalFromEspn\(summary,entry\)/);
   assert.match(block, /result\.kind==="dnp"/);
-  assert.match(block, /status:"void",voidReason:"ESPN_EXPLICIT_DNP"/);
+  assert.match(block, /voidReason:result\.reason==="NBA_OFFICIAL_INACTIVE"/);
+  assert.match(block, /"ESPN_EXPLICIT_DNP"/);
   assert.match(block, /resultStat:null,resultWon:null/);
+  assert.match(block, /ledgerTryNbaInactive\(summary,entry\)/);
+  assert.match(block, /error\.message!=="Player stat unavailable/);
   assert.match(block, /voided:result\.kind==="dnp"/);
   assert.doesNotMatch(block, /oddsPapi|\.collection\("propResearchLedger"\)\.add/i);
 });
