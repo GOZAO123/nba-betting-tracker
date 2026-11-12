@@ -52,6 +52,44 @@ async function reserveDiagnosticRequests(amount) {
 }
 
 
+// Update 35.1A: manual owner-only, READ-ONLY, UNMETERED subscription check.
+// No diagnostic budget reservation, odds request, Firestore write or polling.
+// The provider's account payload includes the API key and subscription IDs:
+// return ONLY the deliberately restricted fields in odds-account.js.
+const { summarizeOddsAccount } = require("./odds-account");
+exports.oddsPapiAccountPreflight = onCall(
+  {
+    region: "europe-west1", secrets: [oddsPapiKey], maxInstances: 1,
+    concurrency: 1, timeoutSeconds: 20, enforceAppCheck: false
+  },
+  async (request) => {
+    if (!request.auth || !request.auth.token.email_verified ||
+        request.auth.uid !== "I6ZhMcObXxNVdfv2AqapDxwIaet1") {
+      throw new HttpsError("permission-denied", "Only the authorised account can check the subscription.");
+    }
+    const key = oddsPapiKey.value();
+    if (!key) throw new HttpsError("failed-precondition", "OddsPapi subscription check is unavailable.");
+    const url = new URL("https://api.oddspapi.io/v4/account");
+    url.searchParams.set("apiKey", key);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 10000);
+    try {
+      const response = await fetch(url, {
+        signal: controller.signal, headers: { Accept: "application/json" },
+        cache: "no-store"
+      });
+      if (!response.ok) throw new Error("Provider account endpoint unavailable.");
+      const payload = await response.json();
+      return summarizeOddsAccount(payload);
+    } catch {
+      // Do not log or return raw API response, URL, credentials or account IDs.
+      throw new HttpsError("unavailable", "Unable to verify subscription details. No odds request was made.");
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+);
+
 exports.oddsBackendStatus = onCall(
   { region: "europe-west1", maxInstances: 2, enforceAppCheck: false },
   async (request) => {

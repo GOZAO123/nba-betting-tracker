@@ -1110,3 +1110,17 @@ test("35.0F4 no automatic OddsPapi calls, no implicit Firebase write after refre
  assert.match(html,/capturedServerAt/);
  assert.match(html,/batchCaptureSubmit\.disabled=!BATCH_CAPTURE_DEPLOYED/);
 });
+
+test("35.1A unmetered OddsPapi account preflight never triggers odds capture",()=>{
+ assert.match(html,/id="oddsAccountCheckBtn"/);
+ assert.match(html,/id="oddsAccountCheckStatus"/);
+ const start=html.indexOf("// Update 35.1A: manual unmetered account-preflight");
+ const end=html.indexOf("document.getElementById('detailedPropsBtn')",start);
+ assert.ok(start>0&&end>start);
+ const script=html.slice(start,end);
+ assert.match(script,/oddsPapiAccountPreflight/);
+ assert.match(script,/auth\.currentUser/);
+ assert.match(script,/0 billable|unmetered/);
+ assert.doesNotMatch(script,/ledgerBatchCaptureProspective|ledgerSave|\/v4\/odds|setInterval|runTransaction/);
+ assert.match(script,/textContent=value/);
+});
