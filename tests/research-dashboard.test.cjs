@@ -102,7 +102,7 @@ test("explicit ESPN DNP is a separate non-scoring category, never a win or loss"
  assert.match(ledgerStateText,/row\.status==='void'/);
  assert.match(ledgerStateText,/voidReason==='ESPN_EXPLICIT_DNP'/);
  assert.match(html,/\['DNP \/ no action',s\.voided/);
- assert.match(html,/state==='DNP \/ VOID'\?'DNP · no action'/);
+ assert.match(html,/state==='DNP \/ NO ACTION'\?'DNP · no action'/);
  assert.match(html,/data\.voided===true/);
  assert.match(html,/resultStat===null&&data\.resultWon===null/);
 });
