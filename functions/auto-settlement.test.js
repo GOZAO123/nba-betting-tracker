@@ -294,8 +294,11 @@ test("manual trusted settlement includes server-only DNP transaction and no-acti
   assert.match(block, /ledgerAssertOwner\(request\)/);
   assert.match(block, /ledgerExtractFinalFromEspn\(summary,entry\)/);
   assert.match(block, /result\.kind==="dnp"/);
-  assert.match(block, /status:"void",voidReason:"ESPN_EXPLICIT_DNP"/);
+  assert.match(block, /voidReason:result\.reason==="NBA_OFFICIAL_INACTIVE"/);
+  assert.match(block, /"ESPN_EXPLICIT_DNP"/);
   assert.match(block, /resultStat:null,resultWon:null/);
+  assert.match(block, /ledgerTryNbaInactive\(summary,entry\)/);
+  assert.match(block, /error\.message!=="Player stat unavailable/);
   assert.match(block, /voided:result\.kind==="dnp"/);
   assert.doesNotMatch(block, /oddsPapi|\.collection\("propResearchLedger"\)\.add/i);
 });
