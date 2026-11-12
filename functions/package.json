@@ -7,8 +7,8 @@
     "node": "22"
   },
   "scripts": {
-    "lint": "node --check index.js && node --check auto-settlement.js && node --check auto-settlement.test.js && node --check batch-capture.js && node --check batch-capture.test.js",
-    "test": "node --test auto-settlement.test.js batch-capture.test.js"
+    "lint": "node --check index.js && node --check auto-settlement.js && node --check auto-settlement.test.js && node --check batch-capture.js && node --check batch-capture.test.js && node --check odds-account.js && node --check odds-account.test.js",
+    "test": "node --test auto-settlement.test.js batch-capture.test.js odds-account.test.js"
   },
   "dependencies": {
     "firebase-admin": "^13.0.0",
