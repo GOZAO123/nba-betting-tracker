@@ -2777,7 +2777,8 @@ function ledgerState(row){
  if(!Number.isFinite(ms))return 'UNVERIFIED TIMESTAMP';
  if(ms>=row.eventStartMs-LEDGER_GRACE)return 'LATE / EXCLUDED';
  if(row.status==='settled')return 'SETTLED';
- if(row.status==='void')return row.voidReason==='ESPN_EXPLICIT_DNP'?'DNP / NO ACTION':'UNVERIFIED STATUS';
+ if(row.status==='void')return ['ESPN_EXPLICIT_DNP','NBA_OFFICIAL_INACTIVE'].includes(row.voidReason)?
+  'DNP / NO ACTION':'UNVERIFIED STATUS';
  return row.status==='pending'?'PENDING':'UNVERIFIED STATUS';
 }
 function ledgerRef(uid,id){return doc(db,'users',uid,'propResearchLedger',id)}
@@ -2948,7 +2949,7 @@ function ledgerRenderDashboard(container,result){
   ['Loaded records',s.records,'Latest cloud ledger sample'],
   ['Pending',s.pending,'Awaiting settlement'],
   ['Settled',s.settled,'Recorded settlement status'],
-  ['DNP / no action',s.voided,'ESPN explicit DNP · excluded from scoring'],
+  ['DNP / no action',s.voided,'Trusted ESPN DNP or official NBA inactive · not scored'],
   ['Excluded',s.excluded,'Missing, late or unverified record'],
   ['Wins',s.wins,'Verified outcome records'],
   ['Losses',s.losses,'Verified outcome records'],
@@ -3067,7 +3068,7 @@ function ledgerDraw(){
   table.append(body);const wrap=researchCreate('div',null,'boxscore');
   wrap.append(table);ledgerResults.append(wrap);
   ledgerResults.append(researchCreate('p',
-   'Even with 30+ outcomes, self-selected manual offers, unverified bookmaker prices and uncalibrated client estimates cannot prove reliable future win probabilities. ESPN DNP no-action is excluded from win rate and Brier; Betano void status is not verified.','warning'));
+   'Even with 30+ outcomes, self-selected manual offers, unverified bookmaker prices and uncalibrated client estimates cannot prove reliable future win probabilities. Verified ESPN DNP / official NBA inactive records are research no-actions excluded from scoring; Betano void status is not independently verified.','warning'));
  }
  ledgerResults.append(researchCreate('p',
   '*Only records captured before tip-off according to a Firestore server timestamp can be scored. '+
@@ -3138,10 +3139,10 @@ async function ledgerSettle(id){
  if(Date.now()<row.eventStartMs+70*60000){
   ledgerStatus.textContent='Too early to check the final outcome.';return;
  }
- if(!confirm('Check ESPN final box score and save the verified research outcome? No OddsPapi requests or wagers.'))return;
+ if(!confirm('Check ESPN Final and, only if ESPN omits the player, the official NBA inactive roster? This may make up to two additional public NBA requests. No OddsPapi requests or wagers.'))return;
  ledgerBusy=true;const uid=user.uid,session=ledgerSession;
  try{
-  ledgerStatus.textContent='Trusted server verifying ESPN Final, event, athlete and player box score…';
+  ledgerStatus.textContent='Trusted server checking ESPN Final and, if needed, official NBA inactive evidence…';
   const {data}=await httpsCallable(oddsFunctions,'ledgerSettleProspective')({recordId:id});
   const explicitDnp=data?.settled===true&&data.voided===true&&
    data.resultStat===null&&data.resultWon===null;
@@ -3151,7 +3152,7 @@ async function ledgerSettle(id){
    throw Error('Trusted server did not confirm settlement or explicit DNP');
   if(auth.currentUser?.uid!==uid||session!==ledgerSession)return;
   ledgerStatus.textContent=explicitDnp?
-   row.player+' · ESPN explicitly confirmed DNP → research no-action (not a verified Betano void).':
+   row.player+' · Trusted ESPN / official NBA nonparticipation confirmation → research no-action (not a verified Betano void).':
    row.player+' · '+row.market+' '+row.line+' '+row.side+
    ' · ESPN final '+data.resultStat+' → '+(data.resultWon?'Win':'Loss')+
    '. Research settlement only, not independent Betano verification.';
