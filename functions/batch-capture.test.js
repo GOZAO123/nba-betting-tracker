@@ -110,7 +110,7 @@ test("ESPN and Firestore errors reject only their own row with no fabricated suc
  assert.equal(result.rejected,1);
 });
 
-test("Missing receipt is rejected; never mark a Firestore write successful by assumption", async () => {
+test("Missing receipt is unconfirmed; never treat an uncertain Firestore write as a rejection", async () => {
  for (const receipt of [null, {}, {saved:true,recordId:"wrong",serverCapturedMs:123},
   {saved:true,recordId:makeId(good(1)),serverCapturedMs:null}]) {
   const res=await runBatchCapture({items:[good(1)],validateCapture:validate,
