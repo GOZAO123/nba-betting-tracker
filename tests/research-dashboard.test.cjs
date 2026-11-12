@@ -659,7 +659,7 @@ test("35.0E review UI uses safe DOM text, explicit quote recheck and local-only 
  assert.match(block,/batchReviewSummary\.textContent/);
  assert.doesNotMatch(block,/innerHTML|insertAdjacentHTML/);
  assert.doesNotMatch(block,/httpsCallable|fetch\s*\(|getDocsFromServer|runTransaction|setDoc|setInterval/);
- assert.match(html,/No batch Firebase writes exist/);
+ assert.match(html,/No Firebase writes or independently verified bookmaker odds/);
 });
 
 test("35.0E invalidates local review on edits, replacement, removal and sign-out",()=>{
@@ -700,4 +700,168 @@ test("35.0E batch preview retains as-of timestamp for conservative review",()=>{
  assert.match(html,/batchReviewDraw\(\)/);
  assert.match(html,/preparedForIndividual/);
  assert.match(html,/captureAuthorized:false/);
+});
+
+
+// Update 35.0F2: all inputs below are synthetic and never written to Firebase.
+const {batchCaptureStage,batchCaptureAssess,batchCaptureSelectedPlan}=(()=>{
+ const between=(a,b)=>{
+  const i=html.indexOf(a),j=html.indexOf(b,i+a.length);
+  assert.ok(i>=0&&j>i,'Missing approval helper '+a);
+  return html.slice(i,j);
+ };
+ const source=[
+  between("function lrValidateLine(","function lrNormalOver("),
+  between("// Update 35.0E: pure, conservative","// Update 35.0E pure review END"),
+  between("function batchCaptureStage(","// Update 35.0F2 pure selection END")
+ ].join("\n");
+ return new Function(source+"\nreturn {batchCaptureStage,batchCaptureAssess,batchCaptureSelectedPlan};")();
+})();
+const capNow=Date.UTC(2026,10,12,1,0),capFixture={
+ id:"401234568",start:capNow+3600000,homeId:"11",awayId:"27"
+},capDraft={
+ key:"synthetic-secure",player:"Synthetic Athlete",team:"Indiana Pacers",
+ market:"REB",line:5.5,side:"Under",odds:1.88,
+ eventId:capFixture.id,eventStartMs:capFixture.start,
+ espnAthleteId:"123456"
+};
+const capResearch={status:"ready",sample12:12,sample24:24,
+ modelOver:.625456,overHits12:8,overHits24:16};
+const capTeams={"Indiana Pacers":"11"};
+const makeCapStage=(item=capDraft,fixture=capFixture,at=capNow-5000)=>
+ batchCaptureStage(item,"123456",capResearch,fixture,capTeams,at,300000);
+const makeCapQuote=(item=capDraft,at=capNow-1000)=>
+ ({signature:batchReviewSignature(item),at});
+
+test("35.0F2 stages exact unrounded Over model and raw Over counts even for an Under selection",()=>{
+ const s=makeCapStage();
+ assert.ok(s);
+ assert.equal(s.at,capNow-5000);
+ assert.equal(s.payload.modelOver,.625456);
+ assert.equal(s.payload.hits12,8);
+ assert.equal(s.payload.games12,12);
+ assert.equal(s.payload.hits24,16);
+ assert.equal(s.payload.games24,24);
+ assert.equal(s.payload.side,"Under");
+ assert.equal(s.payload.odds,1.88);
+ assert.equal(s.payload.athleteId,"123456");
+ assert.equal(s.payload.confirmedObservedQuote,true);
+ assert.equal(s.payload.eventId,capFixture.id);
+ assert.equal(s.payload.teamId,"11");
+ assert.equal(s.payload.homeId,"11");
+ assert.equal(s.payload.awayId,"27");
+});
+
+test("35.0F2 refuses bad team/fixture/athlete, near-tipoff or insufficient history in staging",()=>{
+ assert.equal(batchCaptureStage(capDraft,"999",capResearch,capFixture,capTeams,capNow),null);
+ assert.equal(makeCapStage({...capDraft,team:"New York Knicks"}),null);
+ assert.equal(makeCapStage(capDraft,{...capFixture,id:"wrong"}),null);
+ assert.equal(makeCapStage(capDraft,{...capFixture,start:capNow+30000}),null);
+ assert.equal(batchCaptureStage(capDraft,"123456",
+  {...capResearch,status:"insufficient"},capFixture,capTeams,capNow),null);
+ assert.equal(batchCaptureStage(capDraft,"123456",
+  {...capResearch,sample12:11},capFixture,capTeams,capNow),null);
+ assert.equal(batchCaptureStage(capDraft,"123456",
+  {...capResearch,modelOver:1.0},capFixture,capTeams,capNow),null);
+ assert.equal(batchCaptureStage({...capDraft,odds:1}, "123456",
+  capResearch,capFixture,capTeams,capNow),null);
+});
+
+test("35.0F2 only approves an exact fresh price and fresh independently refreshed ESPN capture evidence",()=>{
+ const s=makeCapStage(),q=makeCapQuote();
+ const good=batchCaptureAssess(capDraft,s,capFixture,q,capTeams,capNow);
+ assert.equal(good.ready,true);
+ assert.equal(good.quote,true);
+ assert.equal(good.fresh,true);
+ assert.equal(good.validFixture,true);
+ assert.equal(good.bound,true);
+ assert.deepEqual(good.reasons,[]);
+ assert.equal(batchCaptureAssess(capDraft,null,capFixture,q,capTeams,capNow).ready,false);
+ assert.equal(batchCaptureAssess(capDraft,s,capFixture,q,capTeams,capNow+300001).ready,false);
+ assert.equal(batchCaptureAssess(capDraft,s,capFixture,
+  makeCapQuote(capDraft,capNow-300001),capTeams,capNow).ready,false);
+ assert.equal(batchCaptureAssess({...capDraft,odds:1.91},s,capFixture,q,capTeams,capNow).ready,false);
+ assert.equal(batchCaptureAssess(capDraft,s,{...capFixture,start:capNow+5000},q,capTeams,capNow).ready,false);
+ assert.equal(batchCaptureAssess({...capDraft,espnAthleteId:"777"},s,capFixture,q,capTeams,capNow).ready,false);
+});
+
+test("35.0F2 local selection never includes unapproved rows or expired approvals",()=>{
+ const items=[capDraft,{...capDraft,key:"synthetic-second",
+  player:"Synthetic Second",espnAthleteId:undefined}];
+ const stage=makeCapStage();
+ const stages=new Map([[capDraft.key,stage]]);
+ const quotes=new Map([[capDraft.key,makeCapQuote()]]);
+ const approvals=new Map([[capDraft.key,batchReviewSignature(capDraft)]]);
+ const events=new Map([[capFixture.id,capFixture]]);
+ let plan=batchCaptureSelectedPlan(items,approvals,stages,quotes,events,capTeams,capNow);
+ assert.equal(plan.ready,true);
+ assert.equal(plan.count,1);
+ assert.equal(plan.items.length,1);
+ assert.equal(plan.items[0].player,capDraft.player);
+ assert.equal(plan.items[0].confirmedObservedQuote,true);
+ plan=batchCaptureSelectedPlan(items,approvals,stages,quotes,events,capTeams,capNow+300001);
+ assert.equal(plan.ready,false);
+ assert.equal(plan.count,0);
+ assert.ok(plan.problems.length>0);
+});
+
+test("35.0F2 selection rejects duplicated trusted document IDs across two approved drafts",()=>{
+ const other={...capDraft,key:"second",player:"Duplicate Name"};
+ const otherStage=batchCaptureStage(other,"123456",capResearch,capFixture,capTeams,capNow);
+ const items=[capDraft,other];
+ const approvals=new Map(items.map(x=>[x.key,batchReviewSignature(x)]));
+ const stages=new Map([[capDraft.key,makeCapStage()],[other.key,otherStage]]);
+ const quotes=new Map(items.map(x=>[x.key,makeCapQuote(x)]));
+ const events=new Map([[capFixture.id,capFixture]]);
+ const p=batchCaptureSelectedPlan(items,approvals,stages,quotes,events,capTeams,capNow);
+ assert.equal(p.ready,false);
+ assert.equal(p.count,1);
+ assert.match(p.problems.join(" "),/duplicate prospective/);
+});
+
+test("35.0F2 fresh check always requires manual initiation and never calls the undeployed backend",()=>{
+ for(const id of ["batchCaptureVerify","batchCaptureVerifyStatus","batchCaptureDryRun",
+ "batchCaptureSubmit","batchCaptureStatus"]){
+  assert.equal([...html.matchAll(new RegExp('id="'+id+'"','g'))].length,1,id);
+ }
+ const begin=html.indexOf("// Update 35.0D: one explicitly triggered");
+ const end=html.indexOf("// Update 34.3:",begin);
+ const block=html.slice(begin,end);
+ assert.match(block,/batchCaptureVerify\.addEventListener\('click',async/);
+ assert.match(block,/batchExecuteResearch\(true\)/);
+ assert.match(block,/readEspnIdentity\(/);
+ assert.match(block,/batchCaptureStage\(item,player\.athlete\.id/);
+ assert.match(block,/batchResearchMatchRoster/);
+ assert.match(block,/auth\.currentUser\?\.uid===uid&&ledgerSession===session&&/);
+ assert.doesNotMatch(block,/httpsCallable|setDoc|runTransaction|setInterval|oddsPapi[A-Z]/);
+ assert.match(html,/const BATCH_CAPTURE_DEPLOYED=false/);
+ assert.match(html,/batchCaptureSubmit\.disabled=true/);
+ assert.doesNotMatch(html,/ledgerBatchCaptureProspective/);
+ assert.match(html,/httpsCallable\(oddsFunctions,'ledgerCaptureProspective'\)/);
+});
+
+test("35.0F2 approvals are per-row, explicit and cleared by changes/signout",()=>{
+ const begin=html.indexOf("function batchReviewDraw(){");
+ const end=html.indexOf("function batchReset(){",begin);
+ const block=html.slice(begin,end);
+ assert.match(block,/tick\.addEventListener\('change'/);
+ assert.match(block,/batchCaptureApprovals\.set\(item.key,batchReviewSignature\(item\)\)/);
+ assert.match(block,/confirm\('Approve this specific genuine Betano observation/);
+ assert.match(block,/batchCaptureApprovals\.delete\(item.key\)/);
+ const invalid=html.slice(html.indexOf("function batchResearchInvalidate("),
+  html.indexOf("function batchResearchDraw("));
+ assert.match(invalid,/batchCaptureStages\.clear\(\)/);
+ assert.match(invalid,/batchCaptureApprovals\.clear\(\)/);
+ assert.match(html,/function batchReset\(\)[\s\S]*?batchResearchReset\(\)/);
+ assert.match(html,/batchCaptureDryRun.addEventListener\('click'/);
+ assert.match(html,/batchCaptureSelectedPlan\(batchOffers,batchCaptureApprovals/);
+ assert.doesNotMatch(block,/innerHTML|insertAdjacentHTML/);
+});
+
+test("35.0F2 review preserves unsupported-batch disablement on production",()=>{
+ assert.match(html,/Batch capture is disabled until the trusted Firebase function is explicitly approved/);
+ assert.match(html,/Secure batch capture — deployment pending/);
+ assert.match(html,/batchCaptureSubmit\.disabled=true/);
+ assert.match(html,/BATCH_CAPTURE_DEPLOYED=false/);
+ assert.match(html,/This screen cannot write any batch observations/);
 });
