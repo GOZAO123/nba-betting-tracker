@@ -930,3 +930,153 @@ test("35.0F3 keeps original research and Android viewport untouched through batc
  assert.match(html,/id="batchCaptureReview"/);
  assert.match(html,/id="batchReviewRows"/);
 });
+
+
+// Update 35.0F4: offline receipt/reconciliation tests with synthetic player IDs.
+const {batchCaptureDocId,batchCaptureInterpret,batchCaptureMatchesCloud,batchCaptureReconcileResult}=(()=>{
+ const a=html.indexOf("// Update 35.0F4: deterministic client receipts");
+ const b=html.indexOf("// Update 35.0F4 pure receipt checks END",a);
+ assert.ok(a>=0&&b>a);
+ return new Function(html.slice(a,b)+
+ "\nreturn {batchCaptureDocId,batchCaptureInterpret,batchCaptureMatchesCloud,batchCaptureReconcileResult};")();
+})();
+const exampleCapture={player:"Synthetic Person",team:"Indiana Pacers",
+ athleteId:"123456",teamId:"11",eventId:"401234568",
+ homeId:"11",awayId:"27",eventStartMs:Date.UTC(2026,10,12,2,0),
+ market:"REB",line:5.5,side:"Under",odds:1.88,modelOver:.625456,
+ hits12:8,games12:12,hits24:16,games24:24,confirmedObservedQuote:true};
+const exampleRecordId="401234568_123456_REB_5p5_Under";
+const exampleReceiptTime=Date.UTC(2026,10,12,1,0);
+
+test("35.0F4 deterministic exact document ID is identical to backend ledgerDocId",()=>{
+ assert.equal(batchCaptureDocId(exampleCapture),exampleRecordId);
+ assert.match(html,/function batchCaptureDocId\(p\)/);
+});
+test("35.0F4 accepts a saved server receipt only with exact ID and safe timestamp",()=>{
+ const data={total:1,results:[{index:0,status:"saved",recordId:exampleRecordId,
+  serverCapturedMs:exampleReceiptTime}]};
+ const result=batchCaptureInterpret(data,[exampleCapture]);
+ assert.equal(result.length,1);
+ assert.equal(result[0].status,"saved");
+ assert.equal(result[0].recordId,exampleRecordId);
+ assert.equal(result[0].serverCapturedMs,exampleReceiptTime);
+ for(const bad of [
+  {...data,results:[{...data.results[0],recordId:"wrong"}]},
+  {...data,results:[{...data.results[0],serverCapturedMs:null}]},
+  {...data,total:2},{total:1,results:[]},
+  {total:1,results:[{...data.results[0],index:1}]}
+ ]){
+  const r=batchCaptureInterpret(bad,[exampleCapture]);
+  assert.equal(r[0].status,"unconfirmed");
+  assert.match(r[0].message,/ledger|receipt|response/i);
+ }
+});
+test("35.0F4 distinguishes rejected, unconfirmed and never-attempted outcomes",()=>{
+ const items=[0,1,2].map(i=>({...exampleCapture,athleteId:String(123456+i)}));
+ const raw={total:3,results:[
+  {index:0,status:"rejected",code:"already-exists",message:"PRIVATE ERROR DETAILS"},
+  {index:1,status:"unconfirmed",code:"unavailable",message:"PRIVATE TOKEN"},
+  {index:2,status:"not-attempted",code:"resource-exhausted",message:"PRIVATE PASSWORD"}]};
+ const parsed=batchCaptureInterpret(raw,items);
+ assert.deepEqual(parsed.map(x=>x.status),["rejected","unconfirmed","not-attempted"]);
+ assert.ok(parsed.every((x,i)=>x.recordId===batchCaptureDocId(items[i])));
+ assert.doesNotMatch(JSON.stringify(parsed),/PRIVATE|TOKEN|PASSWORD/);
+ assert.match(parsed[0].message,/may already exist/);
+ assert.match(parsed[2].message,/not started/);
+});
+test("35.0F4 never calls a response timeout or missing payload a confirmed rejection",()=>{
+ for(const response of [null,undefined,{},[],{results:[{}],total:1}]){
+  const parsed=batchCaptureInterpret(response,[exampleCapture]);
+  assert.equal(parsed[0].status,"unconfirmed");
+ }
+});
+test("35.0F4 strict cloud reconciliation checks every frozen field and server timestamp",()=>{
+ const document={...exampleCapture,schemaVersion:2,status:"pending",
+  source:"manual_betano_unverified",capturedVia:"trusted_firebase_callable",
+  capturedServerAt:{toMillis:()=>exampleReceiptTime},
+  clientCapturedMs:exampleReceiptTime};
+ assert.equal(batchCaptureMatchesCloud(exampleCapture,document),true);
+ assert.equal(batchCaptureMatchesCloud(exampleCapture,{...document,status:"settled"}),true);
+ for(const field of ["player","team","athleteId","teamId","eventId","homeId",
+ "awayId","market","line","side","odds","modelOver","hits12","games12","hits24","games24"]){
+  const wrong={...document,[field]:"incorrect"};
+  assert.equal(batchCaptureMatchesCloud(exampleCapture,wrong),false,field);
+ }
+ for(const wrong of [
+  {...document,clientCapturedMs:exampleReceiptTime+1},
+  {...document,eventStartMs:exampleCapture.eventStartMs+1},
+  {...document,capturedVia:"browser"},
+  {...document,status:"excluded"},
+  {...document,capturedServerAt:null}
+ ])assert.equal(batchCaptureMatchesCloud(exampleCapture,wrong),false);
+});
+test("35.0F4 cloud missing is never interpreted as permission to retry",()=>{
+ const receipt=batchCaptureInterpret(null,[exampleCapture])[0];
+ const missing=batchCaptureReconcileResult(receipt,false,null,exampleCapture);
+ assert.equal(missing.status,"unconfirmed");
+ assert.equal(missing.cloudStatus,"missing");
+ assert.match(missing.cloudMessage,/Do not automatically retry/);
+ const record={...exampleCapture,schemaVersion:2,status:"pending",
+ source:"manual_betano_unverified",capturedVia:"trusted_firebase_callable",
+ capturedServerAt:{toMillis:()=>exampleReceiptTime},clientCapturedMs:exampleReceiptTime};
+ const verified=batchCaptureReconcileResult(receipt,true,record,exampleCapture);
+ assert.equal(verified.cloudStatus,"verified");
+ assert.equal(verified.serverCapturedMs,exampleReceiptTime);
+ const mismatch=batchCaptureReconcileResult(receipt,true,{...record,odds:2.0},exampleCapture);
+ assert.equal(mismatch.cloudStatus,"mismatch");
+ assert.match(mismatch.cloudMessage,/Do not overwrite or retry/);
+});
+test("35.0F4 callable triggers only from final explicit Save with revalidation after confirmation",()=>{
+ const start=html.indexOf("// Update 35.0F4: trusted callable requires deliberate");
+ const end=html.indexOf("// Update 34.3:",start);
+ assert.ok(start>0&&end>start);
+ const src=html.slice(start,end);
+ assert.match(src,/batchCaptureSubmit\.addEventListener\('click',async/);
+ assert.match(src,/if\(!confirm\('SAVE '\+plan\.count/);
+ assert.match(src,/const second=batchCaptureSelectedPlan/);
+ assert.match(src,/if\(!second\.ready/);
+ assert.match(src,/batchCaptureAttempt=\{uid,session,items/);
+ assert.match(src,/batchCaptureBusy=true;ledgerBusy=true/);
+ assert.match(src,/httpsCallable\(oddsFunctions,'ledgerBatchCaptureProspective'\)\(\{items\}\)/);
+ assert.match(src,/batchCaptureAttempt\.results=batchCaptureInterpret\(data,items\)/);
+ assert.match(src,/batchCaptureAttempt\.results=batchCaptureInterpret\(null,items\)/);
+ assert.doesNotMatch(src,/setInterval|setDoc|runTransaction|oddsPapiMarketCatalogProbe/);
+ const count=(html.match(/httpsCallable\(oddsFunctions,'ledgerBatchCaptureProspective'\)/g)||[]).length;
+ assert.equal(count,1);
+});
+test("35.0F4 cloud receipt verification is manual, exact and read-only",()=>{
+ const start=html.indexOf("batchCaptureReconcile.addEventListener('click'");
+ const end=html.indexOf("// Update 34.3:",start);
+ const src=html.slice(start,end);
+ assert.ok(start>0&&end>start);
+ assert.match(src,/if\(!confirm\('Read the exact '/);
+ assert.match(src,/for\(let i=0;i<attempt\.items\.length;i\+\+\)/);
+ assert.match(src,/getDocFromServer\(ledgerRef\(uid,id\)\)/);
+ assert.match(src,/batchCaptureReconcileResult\(r,record\.exists\(\)/);
+ assert.match(src,/cloudStatus:'read-error'/);
+ assert.doesNotMatch(src,/httpsCallable|setDoc|deleteDoc|runTransaction|setInterval/);
+ assert.match(html,/getDocsFromServer,getDocFromServer,onSnapshot/);
+});
+test("35.0F4 in-flight lock, signout clearing and current-session isolation",()=>{
+ const begin=html.indexOf("batchCaptureSubmit.addEventListener('click'");
+ const end=html.indexOf("// Update 34.3:",begin);
+ const src=html.slice(begin,end);
+ assert.match(src,/batchCaptureAttempt\|\|batchCaptureBusy/);
+ assert.match(src,/auth\.currentUser\?\.uid===uid&&ledgerSession===session/);
+ assert.match(src,/batchCaptureSubmit\.disabled=true/);
+ assert.match(src,/batchCaptureReconcile\.disabled=true/);
+ assert.match(src,/if\(!current\(\)\)return/);
+ assert.match(html,/function batchReset\(\)\{[\s\S]*?batchCaptureAttempt=null;batchCaptureBusy=false/);
+ assert.match(html,/function ledgerReset\(\)\{[\s\S]*?ledgerBusy=false;ledgerSave\.disabled=false/);
+ assert.match(html,/Check exact cloud receipts first. Clearing now would discard/);
+});
+test("35.0F4 no automatic OddsPapi calls, no implicit Firebase write after refresh",()=>{
+ const source=html.slice(html.indexOf("// Update 35.0F4: trusted callable"),html.indexOf("// Update 34.3:",html.indexOf("// Update 35.0F4: trusted callable")));
+ assert.equal((source.match(/httpsCallable\(oddsFunctions,'ledgerBatchCaptureProspective'\)/g)||[]).length,1);
+ assert.doesNotMatch(source,/reserveDiagnosticRequests|oddsPapiKey|setInterval/);
+ assert.match(html,/BATCH_CAPTURE_DEPLOYED=true/);
+ assert.match(html,/Capture blocked/);
+ assert.match(html,/No automatic retry/);
+ assert.match(html,/capturedServerAt/);
+ assert.match(html,/batchCaptureSubmit\.disabled=!BATCH_CAPTURE_DEPLOYED/);
+});
