@@ -2776,7 +2776,9 @@ function ledgerState(row){
  const ms=row.capturedServerAt?.toMillis?.();
  if(!Number.isFinite(ms))return 'UNVERIFIED TIMESTAMP';
  if(ms>=row.eventStartMs-LEDGER_GRACE)return 'LATE / EXCLUDED';
- return row.status==='settled'?'SETTLED':'PENDING';
+ if(row.status==='settled')return 'SETTLED';
+ if(row.status==='void')return row.voidReason==='ESPN_EXPLICIT_DNP'?'DNP / VOID':'UNVERIFIED STATUS';
+ return row.status==='pending'?'PENDING':'UNVERIFIED STATUS';
 }
 function ledgerRef(uid,id){return doc(db,'users',uid,'propResearchLedger',id)}
 
@@ -2899,7 +2901,7 @@ function ledgerWilson95(wins,n){
  return [Math.max(0,middle-radius),Math.min(1,middle+radius)];
 }
 function ledgerDashboardMetrics(rows,stateOf,hasMore=rows.length>=50){
- const blank=()=>({records:0,pending:0,settled:0,excluded:0,wins:0,losses:0,scored:0,squaredError:0});
+ const blank=()=>({records:0,pending:0,settled:0,voided:0,excluded:0,wins:0,losses:0,scored:0,squaredError:0});
  const overall=blank(),maps={market:new Map(),player:new Map(),team:new Map(),capture:new Map()};
  const named=s=>typeof s==='string'&&s.trim()?s.trim():'Unknown';
  const source=r=>r.capturedVia==='trusted_firebase_callable'?'Backend':
@@ -2907,6 +2909,7 @@ function ledgerDashboardMetrics(rows,stateOf,hasMore=rows.length>=50){
  const add=(s,r,state)=>{
   s.records++;
   if(state==='PENDING'){s.pending++;return}
+  if(state==='DNP / VOID'){s.voided++;return}
   if(state!=='SETTLED'){s.excluded++;return}
   s.settled++;
   if(typeof r.resultWon!=='boolean'||!Number.isFinite(r.resultStat))return;
@@ -2945,7 +2948,8 @@ function ledgerRenderDashboard(container,result){
   ['Loaded records',s.records,'Latest cloud ledger sample'],
   ['Pending',s.pending,'Awaiting settlement'],
   ['Settled',s.settled,'Recorded settlement status'],
-  ['Excluded',s.excluded,'Missing or late receipt'],
+  ['DNP / no action',s.voided,'ESPN explicit DNP · excluded from scoring'],
+  ['Excluded',s.excluded,'Missing, late or unverified record'],
   ['Wins',s.wins,'Verified outcome records'],
   ['Losses',s.losses,'Verified outcome records'],
   ['Observed win rate',pct(s.wins,observed),'n='+observed+' · descriptive only'],
@@ -2972,13 +2976,13 @@ function ledgerRenderDashboard(container,result){
   details.append(researchCreate('summary','Performance by '+headings[type]+' · '+list.length+' groups'));
   const scroll=researchCreate('div',null,'boxscore'),table=researchCreate('table');
   const thead=researchCreate('thead'),titles=researchCreate('tr');
-  for(const label of [headings[type],'Loaded','Pending','Settled','W–L','Win rate','Brier','Sample'])
+  for(const label of [headings[type],'Loaded','Pending','Settled','DNP','W–L','Win rate','Brier','Sample'])
    titles.append(researchCreate('th',label));
   thead.append(titles);table.append(thead);
   const tbody=researchCreate('tbody');
   for(const group of list){
    const tr=researchCreate('tr'),n=group.wins+group.losses;
-   for(const value of [group.name,group.records,group.pending,group.settled,
+   for(const value of [group.name,group.records,group.pending,group.settled,group.voided,
     group.wins+'–'+group.losses,pct(group.wins,n),
     group.scored?(group.squaredError/group.scored).toFixed(4):'—',
     (n<30?'Sparse (<30)':'Descriptive')+' · n='+n]){
@@ -3032,7 +3036,8 @@ function ledgerDraw(){
    Number.isFinite(row.modelSelected)?(100*row.modelSelected).toFixed(1)+'%':'—',
    Number.isFinite(row.capturedServerAt?.toMillis?.())
     ?ledgerLisbonTime(row.capturedServerAt.toMillis())+(row.capturedVia==='trusted_firebase_callable'?' · Backend':' · Legacy'):'Server receipt not available',
-   state,state==='SETTLED'?row.resultStat+' · '+(row.resultWon?'Won':'Lost'):'—'
+   state,state==='SETTLED'?row.resultStat+' · '+(row.resultWon?'Won':'Lost'):
+    state==='DNP / VOID'?'DNP · no action':'—'
   ])tr.append(researchCreate('td',v));
   const buttonCell=researchCreate('td');
   const button=researchCreate('button','Check ESPN final','mini');
@@ -3062,7 +3067,7 @@ function ledgerDraw(){
   table.append(body);const wrap=researchCreate('div',null,'boxscore');
   wrap.append(table);ledgerResults.append(wrap);
   ledgerResults.append(researchCreate('p',
-   'Even with 30+ outcomes, self-selected manual offers, unverified bookmaker prices and uncalibrated client estimates cannot prove reliable future win probabilities.','warning'));
+   'Even with 30+ outcomes, self-selected manual offers, unverified bookmaker prices and uncalibrated client estimates cannot prove reliable future win probabilities. ESPN DNP no-action is excluded from win rate and Brier; Betano void status is not verified.','warning'));
  }
  ledgerResults.append(researchCreate('p',
   '*Only records captured before tip-off according to a Firestore server timestamp can be scored. '+
@@ -3138,13 +3143,17 @@ async function ledgerSettle(id){
  try{
   ledgerStatus.textContent='Trusted server verifying ESPN Final, event, athlete and player box score…';
   const {data}=await httpsCallable(oddsFunctions,'ledgerSettleProspective')({recordId:id});
-  if(data?.settled!==true||!Number.isFinite(data.resultStat)||
-     typeof data.resultWon!=='boolean')
-   throw Error('Trusted server did not confirm settlement');
-  const final={resultStat:data.resultStat,resultWon:data.resultWon};
+  const explicitDnp=data?.settled===true&&data.voided===true&&
+   data.resultStat===null&&data.resultWon===null;
+  const scored=data?.settled===true&&data.voided!==true&&
+   Number.isFinite(data.resultStat)&&typeof data.resultWon==='boolean';
+  if(!explicitDnp&&!scored)
+   throw Error('Trusted server did not confirm settlement or explicit DNP');
   if(auth.currentUser?.uid!==uid||session!==ledgerSession)return;
-  ledgerStatus.textContent=row.player+' · '+row.market+' '+row.line+' '+row.side+
-   ' · ESPN final '+final.resultStat+' → '+(final.resultWon?'Win':'Loss')+
+  ledgerStatus.textContent=explicitDnp?
+   row.player+' · ESPN explicitly confirmed DNP → research no-action (not a verified Betano void).':
+   row.player+' · '+row.market+' '+row.line+' '+row.side+
+   ' · ESPN final '+data.resultStat+' → '+(data.resultWon?'Win':'Loss')+
    '. Research settlement only, not independent Betano verification.';
   await ledgerLoad();
  }catch(err){
