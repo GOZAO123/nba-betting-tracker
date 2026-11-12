@@ -351,6 +351,16 @@ main{width:100%;min-width:0}
 .batch-review-good{color:#7ce0be}
 .batch-review-warn{color:#ffc58e}
 .batch-review-metrics{font-size:.86rem;margin:9px 0}
+
+/* Update 35.0F2: per-row explicit approval and offline-only capture rehearsal. */
+.batch-capture-actions{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin:10px 0}
+.batch-capture-actions button{min-height:40px}
+.batch-capture-status{font-size:.83rem;line-height:1.6}
+.batch-capture-badge{font-size:.75rem;font-weight:700}
+.batch-capture-approval{display:flex;align-items:flex-start;gap:8px}
+.batch-capture-approval input{margin-top:4px;flex-shrink:0}
+.batch-capture-approval label{font-size:.78rem;line-height:1.4}
+@media(max-width:700px){.batch-capture-actions button{width:100%}.batch-capture-approval label{font-size:.82rem}}
 </style></head><body><main><div class="bar"><div><h1>🏀 NBA Betting Tracker</h1><p>One player, one check — synced across devices</p></div><div class="header-actions"><button id="layoutModeToggle" type="button" class="mini" aria-label="Switch between wide and mobile layouts">📱 Mobile view</button><button id="updateAppButton" type="button" class="mini" title="Load the newest app version from GitHub Pages">↻ Update app</button><button id="signout" hidden>Sign out</button></div></div><section class="panel" id="login"><h2>Sign in</h2><p>Use the same Google account on Android and PC to see the same checklist.</p><button class="primary" id="signin">Continue with Google</button><p class="muted" id="loginmsg"></p></section><div id="app"><nav class="tabs" aria-label="App sections"><button type="button" data-tab="scanner" aria-selected="true">🤖 AI Scanner</button><button type="button" data-tab="games" aria-selected="false">🏀 NBA Games</button><button type="button" data-tab="analyzer" aria-selected="false">📊 Props Analyzer</button><button type="button" data-tab="checklist" aria-selected="false">✅ Checklist</button></nav><section id="scannerTab" class="panel scanner-panel">
  <header class="scanner-hero"><div><span class="scanner-eyebrow">NBA ANALYTICS · BETANO PT</span><h2>🤖 AI Scanner</h2><p class="muted">Your workspace for NBA player-prop research.</p></div><span class="scanner-badge">● Manual mode</span></header>
  <div class="scanner-overview" aria-label="Scanner overview">
@@ -432,7 +442,17 @@ main{width:100%;min-width:0}
     <p class="muted notice">This is a local preparation checklist, NOT a capture permission. Examine the ESPN preview, fixture, and manually observed Betano price separately. Rechecking a quote below records only your own temporary acknowledgement, not independent bookmaker verification.</p>
     <p id="batchReviewSummary" class="batch-review-metrics muted" role="status">No drafts to review. Add genuine observations first.</p>
     <div id="batchReviewRows" class="batch-review-table" aria-label="Per-offer pre-capture review table"></div>
-    <p class="warning notice">Even a fully reviewed row is NOT eligible for automatic saving. You must still click Use for research, rerun the exact individual ESPN research within five minutes, choose the verified upcoming fixture, reconfirm the current line and odds and explicitly save through the trusted backend. No batch Firebase writes exist.</p>
+    <p class="warning notice">Existing individual secure capture still requires Use for research, a fresh exact ESPN check within five minutes, a matching upcoming fixture, and your explicit trusted backend confirmation. Exploratory batch previews and manual quote rechecks alone never authorize a cloud write.</p>
+    <div class="batch-capture-actions">
+     <button id="batchCaptureVerify" type="button" class="primary" disabled>Refresh ESPN for secure batch review</button>
+     <span class="muted">Manual ESPN-only research · up to 20 offers / 52 lookup URLs · user-rechecked genuine quotes</span>
+    </div>
+    <p id="batchCaptureVerifyStatus" class="muted batch-capture-status" role="status">A fresh, separately requested research pass is required before any row can be approved for batch capture.</p>
+    <div class="batch-capture-actions">
+     <button id="batchCaptureDryRun" type="button" class="mini" disabled>Review approved observations (no save)</button>
+     <button id="batchCaptureSubmit" type="button" class="primary" disabled>Secure batch capture — deployment pending</button>
+    </div>
+    <p id="batchCaptureStatus" class="warning notice batch-capture-status" role="status">Batch capture is disabled until the trusted Firebase function is explicitly approved for deployment. This screen cannot write any batch observations.</p>
    </details>
    <p class="warning notice">Batch results are temporary ESPN-only exploratory estimates, NOT verified sportsbook odds, calibrated probabilities, betting picks or saved research. A result never authorizes cloud capture: each prospective observation still requires fresh individual Actual line research, a verified ESPN fixture and explicit trusted backend confirmation.</p>
    <p class="warning notice">All offers remain temporary local drafts and disappear on refresh or sign-out. Searchable players are checked against ESPN's team roster, not a verified Betano feed. For each offer, still run Actual line research, choose the verified upcoming fixture and reconfirm the current bookmaker price before separate trusted backend capture. Keep track of rejected/unavailable quotes to avoid selection bias.</p>
