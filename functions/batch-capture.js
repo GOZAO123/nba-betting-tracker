@@ -23,10 +23,20 @@ const PUBLIC_FAILURE_MESSAGES = Object.freeze({
   "unavailable": "ESPN verification or secure write could not be confirmed. Refresh the cloud ledger before retrying.",
   "deadline-exceeded": "A server operation timed out. Refresh the cloud ledger before retrying."
 });
-function safeFailure(error) {
+// A transport/transaction/receipt failure after a capture attempt may have
+// committed despite the missing response. Do NOT call it a rejected write.
+const DEFINITELY_REJECTED_CODES = new Set([
+  "invalid-argument", "failed-precondition", "already-exists",
+  "permission-denied", "unauthenticated"
+]);
+function safeFailure(error, attempted = false) {
   const code = Object.hasOwn(PUBLIC_FAILURE_MESSAGES, error?.code) ?
     error.code : "unavailable";
-  return { status: "rejected", code, message: PUBLIC_FAILURE_MESSAGES[code] };
+  const unconfirmed = attempted && !DEFINITELY_REJECTED_CODES.has(code);
+  return {
+    status: unconfirmed ? "unconfirmed" : "rejected",
+    code, message: PUBLIC_FAILURE_MESSAGES[code]
+  };
 }
 
 function planBatchCapture(items, validateCapture, makeRecordId) {
@@ -95,13 +105,14 @@ async function runBatchCapture({ items, validateCapture, makeRecordId, captureOn
         index, status: "saved", recordId, serverCapturedMs: receipt.serverCapturedMs
       };
     } catch (error) {
-      results[index] = { index, ...safeFailure(error) };
+      results[index] = { index, ...safeFailure(error, true) };
     }
   }
   return {
     total: items.length,
     saved: results.filter(x => x?.status === "saved").length,
     rejected: results.filter(x => x?.status === "rejected").length,
+    unconfirmed: results.filter(x => x?.status === "unconfirmed").length,
     notAttempted: results.filter(x => x?.status === "not-attempted").length,
     requiresLedgerRefresh: results.some(x => x?.status !== "saved"),
     results,
