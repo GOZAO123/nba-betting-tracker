@@ -7,19 +7,26 @@ const MAX_BATCH_CAPTURE_ITEMS = 20;
 const MAX_BATCH_CAPTURE_EVENTS = 12;
 const MAX_BATCH_CAPTURE_TEAMS = 12;
 const EXPECTED_LOOKUPS_LIMIT = MAX_BATCH_CAPTURE_EVENTS + MAX_BATCH_CAPTURE_TEAMS;
-const PUBLIC_ERROR_CODES = new Set([
-  "invalid-argument", "failed-precondition", "already-exists",
-  "permission-denied", "unauthenticated", "resource-exhausted",
-  "unavailable", "deadline-exceeded"
-]);
-
+// Keep a 90-second buffer under the 300-second Firebase function timeout so
+// queued rows don't start near shutdown. A currently active Firestore operation
+// can still return an uncertain result; clients MUST reconcile from the ledger.
+const MAX_BATCH_CAPTURE_PROCESSING_MS = 210000;
+// Never echo upstream / Firestore / unexpected exception messages. Even a
+// familiar Firebase error code may originate from an external dependency.
+const PUBLIC_FAILURE_MESSAGES = Object.freeze({
+  "invalid-argument": "Invalid quote or ESPN research fields. Correct the observation before retrying.",
+  "failed-precondition": "A fixture, roster or capture-time check failed. Refresh the cloud ledger before retrying.",
+  "already-exists": "This observation may already exist. Refresh the cloud ledger before retrying.",
+  "permission-denied": "Not authorized to capture research observations.",
+  "unauthenticated": "Google sign-in is required for secure capture.",
+  "resource-exhausted": "A server limit was reached. Refresh the cloud ledger before retrying.",
+  "unavailable": "ESPN verification or secure write could not be confirmed. Refresh the cloud ledger before retrying.",
+  "deadline-exceeded": "A server operation timed out. Refresh the cloud ledger before retrying."
+});
 function safeFailure(error) {
-  const code = PUBLIC_ERROR_CODES.has(error?.code) ? error.code : "unavailable";
-  const message = PUBLIC_ERROR_CODES.has(error?.code) &&
-      typeof error?.message === "string" && error.message.length <= 250
-    ? error.message
-    : "ESPN verification or secure capture failed. Check the cloud ledger before retrying.";
-  return { status: "rejected", code, message };
+  const code = Object.hasOwn(PUBLIC_FAILURE_MESSAGES, error?.code) ?
+    error.code : "unavailable";
+  return { status: "rejected", code, message: PUBLIC_FAILURE_MESSAGES[code] };
 }
 
 function planBatchCapture(items, validateCapture, makeRecordId) {
@@ -59,15 +66,26 @@ function planBatchCapture(items, validateCapture, makeRecordId) {
   };
 }
 
-async function runBatchCapture({ items, validateCapture, makeRecordId, captureOne }) {
+async function runBatchCapture({ items, validateCapture, makeRecordId, captureOne, now = Date.now }) {
   if (typeof validateCapture !== "function" || typeof makeRecordId !== "function" ||
-      typeof captureOne !== "function") throw new TypeError("Missing trusted capture dependencies.");
+      typeof captureOne !== "function" || typeof now !== "function")
+    throw new TypeError("Missing trusted capture dependencies.");
+  const startedAt = now();
   const plan = planBatchCapture(items, validateCapture, makeRecordId);
   const results = plan.preliminary.slice();
   // Process sequentially: at most one active trusted ESPN verification/Firestore
   // transaction per invocation. Reuse request-local scoreboard/roster caches.
   const cache = { scoreboards: new Map(), rosters: new Map() };
+  let outOfTime = false;
   for (const { index, record, recordId } of plan.records) {
+    if (outOfTime || now() - startedAt >= MAX_BATCH_CAPTURE_PROCESSING_MS) {
+      outOfTime = true;
+      results[index] = {
+        index, status: "not-attempted", code: "resource-exhausted",
+        message: "The batch time limit was reached BEFORE this row started. Refresh the cloud ledger before retrying."
+      };
+      continue;
+    }
     try {
       const receipt = await captureOne(record, cache);
       if (receipt?.saved !== true || receipt.recordId !== recordId ||
@@ -84,6 +102,8 @@ async function runBatchCapture({ items, validateCapture, makeRecordId, captureOn
     total: items.length,
     saved: results.filter(x => x?.status === "saved").length,
     rejected: results.filter(x => x?.status === "rejected").length,
+    notAttempted: results.filter(x => x?.status === "not-attempted").length,
+    requiresLedgerRefresh: results.some(x => x?.status !== "saved"),
     results,
     // Potential ESPN upstream URLs if all valid unique team/event pairs were
     // uncached. This is an upper bound, NOT a reported observed request count.
@@ -95,5 +115,5 @@ async function runBatchCapture({ items, validateCapture, makeRecordId, captureOn
 module.exports = {
   MAX_BATCH_CAPTURE_ITEMS, MAX_BATCH_CAPTURE_EVENTS,
   MAX_BATCH_CAPTURE_TEAMS, EXPECTED_LOOKUPS_LIMIT,
-  safeFailure, planBatchCapture, runBatchCapture
+  MAX_BATCH_CAPTURE_PROCESSING_MS, safeFailure, planBatchCapture, runBatchCapture
 };
