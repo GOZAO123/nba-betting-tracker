@@ -1921,7 +1921,9 @@ function batchReviewDraw(){
  if(!batchOffers.length){
   batchReviewSummary.textContent='No local drafts to review. Nothing has been captured.';
   batchCaptureDryRun.disabled=true;batchCaptureSubmit.disabled=true;
-  batchCaptureStatus.textContent='No local approvals; Firebase batch capture remains disabled.';
+  batchCaptureReconcile.disabled=!batchCaptureAttempt||batchCaptureBusy;
+  if(!batchCaptureAttempt)
+   batchCaptureStatus.textContent='No local approvals. Saving requires fresh ESPN verification, current Betano quotes and explicit consent.';
   return;
  }
  const now=Date.now(),body=document.createDocumentFragment();
@@ -2052,17 +2054,22 @@ function batchReviewDraw(){
  batchReviewRows.append(body);
  const approved=[...batchCaptureApprovals.entries()].filter(([key,sig])=>
   batchOffers.some(item=>item.key===key&&batchReviewSignature(item)===sig)).length;
- batchCaptureDryRun.disabled=approved===0||batchResearchBusy||ledgerBusy||ledgerPageBusy;
- batchCaptureSubmit.disabled=true; // 35.0F2 does NOT invoke undeployed Firebase code.
- batchCaptureStatus.textContent=approved+' locally approved of '+readyForBatch+
-  ' fresh, eligible observations. No cloud capture can occur in this version. '+
-  'Production deployment and an explicitly reviewed enablement remain required.';
+ batchCaptureDryRun.disabled=approved===0||batchResearchBusy||ledgerBusy||ledgerPageBusy||batchCaptureBusy;
+ const eligible=approved>0&&batchCaptureSelectedPlan(batchOffers,batchCaptureApprovals,batchCaptureStages,
+  batchQuoteRechecks,ledgerEvents,ESPN_NBA_TEAM_IDS,now,LEDGER_GRACE).ready;
+ batchCaptureSubmit.disabled=!BATCH_CAPTURE_DEPLOYED||!eligible||!!batchCaptureAttempt||
+  batchCaptureBusy||batchResearchBusy||ledgerBusy||ledgerPageBusy||!auth.currentUser;
+ batchCaptureReconcile.disabled=!batchCaptureAttempt||batchCaptureBusy||ledgerPageBusy;
+ if(!batchCaptureAttempt)
+  batchCaptureStatus.textContent=approved+' locally approved of '+readyForBatch+
+   ' fresh eligible observations. Saving requires a final explicit confirmation; the server '+
+   'rechecks ESPN identity, fixture and capture time. No automatic retries or OddsPapi requests.';
  batchReviewSummary.textContent=batchOffers.length+' local offers · '+historical+
   ' ESPN historical previews · '+linked+' matching future fixtures · '+quoted+
   ' recently user-rechecked quotes · '+prepared+
   ' prepared for INDIVIDUAL verification · '+approved+
-  ' locally approved for a FUTURE secure batch. Zero Firebase batch captures. '+
-  'No Firebase writes or OddsPapi calls; statuses are reassessed when you interact.';
+  ' locally approved for secure batch review. Only an explicit Save click can write; '+
+  'no OddsPapi requests occur from this workflow.';
 }
 function batchSelectDraft(item,i){
  if(!auth.currentUser||ledgerBusy||ledgerPageBusy||lrRun.disabled||batchResearchBusy)return;
