@@ -560,7 +560,7 @@ main{width:100%;min-width:0}
 </script><script type="module">
 import {initializeApp} from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-app.js';
 import {getAuth,GoogleAuthProvider,signInWithPopup,signInWithRedirect,getRedirectResult,onAuthStateChanged,signOut} from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js';
-import {getFirestore,doc,collection,query,orderBy,limit,startAfter,getDocsFromServer,onSnapshot,runTransaction,serverTimestamp} from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js';
+import {getFirestore,doc,collection,query,orderBy,limit,startAfter,getDocsFromServer,getDocFromServer,onSnapshot,runTransaction,serverTimestamp} from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js';
 import {getFunctions,httpsCallable} from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-functions.js';
 const firebaseConfig={apiKey:'AIzaSyCW2dgvRxO_Lh5i79wAMpX4tc6VgP7K8wk',authDomain:'nba-betting-tracker-3979d.firebaseapp.com',projectId:'nba-betting-tracker-3979d',storageBucket:'nba-betting-tracker-3979d.firebasestorage.app',messagingSenderId:'846190824224',appId:'1:846190824224:web:71a3a188df36519f0a2545'};
 const app=initializeApp(firebaseConfig),auth=getAuth(app),db=getFirestore(app),provider=new GoogleAuthProvider();
@@ -2338,7 +2338,134 @@ batchCaptureDryRun.addEventListener('click',()=>{
   'Not ready for batch capture rehearsal: '+plan.problems.slice(0,5).join('; ')+
   '. No Firebase writes occurred.';
 });
-batchCaptureSubmit.disabled=true; // Never call the undeployed function in Phase 2.
+// Update 35.0F4: trusted callable requires deliberate, final approval. This
+// UI never retries writes; incomplete results remain locked for cloud review.
+function batchCaptureDrawReport(){
+ batchCaptureReport.replaceChildren();
+ const attempt=batchCaptureAttempt;
+ if(!attempt)return;
+ const summary=researchCreate('div','One manually submitted batch · '+
+  attempt.results.filter(r=>r.status==='saved').length+' server receipts · '+
+  attempt.results.filter(r=>r.status==='rejected').length+' rejected · '+
+  attempt.results.filter(r=>r.status==='unconfirmed').length+' unconfirmed · '+
+  attempt.results.filter(r=>r.status==='not-attempted').length+' not attempted. '+
+  'No automatic retries.','muted');
+ batchCaptureReport.append(summary);
+ for(const [i,r] of attempt.results.entries()){
+  const card=researchCreate('div',null,'batch-capture-result');
+  card.dataset.status=r.cloudStatus==='verified'?'verified':
+   r.cloudStatus==='mismatch'?'mismatch':r.status;
+  card.append(researchCreate('strong',(i+1)+'. '+r.player+' · '+r.market+' '+
+   r.line+' '+r.side+' @ '+Number(r.odds).toFixed(2)+' — '+r.status.toUpperCase()));
+  card.append(researchCreate('span',r.message||'Check the cloud ledger before retrying.'));
+  if(Number.isSafeInteger(r.serverCapturedMs))
+   card.append(researchCreate('span','Server receipt: '+ledgerLisbonTime(r.serverCapturedMs)));
+  // Firestore document IDs are deterministic, never client-generated receipts.
+  card.append(researchCreate('code','Research ID: '+r.recordId));
+  if(r.cloudStatus)
+   card.append(researchCreate('span','Cloud check: '+r.cloudStatus.toUpperCase()+
+    ' — '+r.cloudMessage));
+  batchCaptureReport.append(card);
+ }
+}
+batchCaptureSubmit.addEventListener('click',async()=>{
+ if(!BATCH_CAPTURE_DEPLOYED||batchCaptureAttempt||batchCaptureBusy||
+  batchResearchBusy||ledgerBusy||ledgerPageBusy||!auth.currentUser)return;
+ const plan=batchCaptureSelectedPlan(batchOffers,batchCaptureApprovals,batchCaptureStages,
+  batchQuoteRechecks,ledgerEvents,ESPN_NBA_TEAM_IDS,Date.now(),LEDGER_GRACE);
+ if(!plan.ready){
+  batchCaptureStatus.textContent='Capture blocked: '+plan.problems.slice(0,4).join('; ')+
+   ' Refresh exact ESPN research and real Betano prices before trying again.';
+  batchReviewDraw();return;
+ }
+ if(!confirm('SAVE '+plan.count+' personally observed Betano player-prop observations '+
+  'to your PRODUCTION Firestore research ledger now? This creates permanent, '+
+  'individually timestamped records, NOT bets. Odds are NOT independently verified '+
+  'and model estimates are NOT calibrated. The batch may partially succeed. '+
+  'Do not resubmit anything until cloud receipts are checked.'))return;
+ const second=batchCaptureSelectedPlan(batchOffers,batchCaptureApprovals,batchCaptureStages,
+  batchQuoteRechecks,ledgerEvents,ESPN_NBA_TEAM_IDS,Date.now(),LEDGER_GRACE);
+ if(!second.ready||batchCaptureAttempt||batchCaptureBusy||ledgerBusy||ledgerPageBusy||
+  !auth.currentUser){
+  batchCaptureStatus.textContent='Approval expired or context changed before submission. Refresh all checks.';
+  batchReviewDraw();return;
+ }
+ const items=second.items.map(item=>({...item})),uid=auth.currentUser.uid,session=ledgerSession;
+ const current=()=>auth.currentUser?.uid===uid&&ledgerSession===session;
+ batchCaptureAttempt={uid,session,items,
+  results:batchCaptureInterpret(null,items),startedAt:Date.now()};
+ batchCaptureBusy=true;ledgerBusy=true;
+ ledgerSave.disabled=true;batchCaptureSubmit.disabled=true;
+ batchCaptureReconcile.disabled=true;batchResearchRun.disabled=true;batchCaptureVerify.disabled=true;
+ batchCaptureStatus.textContent='Submitting '+items.length+
+  ' explicitly approved records to the trusted server. Do not close or reload; individual records can commit before the call returns.';
+ batchCaptureDrawReport();
+ try{
+  const {data}=await httpsCallable(oddsFunctions,'ledgerBatchCaptureProspective')({items});
+  if(!current())return;
+  batchCaptureAttempt.results=batchCaptureInterpret(data,items);
+  batchCaptureStatus.textContent='Trusted backend replied. The rows below show confirmed receipts, definite rejections, '+
+   'unconfirmed outcomes and unattempted records. Click Check exact cloud receipts before considering another batch.';
+ }catch(error){
+  if(!current())return;
+  // A transport error does NOT prove Firestore rolled back. Never resend.
+  batchCaptureAttempt.results=batchCaptureInterpret(null,items);
+  batchCaptureStatus.textContent='Server response unavailable. Every result is UNCONFIRMED, '+
+   'not a loss or failed write. Use Check exact cloud receipts. No automatic retry.';
+ }finally{
+  if(current()){
+   batchCaptureBusy=false;ledgerBusy=false;
+   ledgerSave.disabled=false;
+   batchCaptureApprovals.clear();batchCaptureStages.clear();batchQuoteRechecks.clear();
+   batchCaptureDrawReport();batchReviewDraw();batchRender();
+   batchCaptureReconcile.disabled=false;
+  }
+ }
+});
+batchCaptureReconcile.addEventListener('click',async()=>{
+ const attempt=batchCaptureAttempt,user=auth.currentUser;
+ if(!attempt||!user||user.uid!==attempt.uid||attempt.session!==ledgerSession||
+  batchCaptureBusy||ledgerBusy||ledgerPageBusy)return;
+ if(!confirm('Read the exact '+attempt.items.length+
+  ' research document IDs from your cloud ledger? Read-only, up to '+
+  attempt.items.length+' Firestore reads; this does not retry any captures.'))return;
+ const uid=user.uid,session=ledgerSession,current=()=>
+  auth.currentUser?.uid===uid&&ledgerSession===session;
+ batchCaptureBusy=true;ledgerBusy=true;
+ batchCaptureReconcile.disabled=true;batchCaptureSubmit.disabled=true;
+ batchCaptureStatus.textContent='Checking exact Firestore records, read-only; no capture requests…';
+ let verified=0,uncertain=0;
+ try{
+  for(let i=0;i<attempt.items.length;i++){
+   if(!current())return;
+   const p=attempt.items[i],r=attempt.results[i],id=batchCaptureDocId(p);
+   try{
+    const record=await getDocFromServer(ledgerRef(uid,id));
+    if(!current())return;
+    attempt.results[i]=batchCaptureReconcileResult(r,record.exists(),
+     record.exists()?record.data():null,p);
+    if(attempt.results[i].cloudStatus==='verified')verified++;
+    if(['mismatch','missing'].includes(attempt.results[i].cloudStatus))uncertain++;
+   }catch(error){
+    if(!current())return;
+    attempt.results[i]={...r,cloudStatus:'read-error',
+     cloudMessage:'Read-only Firestore verification failed. Retry this READ, never the write.'};
+    uncertain++;
+   }
+  }
+  if(current())batchCaptureStatus.textContent='Cloud check complete: '+verified+
+   ' exact frozen observations verified; '+uncertain+
+   ' missing, conflicting or unreadable. Missing records do NOT authorize an automatic retry. '+
+   'Inspect your research ledger and reconfirm uncertain offers before any new attempt.';
+ }finally{
+  if(current()){
+   batchCaptureBusy=false;ledgerBusy=false;ledgerSave.disabled=false;
+   batchCaptureDrawReport();batchReviewDraw();
+   batchCaptureReconcile.disabled=false;
+  }
+ }
+});
+
 
 // Update 34.3: manual, ESPN-verified prospective prop research ledger.
 const ledgerDate=document.getElementById('ledgerDate'),
