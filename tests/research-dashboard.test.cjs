@@ -100,7 +100,9 @@ test("explicit ESPN DNP is a separate non-scoring category, never a win or loss"
  const ledgerStateText=html.slice(html.indexOf("function ledgerState(row)"),
    html.indexOf("function ledgerRef(",html.indexOf("function ledgerState(row)")));
  assert.match(ledgerStateText,/row\.status==='void'/);
- assert.match(ledgerStateText,/voidReason==='ESPN_EXPLICIT_DNP'/);
+ assert.match(ledgerStateText,/ESPN_EXPLICIT_DNP/);
+ assert.match(ledgerStateText,/NBA_OFFICIAL_INACTIVE/);
+ assert.match(html,/up to two additional public NBA requests/);
  assert.match(html,/\['DNP \/ no action',s\.voided/);
  assert.match(html,/state==='DNP \/ NO ACTION'\?'DNP · no action'/);
  assert.match(html,/data\.voided===true/);
