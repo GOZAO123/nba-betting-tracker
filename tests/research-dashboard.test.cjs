@@ -865,3 +865,66 @@ test("35.0F2 review preserves unsupported-batch disablement on production",()=>{
  assert.match(html,/BATCH_CAPTURE_DEPLOYED=false/);
  assert.match(html,/This screen cannot write any batch observations/);
 });
+
+
+// Update 35.0F3: responsive review presentation regression checks.
+test("35.0F3 renders per-player review cards instead of a cramped seven-column table",()=>{
+ const begin=html.indexOf("function batchReviewDraw(){");
+ const end=html.indexOf("function batchSelectDraft(",begin);
+ assert.ok(begin>0&&end>begin);
+ const review=html.slice(begin,end);
+ assert.match(review,/researchCreate\('article',null,'batch-review-card'\)/);
+ assert.match(review,/researchCreate\('div',null,'batch-review-grid'\)/);
+ assert.match(review,/researchCreate\('div',null,'batch-review-header'\)/);
+ assert.match(review,/researchCreate\('div',null,'batch-review-footer'\)/);
+ assert.match(review,/researchCreate\('div',null,'batch-review-approval'\)/);
+ assert.match(review,/researchCreate\('h4',\(i\+1\)\+'\. '\+item\.player\)/);
+ assert.match(review,/batchReviewRows\.append\(body\)/);
+ assert.doesNotMatch(review,/researchCreate\('(?:table|thead|tbody|tr|th|td)'/);
+ assert.doesNotMatch(review,/innerHTML|insertAdjacentHTML/);
+});
+
+test("35.0F3 review layout uses three desktop columns and readable responsive mobile cards",()=>{
+ const styles=html.slice(html.indexOf("/* Update 35.0E/F3:"),
+  html.indexOf("</style>",html.indexOf("/* Update 35.0E/F3:")));
+ assert.match(styles,/\.batch-review-table\{display:grid;gap:12px/);
+ assert.match(styles,/\.batch-review-grid\{display:grid;grid-template-columns:repeat\(3,minmax\(0,1fr\)\)/);
+ assert.match(styles,/@media\(max-width:850px\)\{\.batch-review-grid\{grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
+ assert.match(styles,/@media\(max-width:600px\)\{\.batch-review-grid\{grid-template-columns:minmax\(0,1fr\)/);
+ assert.match(styles,/\.batch-review-approval\{flex:1 1 270px;min-width:0/);
+ assert.match(styles,/\.batch-capture-approval label\{display:block;flex:1;min-width:0/);
+ assert.doesNotMatch(styles,/\.batch-review-table table\{min-width:760px/);
+ assert.doesNotMatch(styles,/\.batch-capture-approval label\{[^}]*overflow-wrap:anywhere/);
+});
+
+test("35.0F3 cards preserve explicit manual quote recheck and approval confirmation",()=>{
+ const from=html.indexOf("function batchReviewDraw(){");
+ const to=html.indexOf("function batchSelectDraft(",from);
+ const review=html.slice(from,to);
+ assert.match(review,/batchReviewAssess\(item,preview,fixture,recheck,ESPN_NBA_TEAM_IDS,now,LEDGER_GRACE\)/);
+ assert.match(review,/batchCaptureAssess\(item,batchCaptureStages\.get\(item\.key\)/);
+ assert.match(review,/confirm\('Confirm you just checked Betano/);
+ assert.match(review,/batchQuoteRechecks\.set\(item\.key,\{signature:batchReviewSignature\(item\),at:Date\.now\(\)\}\)/);
+ assert.match(review,/batchCaptureApprovals\.delete\(item\.key\)/);
+ assert.match(review,/tick\.disabled=!eligibility\.ready/);
+ assert.match(review,/confirm\('Approve this specific genuine Betano observation/);
+ assert.match(review,/batchCaptureApprovals\.set\(item\.key,batchReviewSignature\(item\)\)/);
+ assert.match(review,/tick\.id=approvalId/);
+ assert.match(review,/description\.htmlFor=approvalId/);
+ assert.match(review,/tick\.setAttribute\('aria-label','Approve '/);
+ assert.match(review,/single\.addEventListener\('click',\(\)=>batchSelectDraft\(item,i\)\)/);
+ assert.match(review,/timeZone:'Europe\/Lisbon',hour:'2-digit',minute:'2-digit',hour12:false/);
+ assert.doesNotMatch(review,/httpsCallable|fetch\s*\(|setDoc|runTransaction|getDocsFromServer|setInterval/);
+});
+
+test("35.0F3 keeps cloud batch capture disabled, old research and Android viewport untouched",()=>{
+ assert.match(html,/const BATCH_CAPTURE_DEPLOYED=false/);
+ assert.match(html,/batchCaptureSubmit\.disabled=true/);
+ assert.doesNotMatch(html,/ledgerBatchCaptureProspective/);
+ assert.match(html,/function batchResearchDraw\(\)[\s\S]*?researchCreate\('table'\)/);
+ assert.match(html,/batchResearchRun\.addEventListener\('click'/);
+ assert.match(html,/batchCaptureVerify\.addEventListener\('click'/);
+ assert.match(html,/httpsCallable\(oddsFunctions,'ledgerCaptureProspective'\)/);
+ assert.match(html,/id="batchCaptureReview"/);
+ assert.match(html,/id="batchReviewRows"/);
+});
