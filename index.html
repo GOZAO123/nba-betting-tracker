@@ -375,6 +375,13 @@ main{width:100%;min-width:0}
 .batch-capture-approval label{display:block;flex:1;min-width:0;font-size:.86rem;line-height:1.5;overflow-wrap:break-word;cursor:pointer}
 .batch-capture-approval label[aria-disabled="true"]{cursor:default}
 @media(max-width:700px){.batch-capture-actions button{width:100%}}
+.batch-capture-report{display:grid;gap:8px;min-width:0;margin-top:10px}
+.batch-capture-result{border:1px solid #37536f;border-radius:9px;padding:11px;background:#1b3049;min-width:0}
+.batch-capture-result strong{display:block;margin-bottom:3px;overflow-wrap:break-word}
+.batch-capture-result span{display:block;font-size:.82rem;overflow-wrap:break-word;margin-top:4px}
+.batch-capture-result code{overflow-wrap:anywhere;font-size:.76rem}
+.batch-capture-result[data-status="saved"],.batch-capture-result[data-status="verified"]{border-color:#267b65}
+.batch-capture-result[data-status="unconfirmed"],.batch-capture-result[data-status="mismatch"]{border-color:#bd8c50}
 </style></head><body><main><div class="bar"><div><h1>🏀 NBA Betting Tracker</h1><p>One player, one check — synced across devices</p></div><div class="header-actions"><button id="layoutModeToggle" type="button" class="mini" aria-label="Switch between wide and mobile layouts">📱 Mobile view</button><button id="updateAppButton" type="button" class="mini" title="Load the newest app version from GitHub Pages">↻ Update app</button><button id="signout" hidden>Sign out</button></div></div><section class="panel" id="login"><h2>Sign in</h2><p>Use the same Google account on Android and PC to see the same checklist.</p><button class="primary" id="signin">Continue with Google</button><p class="muted" id="loginmsg"></p></section><div id="app"><nav class="tabs" aria-label="App sections"><button type="button" data-tab="scanner" aria-selected="true">🤖 AI Scanner</button><button type="button" data-tab="games" aria-selected="false">🏀 NBA Games</button><button type="button" data-tab="analyzer" aria-selected="false">📊 Props Analyzer</button><button type="button" data-tab="checklist" aria-selected="false">✅ Checklist</button></nav><section id="scannerTab" class="panel scanner-panel">
  <header class="scanner-hero"><div><span class="scanner-eyebrow">NBA ANALYTICS · BETANO PT</span><h2>🤖 AI Scanner</h2><p class="muted">Your workspace for NBA player-prop research.</p></div><span class="scanner-badge">● Manual mode</span></header>
  <div class="scanner-overview" aria-label="Scanner overview">
@@ -456,7 +463,7 @@ main{width:100%;min-width:0}
     <p class="muted notice">This is a local preparation checklist, NOT a capture permission. Examine the ESPN preview, fixture, and manually observed Betano price separately. Rechecking a quote below records only your own temporary acknowledgement, not independent bookmaker verification.</p>
     <p id="batchReviewSummary" class="batch-review-metrics muted" role="status">No drafts to review. Add genuine observations first.</p>
     <div id="batchReviewRows" class="batch-review-table" aria-label="Per-offer pre-capture review table"></div>
-    <p class="warning notice">Existing individual secure capture still requires Use for research, a fresh exact ESPN check within five minutes, a matching upcoming fixture, and your explicit trusted backend confirmation. Exploratory batch previews and manual quote rechecks alone never authorize a cloud write.</p>
+    <p class="warning notice">For individual capture, use Use for research and the original trusted Save. For batch capture, separately refresh ESPN research, recheck the exact Betano quote, approve each row, then explicitly click Securely save approved observations. Exploratory previews and manual acknowledgements alone never authorize a cloud write.</p>
     <div class="batch-capture-actions">
      <button id="batchCaptureVerify" type="button" class="primary" disabled>Refresh ESPN for secure batch review</button>
      <span class="muted">Manual ESPN-only research · up to 20 offers / 52 lookup URLs · user-rechecked genuine quotes</span>
@@ -464,12 +471,15 @@ main{width:100%;min-width:0}
     <p id="batchCaptureVerifyStatus" class="muted batch-capture-status" role="status">A fresh, separately requested research pass is required before any row can be approved for batch capture.</p>
     <div class="batch-capture-actions">
      <button id="batchCaptureDryRun" type="button" class="mini" disabled>Review approved observations (no save)</button>
-     <button id="batchCaptureSubmit" type="button" class="primary" disabled>Secure batch capture — deployment pending</button>
+     <button id="batchCaptureSubmit" type="button" class="primary" disabled>Securely save approved observations</button>
+     <button id="batchCaptureReconcile" type="button" class="mini" disabled>Check exact cloud receipts (read-only)</button>
     </div>
-    <p id="batchCaptureStatus" class="warning notice batch-capture-status" role="status">Batch capture is disabled until the trusted Firebase function is explicitly approved for deployment. This screen cannot write any batch observations.</p>
+    <p id="batchCaptureStatus" class="warning notice batch-capture-status" role="status">The trusted batch function is deployed. Nothing is saved until you explicitly approve and submit genuine Betano observations. Each record receives an independent server result; never blindly retry a partial or uncertain batch.</p>
+    <div id="batchCaptureReport" class="batch-capture-report" aria-label="Per-offer trusted server receipts and reconciliation" aria-live="polite"></div>
+    <p class="muted notice">A submitted batch is never automatically retried. If any response is incomplete, use Check exact cloud receipts and inspect the ledger before taking further action. Frozen estimates remain experimental and bookmaker quotes remain manually observed, not independently verified.</p>
    </details>
-   <p class="warning notice">Batch results are temporary ESPN-only exploratory estimates, NOT verified sportsbook odds, calibrated probabilities, betting picks or saved research. A result never authorizes cloud capture: each prospective observation still requires fresh individual Actual line research, a verified ESPN fixture and explicit trusted backend confirmation.</p>
-   <p class="warning notice">All offers remain temporary local drafts and disappear on refresh or sign-out. Searchable players are checked against ESPN's team roster, not a verified Betano feed. For each offer, still run Actual line research, choose the verified upcoming fixture and reconfirm the current bookmaker price before separate trusted backend capture. Keep track of rejected/unavailable quotes to avoid selection bias.</p>
+   <p class="warning notice">Batch research previews are experimental and temporary, NOT verified bookmaker quotes, calibrated probabilities, betting picks or cloud saves. Either run fresh individual research with explicit trusted Save, or complete separate five-minute batch research, per-row quote confirmations, approval and final trusted Save. Nothing is automatically captured.</p>
+   <p class="warning notice">Local drafts and quote confirmations disappear on refresh or sign-out, but trusted cloud records persist. Searchable players are verified against ESPN rosters, not a live Betano feed. Always reconfirm each genuinely observed bookmaker price and record unavailable/rejected offers to avoid selection bias. Never retry an uncertain capture without checking exact cloud receipts.</p>
   </details>
  </div>
  <div class="scanner-workspace"><div class="scanner-section-head"><div><h3>📓 Prospective player-prop research ledger</h3><p class="muted">Save manually observed Betano quotes and ESPN-only research through the trusted server before tip-off; verify final results through the server. Nothing places wagers.</p></div></div>
@@ -550,7 +560,7 @@ main{width:100%;min-width:0}
 </script><script type="module">
 import {initializeApp} from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-app.js';
 import {getAuth,GoogleAuthProvider,signInWithPopup,signInWithRedirect,getRedirectResult,onAuthStateChanged,signOut} from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js';
-import {getFirestore,doc,collection,query,orderBy,limit,startAfter,getDocsFromServer,onSnapshot,runTransaction,serverTimestamp} from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js';
+import {getFirestore,doc,collection,query,orderBy,limit,startAfter,getDocsFromServer,getDocFromServer,onSnapshot,runTransaction,serverTimestamp} from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js';
 import {getFunctions,httpsCallable} from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-functions.js';
 const firebaseConfig={apiKey:'AIzaSyCW2dgvRxO_Lh5i79wAMpX4tc6VgP7K8wk',authDomain:'nba-betting-tracker-3979d.firebaseapp.com',projectId:'nba-betting-tracker-3979d',storageBucket:'nba-betting-tracker-3979d.firebasestorage.app',messagingSenderId:'846190824224',appId:'1:846190824224:web:71a3a188df36519f0a2545'};
 const app=initializeApp(firebaseConfig),auth=getAuth(app),db=getFirestore(app),provider=new GoogleAuthProvider();
@@ -1767,6 +1777,74 @@ function batchCaptureSelectedPlan(items,approvals,stages,rechecks,events,teams,
 }
 // Update 35.0F2 pure selection END
 
+// Update 35.0F4: deterministic client receipts and exact cloud reconciliation.
+function batchCaptureDocId(p){
+ return [p.eventId,p.athleteId,p.market,
+  String(p.line).replace('.','p'),p.side].join('_');
+}
+const BATCH_CAPTURE_CODES=Object.freeze({
+ 'invalid-argument':'Input or verification rejected.',
+ 'failed-precondition':'Fixture, roster or capture-time check rejected.',
+ 'already-exists':'This record may already exist in the cloud ledger.',
+ 'permission-denied':'Account not authorized for research capture.',
+ 'unauthenticated':'Sign in before saving.',
+ 'resource-exhausted':'Server limit reached.',
+ 'unavailable':'Server or ESPN operation could not be confirmed.',
+ 'deadline-exceeded':'Server operation timed out.'
+});
+function batchCaptureInterpret(response,items){
+ const raw=response?.results,complete=Array.isArray(raw)&&
+  raw.length===items.length&&response.total===items.length;
+ return items.map((item,index)=>{
+  const id=batchCaptureDocId(item),r=complete?raw[index]:null;
+  const base={index,recordId:id,player:item.player,market:item.market,
+   line:item.line,side:item.side,odds:item.odds};
+  if(!r||r.index!==index||
+    !['saved','rejected','unconfirmed','not-attempted'].includes(r.status))
+   return {...base,status:'unconfirmed',
+    message:'Server response incomplete. Check the exact cloud record before any retry.'};
+  if(r.status==='saved'){
+   if(r.recordId===id&&Number.isSafeInteger(r.serverCapturedMs)&&r.serverCapturedMs>0)
+    return {...base,status:'saved',serverCapturedMs:r.serverCapturedMs,
+     message:'Server receipt returned; use Check exact cloud receipts to verify.'};
+   return {...base,status:'unconfirmed',
+    message:'Invalid or missing server receipt; verify the cloud ledger before retrying.'};
+  }
+  const code=Object.hasOwn(BATCH_CAPTURE_CODES,r.code)?r.code:'unavailable';
+  return {...base,status:r.status,code,
+   message:r.status==='not-attempted'?'Row not started due to server time limit.':
+    BATCH_CAPTURE_CODES[code]};
+ });
+}
+function batchCaptureMatchesCloud(payload,docData){
+ if(!payload||!docData||docData.schemaVersion!==2||
+  docData.source!=='manual_betano_unverified'||
+  docData.capturedVia!=='trusted_firebase_callable')return false;
+ const fields=['player','team','athleteId','teamId','eventId',
+  'homeId','awayId','market','line','side','odds','modelOver',
+  'hits12','games12','hits24','games24'];
+ if(fields.some(k=>!Object.is(payload[k]??null,docData[k]??null)))return false;
+ const ms=docData.capturedServerAt?.toMillis?.();
+ return Number.isSafeInteger(ms)&&ms>0&&docData.clientCapturedMs===ms&&
+  docData.eventStartMs===payload.eventStartMs&&
+  ['pending','settled'].includes(docData.status);
+}
+function batchCaptureReconcileResult(receipt,found,docData,payload){
+ if(!found)return {...receipt,cloudStatus:'missing',
+  cloudMessage:receipt.status==='unconfirmed'?
+  'Not found at this check; still uncertain. Do not automatically retry.':
+  receipt.status==='saved'?
+  'Server returned a receipt, but document is missing now. Investigate before retry.':
+  'No cloud document found at this check. Reconfirm later before retrying.'};
+ if(!batchCaptureMatchesCloud(payload,docData))
+  return {...receipt,cloudStatus:'mismatch',
+   cloudMessage:'Cloud document exists but its frozen fields or receipt differ. Do not overwrite or retry.'};
+ return {...receipt,cloudStatus:'verified',serverCapturedMs:docData.clientCapturedMs,
+  cloudMessage:'Read-only Firestore check verified the exact frozen observation and server receipt.'};
+}
+// Update 35.0F4 pure receipt checks END
+
+
 
 
 const batchResearchRun=document.getElementById('batchResearchRun'),
@@ -1775,13 +1853,16 @@ const batchResearchRun=document.getElementById('batchResearchRun'),
 let batchResearchBusy=false,batchResearchEpoch=0,batchResearchPreview=new Map();
 // Deliberately false until owner explicitly approves a production Firebase
 // deployment AND a separate security-reviewed release enabling the callable.
-const BATCH_CAPTURE_DEPLOYED=false;
+const BATCH_CAPTURE_DEPLOYED=true; // Confirmed v2 callable in production (12 Nov 2026).
 const batchCaptureVerify=document.getElementById('batchCaptureVerify'),
  batchCaptureVerifyStatus=document.getElementById('batchCaptureVerifyStatus'),
  batchCaptureDryRun=document.getElementById('batchCaptureDryRun'),
  batchCaptureSubmit=document.getElementById('batchCaptureSubmit'),
- batchCaptureStatus=document.getElementById('batchCaptureStatus');
+ batchCaptureStatus=document.getElementById('batchCaptureStatus'),
+ batchCaptureReconcile=document.getElementById('batchCaptureReconcile'),
+ batchCaptureReport=document.getElementById('batchCaptureReport');
 let batchCaptureStages=new Map(),batchCaptureApprovals=new Map();
+let batchCaptureBusy=false,batchCaptureAttempt=null;
 const batchReviewSummary=document.getElementById('batchReviewSummary'),
  batchReviewRows=document.getElementById('batchReviewRows'),
  batchCaptureReview=document.getElementById('batchCaptureReview');
@@ -1840,7 +1921,9 @@ function batchReviewDraw(){
  if(!batchOffers.length){
   batchReviewSummary.textContent='No local drafts to review. Nothing has been captured.';
   batchCaptureDryRun.disabled=true;batchCaptureSubmit.disabled=true;
-  batchCaptureStatus.textContent='No local approvals; Firebase batch capture remains disabled.';
+  batchCaptureReconcile.disabled=!batchCaptureAttempt||batchCaptureBusy;
+  if(!batchCaptureAttempt)
+   batchCaptureStatus.textContent='No local approvals. Saving requires fresh ESPN verification, current Betano quotes and explicit consent.';
   return;
  }
  const now=Date.now(),body=document.createDocumentFragment();
@@ -1934,9 +2017,9 @@ function batchReviewDraw(){
   const tick=document.createElement('input');
   tick.type='checkbox';tick.checked=eligibility.ready&&approval===signature;
   tick.disabled=!eligibility.ready||batchResearchBusy||ledgerBusy||ledgerPageBusy||lrRun.disabled;
-  tick.setAttribute('aria-label','Approve '+item.player+' for future secure batch capture');
+  tick.setAttribute('aria-label','Approve '+item.player+' for a later explicit secure batch submission');
   const description=researchCreate('label',
-    eligibility.ready?'Approve this exact current quote and frozen research snapshot':
+    eligibility.ready?'Approve this exact current quote and frozen research snapshot for a later explicit Save':
     'Approval unavailable: '+eligibility.reasons.join('; '));
   tick.addEventListener('change',()=>{
    if(!auth.currentUser||batchResearchBusy||ledgerBusy||ledgerPageBusy||lrRun.disabled)return;
@@ -1948,10 +2031,10 @@ function batchReviewDraw(){
      batchCaptureStatus.textContent='Checks expired or draft changed. Refresh the ESPN and Betano quote before approving.';
      tick.checked=false;batchReviewDraw();return;
     }
-    if(!confirm('Approve this specific genuine Betano observation for FUTURE secure batch capture? '+
+    if(!confirm('Approve this specific genuine Betano observation for a SEPARATE future Save click? '+
       item.player+' · '+item.market+' '+item.line+' '+item.side+
       ' @ '+Number(item.odds).toFixed(2)+'. Experimental ESPN estimates are NOT calibrated. '+
-      'This is only local preparation; no Firebase write will occur.')){
+      'This checkbox only prepares approval; the separate final Save CAN write to production Firebase.')){
       tick.checked=false;return;
     }
     batchCaptureApprovals.set(item.key,batchReviewSignature(item));
@@ -1971,17 +2054,22 @@ function batchReviewDraw(){
  batchReviewRows.append(body);
  const approved=[...batchCaptureApprovals.entries()].filter(([key,sig])=>
   batchOffers.some(item=>item.key===key&&batchReviewSignature(item)===sig)).length;
- batchCaptureDryRun.disabled=approved===0||batchResearchBusy||ledgerBusy||ledgerPageBusy;
- batchCaptureSubmit.disabled=true; // 35.0F2 does NOT invoke undeployed Firebase code.
- batchCaptureStatus.textContent=approved+' locally approved of '+readyForBatch+
-  ' fresh, eligible observations. No cloud capture can occur in this version. '+
-  'Production deployment and an explicitly reviewed enablement remain required.';
+ batchCaptureDryRun.disabled=approved===0||batchResearchBusy||ledgerBusy||ledgerPageBusy||batchCaptureBusy;
+ const eligible=approved>0&&batchCaptureSelectedPlan(batchOffers,batchCaptureApprovals,batchCaptureStages,
+  batchQuoteRechecks,ledgerEvents,ESPN_NBA_TEAM_IDS,now,LEDGER_GRACE).ready;
+ batchCaptureSubmit.disabled=!BATCH_CAPTURE_DEPLOYED||!eligible||!!batchCaptureAttempt||
+  batchCaptureBusy||batchResearchBusy||ledgerBusy||ledgerPageBusy||!auth.currentUser;
+ batchCaptureReconcile.disabled=!batchCaptureAttempt||batchCaptureBusy||ledgerPageBusy;
+ if(!batchCaptureAttempt)
+  batchCaptureStatus.textContent=approved+' locally approved of '+readyForBatch+
+   ' fresh eligible observations. Saving requires a final explicit confirmation; the server '+
+   'rechecks ESPN identity, fixture and capture time. No automatic retries or OddsPapi requests.';
  batchReviewSummary.textContent=batchOffers.length+' local offers · '+historical+
   ' ESPN historical previews · '+linked+' matching future fixtures · '+quoted+
   ' recently user-rechecked quotes · '+prepared+
   ' prepared for INDIVIDUAL verification · '+approved+
-  ' locally approved for a FUTURE secure batch. Zero Firebase batch captures. '+
-  'No Firebase writes or OddsPapi calls; statuses are reassessed when you interact.';
+  ' locally approved for secure batch review. Only an explicit Save click can write; '+
+  'no OddsPapi requests occur from this workflow.';
 }
 function batchSelectDraft(item,i){
  if(!auth.currentUser||ledgerBusy||ledgerPageBusy||lrRun.disabled||batchResearchBusy)return;
@@ -2000,8 +2088,11 @@ function batchSelectDraft(item,i){
 }
 function batchReset(){
  batchOffers=[];batchActiveKey=null;batchOfferInput.value='';batchOfferConfirmed.checked=false;
+ batchCaptureAttempt=null;batchCaptureBusy=false;
+ batchCaptureReport.replaceChildren();batchCaptureReconcile.disabled=true;batchCaptureSubmit.disabled=true;
  batchOfferRows.replaceChildren();batchComposerReset();batchResearchReset();
- batchOfferStatus.textContent='No drafts staged. Nothing was saved.';
+ batchCaptureStatus.textContent='No capture attempt in this tab. Fresh research and explicit confirmation required for a new batch.';
+ batchOfferStatus.textContent='No drafts staged. Previously captured cloud records, if any, were not deleted.';
 }
 function batchRender(){
  batchOfferRows.replaceChildren();
@@ -2011,10 +2102,20 @@ function batchRender(){
   const row=researchCreate('div',null,'batch-offer-item');
   if(item.key===batchActiveKey)row.dataset.active='true';
   const description=researchCreate('div',null,'batch-offer-info');
+  const attemptIndex=batchCaptureAttempt?.items.findIndex(p=>
+   p.player===item.player&&p.team===item.team&&
+   p.eventId===item.eventId&&p.market===item.market&&
+   p.line===item.line&&p.side===item.side&&p.odds===item.odds)??-1;
+  const attemptResult=attemptIndex>=0?batchCaptureAttempt.results[attemptIndex]:null;
+  const draftStatus=attemptResult?
+   (attemptResult.cloudStatus==='verified'?'Verified exact cloud record':
+    attemptResult.status==='saved'?'Trusted server receipt returned — check cloud':
+    'Batch result: '+attemptResult.status.toUpperCase()+' — check cloud ledger'):
+   (item.key===batchActiveKey?'Selected for manual research':'Local draft · not saved');
   description.append(researchCreate('strong',(i+1)+'. '+item.player+' · '+item.team),
    researchCreate('span',item.market+' '+item.line+' '+item.side+
     ' @ '+String(item.odds)+' manually entered decimal odds'),
-   researchCreate('span',item.key===batchActiveKey?'Selected for manual research':'Local draft · not saved'));
+   researchCreate('span',draftStatus));
   if(item.fixtureLabel&&Number.isFinite(item.eventStartMs))
    description.append(researchCreate('span',
     item.fixtureLabel+' · '+ledgerLisbonTime(item.eventStartMs)+' · ESPN fixture (not bookmaker verified)'));
@@ -2092,7 +2193,15 @@ batchOfferPrepare.addEventListener('click',()=>{
  batchRender();
 });
 batchOfferClear.addEventListener('click',()=>{
- if(ledgerBusy||ledgerPageBusy||lrRun.disabled||batchResearchBusy)return;
+ if(ledgerBusy||ledgerPageBusy||lrRun.disabled||batchResearchBusy||batchCaptureBusy)return;
+ if(batchCaptureAttempt){
+  if(batchCaptureAttempt.results.some(r=>!r.cloudStatus)){
+   batchCaptureStatus.textContent='Check exact cloud receipts first. Clearing now would discard your last submission report. No automatic retries.';
+   return;
+  }
+  if(!confirm('Discard the local capture report and prepare a NEW batch? '+
+   'Cloud records will NOT be deleted. Review missing or mismatched receipts before proceeding.'))return;
+ }
  batchReset();
 });
 
@@ -2250,7 +2359,134 @@ batchCaptureDryRun.addEventListener('click',()=>{
   'Not ready for batch capture rehearsal: '+plan.problems.slice(0,5).join('; ')+
   '. No Firebase writes occurred.';
 });
-batchCaptureSubmit.disabled=true; // Never call the undeployed function in Phase 2.
+// Update 35.0F4: trusted callable requires deliberate, final approval. This
+// UI never retries writes; incomplete results remain locked for cloud review.
+function batchCaptureDrawReport(){
+ batchCaptureReport.replaceChildren();
+ const attempt=batchCaptureAttempt;
+ if(!attempt)return;
+ const summary=researchCreate('div','One manually submitted batch · '+
+  attempt.results.filter(r=>r.status==='saved').length+' server receipts · '+
+  attempt.results.filter(r=>r.status==='rejected').length+' rejected · '+
+  attempt.results.filter(r=>r.status==='unconfirmed').length+' unconfirmed · '+
+  attempt.results.filter(r=>r.status==='not-attempted').length+' not attempted. '+
+  'No automatic retries.','muted');
+ batchCaptureReport.append(summary);
+ for(const [i,r] of attempt.results.entries()){
+  const card=researchCreate('div',null,'batch-capture-result');
+  card.dataset.status=r.cloudStatus==='verified'?'verified':
+   r.cloudStatus==='mismatch'?'mismatch':r.status;
+  card.append(researchCreate('strong',(i+1)+'. '+r.player+' · '+r.market+' '+
+   r.line+' '+r.side+' @ '+Number(r.odds).toFixed(2)+' — '+r.status.toUpperCase()));
+  card.append(researchCreate('span',r.message||'Check the cloud ledger before retrying.'));
+  if(Number.isSafeInteger(r.serverCapturedMs))
+   card.append(researchCreate('span','Server receipt: '+ledgerLisbonTime(r.serverCapturedMs)));
+  // Firestore document IDs are deterministic, never client-generated receipts.
+  card.append(researchCreate('code','Research ID: '+r.recordId));
+  if(r.cloudStatus)
+   card.append(researchCreate('span','Cloud check: '+r.cloudStatus.toUpperCase()+
+    ' — '+r.cloudMessage));
+  batchCaptureReport.append(card);
+ }
+}
+batchCaptureSubmit.addEventListener('click',async()=>{
+ if(!BATCH_CAPTURE_DEPLOYED||batchCaptureAttempt||batchCaptureBusy||
+  batchResearchBusy||ledgerBusy||ledgerPageBusy||!auth.currentUser)return;
+ const plan=batchCaptureSelectedPlan(batchOffers,batchCaptureApprovals,batchCaptureStages,
+  batchQuoteRechecks,ledgerEvents,ESPN_NBA_TEAM_IDS,Date.now(),LEDGER_GRACE);
+ if(!plan.ready){
+  batchCaptureStatus.textContent='Capture blocked: '+plan.problems.slice(0,4).join('; ')+
+   ' Refresh exact ESPN research and real Betano prices before trying again.';
+  batchReviewDraw();return;
+ }
+ if(!confirm('SAVE '+plan.count+' personally observed Betano player-prop observations '+
+  'to your PRODUCTION Firestore research ledger now? This creates permanent, '+
+  'individually timestamped records, NOT bets. Odds are NOT independently verified '+
+  'and model estimates are NOT calibrated. The batch may partially succeed. '+
+  'Do not resubmit anything until cloud receipts are checked.'))return;
+ const second=batchCaptureSelectedPlan(batchOffers,batchCaptureApprovals,batchCaptureStages,
+  batchQuoteRechecks,ledgerEvents,ESPN_NBA_TEAM_IDS,Date.now(),LEDGER_GRACE);
+ if(!second.ready||batchCaptureAttempt||batchCaptureBusy||ledgerBusy||ledgerPageBusy||
+  !auth.currentUser){
+  batchCaptureStatus.textContent='Approval expired or context changed before submission. Refresh all checks.';
+  batchReviewDraw();return;
+ }
+ const items=second.items.map(item=>({...item})),uid=auth.currentUser.uid,session=ledgerSession;
+ const current=()=>auth.currentUser?.uid===uid&&ledgerSession===session;
+ batchCaptureAttempt={uid,session,items,
+  results:batchCaptureInterpret(null,items),startedAt:Date.now()};
+ batchCaptureBusy=true;ledgerBusy=true;
+ ledgerSave.disabled=true;batchCaptureSubmit.disabled=true;
+ batchCaptureReconcile.disabled=true;batchResearchRun.disabled=true;batchCaptureVerify.disabled=true;
+ batchCaptureStatus.textContent='Submitting '+items.length+
+  ' explicitly approved records to the trusted server. Do not close or reload; individual records can commit before the call returns.';
+ batchCaptureDrawReport();
+ try{
+  const {data}=await httpsCallable(oddsFunctions,'ledgerBatchCaptureProspective')({items});
+  if(!current())return;
+  batchCaptureAttempt.results=batchCaptureInterpret(data,items);
+  batchCaptureStatus.textContent='Trusted backend replied. The rows below show confirmed receipts, definite rejections, '+
+   'unconfirmed outcomes and unattempted records. Click Check exact cloud receipts before considering another batch.';
+ }catch(error){
+  if(!current())return;
+  // A transport error does NOT prove Firestore rolled back. Never resend.
+  batchCaptureAttempt.results=batchCaptureInterpret(null,items);
+  batchCaptureStatus.textContent='Server response unavailable. Every result is UNCONFIRMED, '+
+   'not a loss or failed write. Use Check exact cloud receipts. No automatic retry.';
+ }finally{
+  if(current()){
+   batchCaptureBusy=false;ledgerBusy=false;
+   ledgerSave.disabled=false;
+   batchCaptureApprovals.clear();batchCaptureStages.clear();batchQuoteRechecks.clear();
+   batchCaptureDrawReport();batchReviewDraw();batchRender();
+   batchCaptureReconcile.disabled=false;
+  }
+ }
+});
+batchCaptureReconcile.addEventListener('click',async()=>{
+ const attempt=batchCaptureAttempt,user=auth.currentUser;
+ if(!attempt||!user||user.uid!==attempt.uid||attempt.session!==ledgerSession||
+  batchCaptureBusy||ledgerBusy||ledgerPageBusy)return;
+ if(!confirm('Read the exact '+attempt.items.length+
+  ' research document IDs from your cloud ledger? Read-only, up to '+
+  attempt.items.length+' Firestore reads; this does not retry any captures.'))return;
+ const uid=user.uid,session=ledgerSession,current=()=>
+  auth.currentUser?.uid===uid&&ledgerSession===session;
+ batchCaptureBusy=true;ledgerBusy=true;
+ batchCaptureReconcile.disabled=true;batchCaptureSubmit.disabled=true;
+ batchCaptureStatus.textContent='Checking exact Firestore records, read-only; no capture requests…';
+ let verified=0,uncertain=0;
+ try{
+  for(let i=0;i<attempt.items.length;i++){
+   if(!current())return;
+   const p=attempt.items[i],r=attempt.results[i],id=batchCaptureDocId(p);
+   try{
+    const record=await getDocFromServer(ledgerRef(uid,id));
+    if(!current())return;
+    attempt.results[i]=batchCaptureReconcileResult(r,record.exists(),
+     record.exists()?record.data():null,p);
+    if(attempt.results[i].cloudStatus==='verified')verified++;
+    if(['mismatch','missing'].includes(attempt.results[i].cloudStatus))uncertain++;
+   }catch(error){
+    if(!current())return;
+    attempt.results[i]={...r,cloudStatus:'read-error',
+     cloudMessage:'Read-only Firestore verification failed. Retry this READ, never the write.'};
+    uncertain++;
+   }
+  }
+  if(current())batchCaptureStatus.textContent='Cloud check complete: '+verified+
+   ' exact frozen observations verified; '+uncertain+
+   ' missing, conflicting or unreadable. Missing records do NOT authorize an automatic retry. '+
+   'Inspect your research ledger and reconfirm uncertain offers before any new attempt.';
+ }finally{
+  if(current()){
+   batchCaptureBusy=false;ledgerBusy=false;ledgerSave.disabled=false;
+   batchCaptureDrawReport();batchReviewDraw();batchRender();
+   batchCaptureReconcile.disabled=false;
+  }
+ }
+});
+
 
 // Update 34.3: manual, ESPN-verified prospective prop research ledger.
 const ledgerDate=document.getElementById('ledgerDate'),
@@ -2307,6 +2543,7 @@ function ledgerEvent(e,day,now=Date.now()){
 }
 function ledgerReset(){
  ledgerTestReset();batchReset();
+ ledgerBusy=false;ledgerSave.disabled=false;
  ledgerSession++;ledgerEvents.clear();ledgerRows=[];
  ledgerLastDoc=null;ledgerMoreAvailable=false;ledgerPageBusy=false;
  ledgerRefresh.disabled=false;ledgerLoadMore.disabled=true;ledgerLoadMore.hidden=true;
