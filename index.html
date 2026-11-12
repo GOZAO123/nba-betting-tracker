@@ -526,6 +526,8 @@ main{width:100%;min-width:0}
   <p class="muted notice">Exploratory only. Repeated player-market predictions are correlated; a lower Brier score on synthetic lines does not establish profitable bets or future predictive performance.</p>
  </div>
  <details class="scanner-dev"><summary>⚙️ Developer tools <span class="muted">· Manual API tests</span></summary><div class="scanner-dev-content"><p class="muted notice">These buttons make live API requests when tapped. Avoid unnecessary tests to protect the free allowance.</p>
+  <div class="row"><button id="oddsAccountCheckBtn" type="button" class="mini">Check OddsPapi plan &amp; quota (unmetered)</button><span id="oddsAccountCheckStatus" class="muted" role="status">Owner only · manual account-status check · 0 billable OddsPapi requests · no odds collected.</span></div>
+  <div id="oddsAccountCheckResult" class="muted" aria-live="polite"></div>
   <div class="row"><button id="oddsProbeBtn" type="button" class="mini">Test OddsPapi NBA connection</button><span id="oddsProbeStatus" class="muted" role="status">Test uses one API request. Available only to the configured owner.</span></div><div id="oddsProbeResult" class="muted"></div>
   <div class="row"><button id="nbaOddsTestBtn" type="button" class="mini">Test Betano PT NBA odds</button><span id="nbaOddsTestStatus" class="muted">One request; 15-minute server cache when successful.</span></div><div id="nbaOddsTestResult" class="muted"></div>
   <div class="row"><button id="detailedPropsBtn" type="button" class="mini">Test detailed NBA player props</button><span id="detailedPropsStatus" class="muted">Up to 2 OddsPapi requests; cached for 30 minutes.</span></div><div id="detailedPropsResult" class="muted"></div>
@@ -565,6 +567,44 @@ import {getFunctions,httpsCallable} from 'https://www.gstatic.com/firebasejs/11.
 const firebaseConfig={apiKey:'AIzaSyCW2dgvRxO_Lh5i79wAMpX4tc6VgP7K8wk',authDomain:'nba-betting-tracker-3979d.firebaseapp.com',projectId:'nba-betting-tracker-3979d',storageBucket:'nba-betting-tracker-3979d.firebasestorage.app',messagingSenderId:'846190824224',appId:'1:846190824224:web:71a3a188df36519f0a2545'};
 const app=initializeApp(firebaseConfig),auth=getAuth(app),db=getFirestore(app),provider=new GoogleAuthProvider();
 const oddsFunctions=getFunctions(app,'europe-west1');
+// Update 35.1A: manual unmetered account-preflight, no odds collection.
+document.getElementById('oddsAccountCheckBtn')?.addEventListener('click', async()=>{
+ const btn=document.getElementById('oddsAccountCheckBtn'),
+  status=document.getElementById('oddsAccountCheckStatus'),
+  out=document.getElementById('oddsAccountCheckResult');
+ if(!auth.currentUser){status.textContent='Sign in with Google first.';return}
+ if(!confirm('Check your OddsPapi plan and remaining quota using the provider\'s unmetered /v4/account endpoint? No paid quota, bookmaker odds, research capture or bets.'))return;
+ btn.disabled=true;status.textContent='Checking subscription without using odds quota…';out.replaceChildren();
+ try{
+  const {data}=await httpsCallable(oddsFunctions,'oddsPapiAccountPreflight')({});
+  if(data?.status!=='ok'){
+   status.textContent='The current active subscription could not be verified. No odds were requested.';
+   return;
+  }
+  status.textContent='Subscription preflight complete · no billable OddsPapi requests made.';
+  const show=v=>v===null||v===undefined?'unknown':v;
+  const yesNo=v=>v===true?'Yes':v===false?'No':'Unknown';
+  const price=data.priceStatus==='zero-reported'?'0 reported by provider':
+   data.priceStatus==='nonzero-reported'?'Nonzero subscription price reported':'Cost not established';
+  const lines=[
+   'Current plan price: '+price+' · Auto-renew: '+yesNo(data.autoRenew),
+   'Monthly request allowance: '+show(data.monthlyLimit)+' · Used: '+show(data.monthlyUsed)+
+    ' · Remaining: '+show(data.monthlyRemaining),
+   'NBA basketball included: '+yesNo(data.nbaBasketballIncluded),
+   'Exact Betano Portugal (betano.pt) listed: '+yesNo(data.betanoPtListed)+
+    ' · Player-prop entitlement: '+yesNo(data.betanoPtPlayerProps),
+   'Generic Betano listed separately: '+yesNo(data.genericBetanoListed)+
+    ' (does NOT establish betano.pt coverage).',
+   'This account check is unmetered. Your separate six-per-UTC-day diagnostic guard still applies. No odds or research observations have been fetched or saved.'
+  ];
+  for(const value of lines){
+   const p=document.createElement('p');p.textContent=value;out.append(p);
+  }
+ }catch(e){
+  status.textContent='Account check unavailable ('+(e.code||'unknown')+'). No odds were requested.';
+ }finally{btn.disabled=false}
+});
+
 document.getElementById('detailedPropsBtn')?.addEventListener('click',async()=>{
  const btn=document.getElementById('detailedPropsBtn'),status=document.getElementById('detailedPropsStatus'),out=document.getElementById('detailedPropsResult');
  if(!auth.currentUser){status.textContent='Sign in first.';return}
