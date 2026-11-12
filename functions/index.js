@@ -868,6 +868,10 @@ function ledgerExtractFinalFromEspn(summary,entry) {
       found=v;
     }
   }
+  // Stored research inputs must be sound even when the player was inactive.
+  if(!Number.isFinite(entry.line)||Math.floor(entry.line)+0.5!==entry.line||
+     !["Over","Under"].includes(entry.side))
+    throw new HttpsError("failed-precondition","Stored betting line is invalid.");
   // A true ESPN identity-matched DNP is distinct from an absent box score.
   // Conflicting DNP and non-DNP rows must stay unresolved.
   if(explicitDnp){
@@ -877,9 +881,6 @@ function ledgerExtractFinalFromEspn(summary,entry) {
   }
   if(found===null)
     throw new HttpsError("failed-precondition","Player stat unavailable or DNP not explicitly verified; record remains pending.");
-  if(!Number.isFinite(entry.line)||Math.floor(entry.line)+0.5!==entry.line||
-     !["Over","Under"].includes(entry.side))
-    throw new HttpsError("failed-precondition","Stored betting line is invalid.");
   return {stat:found,won:entry.side==="Over"?found>entry.line:found<entry.line};
 }
 exports.ledgerSettleProspective=onCall(
