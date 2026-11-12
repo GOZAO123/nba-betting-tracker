@@ -5,7 +5,8 @@ const fs = require("node:fs");
 const path = require("node:path");
 const {
  MAX_BATCH_CAPTURE_ITEMS, MAX_BATCH_CAPTURE_EVENTS, MAX_BATCH_CAPTURE_TEAMS,
- EXPECTED_LOOKUPS_LIMIT, safeFailure, planBatchCapture, runBatchCapture
+ EXPECTED_LOOKUPS_LIMIT, MAX_BATCH_CAPTURE_PROCESSING_MS,
+ safeFailure, planBatchCapture, runBatchCapture
 } = require("./batch-capture");
 
 const good = (n = 1, override = {}) => ({
@@ -104,7 +105,8 @@ test("ESPN and Firestore errors reject only their own row with no fabricated suc
  });
  assert.deepEqual(result.results.map(x=>x.status),["saved","rejected","saved"]);
  assert.equal(result.results[1].code,"already-exists");
- assert.equal(result.results[1].message,"This selection already exists.");
+ assert.equal(result.results[1].message,
+  "This observation may already exist. Refresh the cloud ledger before retrying.");
  assert.equal(result.rejected,1);
 });
 
@@ -114,8 +116,9 @@ test("Missing receipt is rejected; never mark a Firestore write successful by as
   const res=await runBatchCapture({items:[good(1)],validateCapture:validate,
    makeRecordId:makeId,captureOne:async()=>receipt});
   assert.equal(res.saved,0);
-  assert.equal(res.results[0].status,"rejected");
-  assert.match(res.results[0].message,/Check the cloud ledger/);
+  assert.equal(res.results[0].status,"unconfirmed");
+  assert.equal(res.unconfirmed,1);
+  assert.match(res.results[0].message,/cloud ledger/);
  }
 });
 
@@ -127,8 +130,13 @@ test("Unknown exceptions cannot disclose internal details or credentials", async
  });
  assert.equal(r.saved,0);
  assert.equal(r.results[0].code,"unavailable");
+ assert.equal(r.results[0].status,"unconfirmed");
+ assert.equal(r.unconfirmed,1);
+ assert.equal(r.rejected,0);
+ assert.equal(r.requiresLedgerRefresh,true);
  assert.doesNotMatch(JSON.stringify(r),/Never show/);
  assert.deepEqual(safeFailure({code:"other",message:secret}).status,"rejected");
+ assert.equal(safeFailure({code:"unavailable",message:secret},true).status,"unconfirmed");
 });
 
 test("Valid data above the unique game/team cap fails before ESPN or Firestore calls", async () => {
@@ -323,4 +331,105 @@ test("Trusted transaction rejects duplicate document and near-tipoff writes",asy
   hits12:5,games12:12,modelOver:.5};
  await assert.rejects(h.fn("test-account",late),err=>err.code==="failed-precondition");
  assert.equal(h.records.size,1);
+});
+
+
+test("Recognized Firebase error codes never echo arbitrary upstream text or secrets", async()=>{
+ const secret="Sensitive /internal/path?auth=secret or Firebase private details";
+ for(const code of ["already-exists","failed-precondition","invalid-argument",
+  "unavailable","deadline-exceeded","resource-exhausted","permission-denied"]){
+  const r=await runBatchCapture({items:[good(1)],validateCapture:validate,
+   makeRecordId:makeId,
+   captureOne:async()=>{
+    throw Object.assign(new Error(secret),{code});
+   }});
+  assert.equal(r.results[0].code,code);
+  assert.doesNotMatch(JSON.stringify(r),/Sensitive|secret|internal\/path/);
+  assert.match(r.results[0].message,/ledger|authorized|Google|fields|check|limit|timed out/i);
+  assert.equal(r.results[0].status,
+   ["already-exists","failed-precondition","invalid-argument","permission-denied"].includes(code)?
+   "rejected":"unconfirmed");
+ }
+});
+
+test("A batch stops STARTING new records after its safe processing deadline",async()=>{
+ assert.equal(MAX_BATCH_CAPTURE_PROCESSING_MS,210000);
+ const items=[good(1),good(2),good(3),good(4)];
+ let clock=1000,called=0;
+ const r=await runBatchCapture({
+  items,validateCapture:validate,makeRecordId:makeId,now:()=>clock,
+  captureOne:async record=>{
+   called++;
+   if(called===1)clock+=200000; // second row may start
+   else if(called===2)clock+=20000; // no further rows may start
+   return save(record);
+  }
+ });
+ assert.equal(called,2);
+ assert.deepEqual(r.results.map(x=>x.status),
+  ["saved","saved","not-attempted","not-attempted"]);
+ assert.equal(r.saved,2);
+ assert.equal(r.notAttempted,2);
+ assert.equal(r.unconfirmed,0);
+ assert.equal(r.rejected,0);
+ assert.equal(r.requiresLedgerRefresh,true);
+ assert.match(r.results[2].message,/BEFORE this row started/);
+ assert.equal(r.results[2].recordId,undefined);
+ assert.equal(r.results[3].serverCapturedMs,undefined);
+});
+
+test("Deadline is evaluated before the first write, and never fabricates results",async()=>{
+ let clock=0,calls=0;
+ const r=await runBatchCapture({
+  items:[good(1),good(2)],validateCapture:validate,makeRecordId:makeId,
+  now:()=>{clock+=MAX_BATCH_CAPTURE_PROCESSING_MS;return clock;},
+  captureOne:async()=>{calls++;return save(good(1));}
+ });
+ assert.equal(calls,0);
+ assert.deepEqual(r.results.map(x=>x.status),["not-attempted","not-attempted"]);
+ assert.equal(r.saved,0);
+ assert.equal(r.notAttempted,2);
+ assert.equal(r.requiresLedgerRefresh,true);
+});
+
+test("Validated rejection, uncertain completed attempt and deadline are counted separately",async()=>{
+ const items=[
+  good(1,{athleteId:"bad"}),
+  good(2),good(3),good(4)
+ ];
+ let clock=0,calls=0;
+ const r=await runBatchCapture({
+  items,validateCapture:validate,makeRecordId:makeId,now:()=>clock,
+  captureOne:async record=>{
+   calls++;
+   if(calls===1){
+    throw Object.assign(new Error("network credentials must not leak"),{code:"unavailable"});
+   }
+   clock=MAX_BATCH_CAPTURE_PROCESSING_MS;
+   return save(record);
+  }
+ });
+ assert.equal(calls,2);
+ assert.deepEqual(r.results.map(x=>x.status),
+  ["rejected","unconfirmed","saved","not-attempted"]);
+ assert.equal(r.total,4);
+ assert.equal(r.saved,1);
+ assert.equal(r.rejected,1);
+ assert.equal(r.unconfirmed,1);
+ assert.equal(r.notAttempted,1);
+ assert.equal(r.requiresLedgerRefresh,true);
+ assert.doesNotMatch(JSON.stringify(r),/network credentials/);
+});
+
+test("Server wiring still bounds runtime under function timeout, with no new paid API call",()=>{
+ const index=fs.readFileSync(path.join(__dirname,"index.js"),"utf8");
+ const timeout=Number(/exports\.ledgerBatchCaptureProspective = onCall\([\s\S]*?timeoutSeconds:\s*(\d+)/.exec(index)?.[1]);
+ assert.equal(timeout,300);
+ assert.ok(MAX_BATCH_CAPTURE_PROCESSING_MS<=((timeout-60)*1000));
+ const code=fs.readFileSync(path.join(__dirname,"batch-capture.js"),"utf8");
+ assert.match(code,/const MAX_BATCH_CAPTURE_PROCESSING_MS = 210000/);
+ assert.match(code,/status: "not-attempted"/);
+ assert.match(code,/status: unconfirmed \? "unconfirmed" : "rejected"/);
+ assert.match(code,/requiresLedgerRefresh: results\.some/);
+ assert.doesNotMatch(code,/oddsPapiKey|reserveDiagnosticRequests|setInterval|fetch\(/);
 });
