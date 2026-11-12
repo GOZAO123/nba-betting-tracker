@@ -713,47 +713,88 @@ function ledgerDocId(record) {
   return [record.eventId,record.athleteId,record.market,
     String(record.line).replace(".","p"),record.side].join("_");
 }
-exports.ledgerCaptureProspective=onCall(
-  {region:"europe-west1",maxInstances:1,concurrency:5,timeoutSeconds:45,
-    memory:"256MiB",enforceAppCheck:false},
-  async request=>{
+// Share the same ESPN roster, fixture, duplicate and Firestore receipt checks
+// between the deployed single-record callable and the new, undeployed batch
+// callable. A request-local cache avoids redundant ESPN lookups, not identity checks.
+async function ledgerGetCachedEspn(path, cache) {
+  if (!cache) return ledgerGetEspn(path);
+  if (!cache.has(path)) cache.set(path, ledgerGetEspn(path));
+  return cache.get(path);
+}
+async function ledgerCaptureValidated(uid, record, cache = null) {
+  const day = ledgerNbaDay(new Date(record.start));
+  const board = await ledgerGetCachedEspn("scoreboard?dates=" + day, cache?.scoreboards);
+  const verifiedGame = ledgerVerifyFixture(board, record);
+  const roster = await ledgerGetCachedEspn("teams/" + record.teamId + "/roster", cache?.rosters);
+  ledgerVerifyRoster(roster, record);
+  const db = getFirestore(), id = ledgerDocId(record);
+  const ref = db.doc("users/" + uid + "/propResearchLedger/" + id);
+  // Server-controlled capture timestamp; independent of browser clock.
+  // The transaction, immutable fields and duplicate rejection match the
+  // original single-record capture behavior.
+  const receipt = await db.runTransaction(async tx => {
+    const previous = await tx.get(ref);
+    if (previous.exists) throw new HttpsError("already-exists",
+      "This game, player, market, line and side were already recorded.");
+    if (Date.now() + LEDGER_CAPTURE_GRACE_MS >= record.start)
+      throw new HttpsError("failed-precondition", "Too near tip-off; no record saved.");
+    const captured = Timestamp.now();
+    tx.create(ref, {
+      schemaVersion: 2, status: "pending", source: "manual_betano_unverified",
+      capturedVia: "trusted_firebase_callable",
+      player: record.player, athleteId: record.athleteId,
+      team: record.team, teamId: record.teamId,
+      eventId: record.eventId, eventStartMs: record.start,
+      home: verifiedGame.home, away: verifiedGame.away,
+      homeId: record.homeId, awayId: record.awayId,
+      market: record.market, line: record.line, side: record.side, odds: record.odds,
+      modelOver: record.modelOver,
+      modelSelected: record.side === "Over" ? record.modelOver : 1 - record.modelOver,
+      hits12: record.hits12, games12: record.games12,
+      hits24: record.hits24, games24: record.games24,
+      capturedServerAt: captured, clientCapturedMs: captured.toMillis(),
+      settledAt: null, resultStat: null, resultWon: null,
+      disclaimer: "Manual Betano quote not provider-verified. Client-researched model estimate is uncalibrated."
+    });
+    return captured.toMillis();
+  }, { maxAttempts: 3 });
+  return { saved: true, recordId: id, serverCapturedMs: receipt, verifiedEventId: record.eventId };
+}
+exports.ledgerCaptureProspective = onCall(
+  { region: "europe-west1", maxInstances: 1, concurrency: 5, timeoutSeconds: 45,
+    memory: "256MiB", enforceAppCheck: false },
+  async request => {
     ledgerAssertOwner(request);
-    const record=ledgerValidateCapture(request.data);
-    const day=ledgerNbaDay(new Date(record.start));
-    const board=await ledgerGetEspn("scoreboard?dates="+day);
-    const verifiedGame=ledgerVerifyFixture(board,record);
-    const roster=await ledgerGetEspn("teams/"+record.teamId+"/roster");
-    ledgerVerifyRoster(roster,record);
-    const db=getFirestore(),id=ledgerDocId(record);
-    const ref=db.doc("users/"+request.auth.uid+"/propResearchLedger/"+id);
-    // Server-controlled capture timestamp; independent of browser clock.
-    const receipt=await db.runTransaction(async tx=>{
-      const previous=await tx.get(ref);
-      if (previous.exists)throw new HttpsError("already-exists",
-        "This game, player, market, line and side were already recorded.");
-      if (Date.now()+LEDGER_CAPTURE_GRACE_MS>=record.start)
-        throw new HttpsError("failed-precondition","Too near tip-off; no record saved.");
-      const captured=Timestamp.now();
-      tx.create(ref,{
-        schemaVersion:2,status:"pending",source:"manual_betano_unverified",
-        capturedVia:"trusted_firebase_callable",
-        player:record.player,athleteId:record.athleteId,
-        team:record.team,teamId:record.teamId,
-        eventId:record.eventId,eventStartMs:record.start,
-        home:verifiedGame.home,away:verifiedGame.away,
-        homeId:record.homeId,awayId:record.awayId,
-        market:record.market,line:record.line,side:record.side,odds:record.odds,
-        modelOver:record.modelOver,
-        modelSelected:record.side==="Over"?record.modelOver:1-record.modelOver,
-        hits12:record.hits12,games12:record.games12,
-        hits24:record.hits24,games24:record.games24,
-        capturedServerAt:captured,clientCapturedMs:captured.toMillis(),
-        settledAt:null,resultStat:null,resultWon:null,
-        disclaimer:"Manual Betano quote not provider-verified. Client-researched model estimate is uncalibrated."
+    const record = ledgerValidateCapture(request.data);
+    return ledgerCaptureValidated(request.auth.uid, record);
+  }
+);
+
+// Update 35.0F: bounded, owner-only, explicitly invoked batch capture.
+// NO automatic calls from the browser, no OddsPapi usage and no scheduling.
+// This function is not deployed until the owner separately approves deployment.
+const { runBatchCapture, MAX_BATCH_CAPTURE_ITEMS } = require("./batch-capture");
+exports.ledgerBatchCaptureProspective = onCall(
+  { region: "europe-west1", maxInstances: 1, concurrency: 1, timeoutSeconds: 300,
+    memory: "256MiB", enforceAppCheck: false },
+  async request => {
+    ledgerAssertOwner(request);
+    const items = request.data?.items;
+    if (!Array.isArray(items) || items.length < 1 || items.length > MAX_BATCH_CAPTURE_ITEMS)
+      ledgerReject("Select 1 to 20 manually confirmed prospective observations.");
+    try {
+      return await runBatchCapture({
+        items, validateCapture: ledgerValidateCapture, makeRecordId: ledgerDocId,
+        captureOne: (record, cache) =>
+          ledgerCaptureValidated(request.auth.uid, record, cache)
       });
-      return captured.toMillis();
-    },{maxAttempts:3});
-    return {saved:true,recordId:id,serverCapturedMs:receipt,verifiedEventId:record.eventId};
+    } catch (error) {
+      // Planner cap/shape errors fail without any ESPN or Firebase writes.
+      if (error instanceof HttpsError) throw error;
+      ledgerReject("Batch rejected before capture: " +
+        (error.message === "Batch exceeds the safety cap of 12 unique events and 12 unique teams." ?
+          error.message : "invalid batch request."));
+    }
   }
 );
 
