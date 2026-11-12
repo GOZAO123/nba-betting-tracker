@@ -336,31 +336,45 @@ main{width:100%;min-width:0}
 .batch-research-table .batch-research-error{color:#ffc999;white-space:normal;overflow-wrap:anywhere;min-width:170px}
 @media(max-width:700px){.batch-research-actions button{width:100%}}
 
-/* Update 35.0E: local-only pre-capture review, not a server capture authorization. */
+/* Update 35.0E/F3: accessible review cards instead of seven cramped table columns. */
 .batch-review-panel{border:1px solid #385874;border-radius:11px;padding:12px;min-width:0}
 .batch-review-panel>summary{font-weight:700;font-size:1rem;min-height:30px}
 .batch-review-panel[open]>summary{margin-bottom:10px}
-.batch-review-table{max-width:100%;width:100%;overflow-x:auto;overscroll-behavior-x:contain}
-.batch-review-table table{min-width:760px;font-size:.81rem}
-.batch-review-table th:first-child,.batch-review-table td:first-child{min-width:150px;white-space:normal;overflow-wrap:anywhere}
-.batch-review-table td{vertical-align:top;white-space:normal;overflow-wrap:anywhere}
-.batch-review-table td.batch-review-status{min-width:150px}
-.batch-review-table td.batch-review-status strong{display:block}
-.batch-review-table td.batch-review-status span{display:block;margin-top:5px;font-size:.75rem;color:#a9c6da}
-.batch-review-table button{min-width:135px;white-space:normal}
+.batch-review-table{display:grid;gap:12px;max-width:100%;min-width:0}
+.batch-review-card{min-width:0;display:grid;gap:12px;padding:13px;background:#162a40;border:1px solid #385773;border-radius:11px}
+.batch-review-header{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:10px;min-width:0}
+.batch-review-heading{flex:1 1 210px;min-width:0}
+.batch-review-heading h4{font-size:.98rem;line-height:1.4;margin:0 0 5px;overflow-wrap:break-word}
+.batch-review-quote{font-size:.86rem;color:#c4d9eb;overflow-wrap:break-word}
+.batch-review-status{flex:1 1 240px;min-width:0;font-size:.85rem;line-height:1.45}
+.batch-review-status strong{display:block}
+.batch-review-status span{display:block;margin-top:3px;font-size:.8rem;color:#a9c6da;overflow-wrap:break-word}
+.batch-review-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px;min-width:0}
+.batch-review-field{min-width:0;padding:10px;border:1px solid #344f69;border-radius:9px;background:#1b3049}
+.batch-review-label{display:block;color:#b6d2e7;font-size:.76rem;font-weight:700;margin-bottom:7px}
+.batch-review-detail{font-size:.83rem;line-height:1.5;overflow-wrap:break-word}
+.batch-review-detail strong{display:block}
+.batch-review-detail span{display:block;margin-top:4px}
+.batch-review-footer{display:flex;flex-wrap:wrap;align-items:stretch;gap:10px;padding-top:10px;border-top:1px solid #35516b;min-width:0}
+.batch-review-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center;min-width:0}
+.batch-review-actions button{min-height:40px;min-width:134px}
+.batch-review-approval{flex:1 1 270px;min-width:0;border:1px solid #3a5975;border-radius:9px;padding:10px;background:#1b3049}
 .batch-review-good{color:#7ce0be}
 .batch-review-warn{color:#ffc58e}
 .batch-review-metrics{font-size:.86rem;margin:9px 0}
+@media(max-width:850px){.batch-review-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:600px){.batch-review-grid{grid-template-columns:minmax(0,1fr)}.batch-review-header{display:grid;gap:8px}.batch-review-actions{width:100%}.batch-review-actions button{flex:1 1 135px}.batch-review-approval{flex:1 1 100%}}
 
 /* Update 35.0F2: per-row explicit approval and offline-only capture rehearsal. */
 .batch-capture-actions{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin:10px 0}
 .batch-capture-actions button{min-height:40px}
 .batch-capture-status{font-size:.83rem;line-height:1.6}
 .batch-capture-badge{font-size:.75rem;font-weight:700}
-.batch-capture-approval{display:flex;align-items:flex-start;gap:8px}
-.batch-capture-approval input{margin-top:4px;flex-shrink:0}
-.batch-capture-approval label{font-size:.78rem;line-height:1.4}
-@media(max-width:700px){.batch-capture-actions button{width:100%}.batch-capture-approval label{font-size:.82rem}}
+.batch-capture-approval{display:flex;align-items:flex-start;gap:10px;min-width:0}
+.batch-capture-approval input{margin-top:4px;flex-shrink:0;width:19px;height:19px}
+.batch-capture-approval label{display:block;flex:1;min-width:0;font-size:.86rem;line-height:1.5;overflow-wrap:break-word;cursor:pointer}
+.batch-capture-approval label[aria-disabled="true"]{cursor:default}
+@media(max-width:700px){.batch-capture-actions button{width:100%}}
 </style></head><body><main><div class="bar"><div><h1>🏀 NBA Betting Tracker</h1><p>One player, one check — synced across devices</p></div><div class="header-actions"><button id="layoutModeToggle" type="button" class="mini" aria-label="Switch between wide and mobile layouts">📱 Mobile view</button><button id="updateAppButton" type="button" class="mini" title="Load the newest app version from GitHub Pages">↻ Update app</button><button id="signout" hidden>Sign out</button></div></div><section class="panel" id="login"><h2>Sign in</h2><p>Use the same Google account on Android and PC to see the same checklist.</p><button class="primary" id="signin">Continue with Google</button><p class="muted" id="loginmsg"></p></section><div id="app"><nav class="tabs" aria-label="App sections"><button type="button" data-tab="scanner" aria-selected="true">🤖 AI Scanner</button><button type="button" data-tab="games" aria-selected="false">🏀 NBA Games</button><button type="button" data-tab="analyzer" aria-selected="false">📊 Props Analyzer</button><button type="button" data-tab="checklist" aria-selected="false">✅ Checklist</button></nav><section id="scannerTab" class="panel scanner-panel">
  <header class="scanner-hero"><div><span class="scanner-eyebrow">NBA ANALYTICS · BETANO PT</span><h2>🤖 AI Scanner</h2><p class="muted">Your workspace for NBA player-prop research.</p></div><span class="scanner-badge">● Manual mode</span></header>
  <div class="scanner-overview" aria-label="Scanner overview">
