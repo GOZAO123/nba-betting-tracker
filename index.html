@@ -1777,6 +1777,74 @@ function batchCaptureSelectedPlan(items,approvals,stages,rechecks,events,teams,
 }
 // Update 35.0F2 pure selection END
 
+// Update 35.0F4: deterministic client receipts and exact cloud reconciliation.
+function batchCaptureDocId(p){
+ return [p.eventId,p.athleteId,p.market,
+  String(p.line).replace('.','p'),p.side].join('_');
+}
+const BATCH_CAPTURE_CODES=Object.freeze({
+ 'invalid-argument':'Input or verification rejected.',
+ 'failed-precondition':'Fixture, roster or capture-time check rejected.',
+ 'already-exists':'This record may already exist in the cloud ledger.',
+ 'permission-denied':'Account not authorized for research capture.',
+ 'unauthenticated':'Sign in before saving.',
+ 'resource-exhausted':'Server limit reached.',
+ 'unavailable':'Server or ESPN operation could not be confirmed.',
+ 'deadline-exceeded':'Server operation timed out.'
+});
+function batchCaptureInterpret(response,items){
+ const raw=response?.results,complete=Array.isArray(raw)&&
+  raw.length===items.length&&response.total===items.length;
+ return items.map((item,index)=>{
+  const id=batchCaptureDocId(item),r=complete?raw[index]:null;
+  const base={index,recordId:id,player:item.player,market:item.market,
+   line:item.line,side:item.side,odds:item.odds};
+  if(!r||r.index!==index||
+    !['saved','rejected','unconfirmed','not-attempted'].includes(r.status))
+   return {...base,status:'unconfirmed',
+    message:'Server response incomplete. Check the exact cloud record before any retry.'};
+  if(r.status==='saved'){
+   if(r.recordId===id&&Number.isSafeInteger(r.serverCapturedMs)&&r.serverCapturedMs>0)
+    return {...base,status:'saved',serverCapturedMs:r.serverCapturedMs,
+     message:'Server receipt returned; use Check exact cloud receipts to verify.'};
+   return {...base,status:'unconfirmed',
+    message:'Invalid or missing server receipt; verify the cloud ledger before retrying.'};
+  }
+  const code=Object.hasOwn(BATCH_CAPTURE_CODES,r.code)?r.code:'unavailable';
+  return {...base,status:r.status,code,
+   message:r.status==='not-attempted'?'Row not started due to server time limit.':
+    BATCH_CAPTURE_CODES[code]};
+ });
+}
+function batchCaptureMatchesCloud(payload,docData){
+ if(!payload||!docData||docData.schemaVersion!==2||
+  docData.source!=='manual_betano_unverified'||
+  docData.capturedVia!=='trusted_firebase_callable')return false;
+ const fields=['player','team','athleteId','teamId','eventId',
+  'homeId','awayId','market','line','side','odds','modelOver',
+  'hits12','games12','hits24','games24'];
+ if(fields.some(k=>!Object.is(payload[k]??null,docData[k]??null)))return false;
+ const ms=docData.capturedServerAt?.toMillis?.();
+ return Number.isSafeInteger(ms)&&ms>0&&docData.clientCapturedMs===ms&&
+  docData.eventStartMs===payload.eventStartMs&&
+  ['pending','settled'].includes(docData.status);
+}
+function batchCaptureReconcileResult(receipt,found,docData,payload){
+ if(!found)return {...receipt,cloudStatus:'missing',
+  cloudMessage:receipt.status==='unconfirmed'?
+  'Not found at this check; still uncertain. Do not automatically retry.':
+  receipt.status==='saved'?
+  'Server returned a receipt, but document is missing now. Investigate before retry.':
+  'No cloud document found at this check. Reconfirm later before retrying.'};
+ if(!batchCaptureMatchesCloud(payload,docData))
+  return {...receipt,cloudStatus:'mismatch',
+   cloudMessage:'Cloud document exists but its frozen fields or receipt differ. Do not overwrite or retry.'};
+ return {...receipt,cloudStatus:'verified',serverCapturedMs:docData.clientCapturedMs,
+  cloudMessage:'Read-only Firestore check verified the exact frozen observation and server receipt.'};
+}
+// Update 35.0F4 pure receipt checks END
+
+
 
 
 const batchResearchRun=document.getElementById('batchResearchRun'),
@@ -1785,13 +1853,16 @@ const batchResearchRun=document.getElementById('batchResearchRun'),
 let batchResearchBusy=false,batchResearchEpoch=0,batchResearchPreview=new Map();
 // Deliberately false until owner explicitly approves a production Firebase
 // deployment AND a separate security-reviewed release enabling the callable.
-const BATCH_CAPTURE_DEPLOYED=false;
+const BATCH_CAPTURE_DEPLOYED=true; // Confirmed v2 callable in production (12 Nov 2026).
 const batchCaptureVerify=document.getElementById('batchCaptureVerify'),
  batchCaptureVerifyStatus=document.getElementById('batchCaptureVerifyStatus'),
  batchCaptureDryRun=document.getElementById('batchCaptureDryRun'),
  batchCaptureSubmit=document.getElementById('batchCaptureSubmit'),
- batchCaptureStatus=document.getElementById('batchCaptureStatus');
+ batchCaptureStatus=document.getElementById('batchCaptureStatus'),
+ batchCaptureReconcile=document.getElementById('batchCaptureReconcile'),
+ batchCaptureReport=document.getElementById('batchCaptureReport');
 let batchCaptureStages=new Map(),batchCaptureApprovals=new Map();
+let batchCaptureBusy=false,batchCaptureAttempt=null;
 const batchReviewSummary=document.getElementById('batchReviewSummary'),
  batchReviewRows=document.getElementById('batchReviewRows'),
  batchCaptureReview=document.getElementById('batchCaptureReview');
