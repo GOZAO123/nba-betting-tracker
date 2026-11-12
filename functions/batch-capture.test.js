@@ -208,12 +208,20 @@ test("Backend wiring preserves authenticated owner, exact ESPN checks and transa
  assert.doesNotMatch(code,/oddsPapiKey|reserveDiagnosticRequests|setInterval/);
 });
 
-test("Only explicit backend invocation can run the batch; frontend has no capture bypass", () => {
+test("Batch capture requires explicit final confirmation; ordinary research never invokes Firebase", () => {
  const frontend=fs.readFileSync(path.join(__dirname,"..","index.html"),"utf8");
- assert.doesNotMatch(frontend,/ledgerBatchCaptureProspective/);
  assert.match(frontend,/captureAuthorized:false/);
  assert.match(frontend,/batchReviewAssess/);
+ assert.match(frontend,/batchCaptureSubmit\.addEventListener\('click',async/);
+ assert.match(frontend,/if\(!confirm\('SAVE '\+plan\.count/);
+ assert.match(frontend,/const second=batchCaptureSelectedPlan/);
+ assert.match(frontend,/httpsCallable\(oddsFunctions,'ledgerBatchCaptureProspective'\)\(\{items\}\)/);
+ assert.equal((frontend.match(/httpsCallable\(oddsFunctions,'ledgerBatchCaptureProspective'\)/g)||[]).length,1);
+ const research=frontend.slice(frontend.indexOf("// Update 35.0D: one explicitly triggered"),
+  frontend.indexOf("// Update 35.0F4: trusted callable"));
+ assert.doesNotMatch(research,/httpsCallable|setDoc|runTransaction|setInterval/);
  assert.match(frontend,/httpsCallable\(oddsFunctions,'ledgerCaptureProspective'\)/);
+ assert.match(frontend,/getDocFromServer\(ledgerRef\(uid,id\)\)/);
  const source=fs.readFileSync(path.join(__dirname,"batch-capture.js"),"utf8");
  assert.doesNotMatch(source,/oddsPapi|fetch\s*\(|setInterval|firebase-admin|getFirestore/gi);
 });
