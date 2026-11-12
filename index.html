@@ -1662,10 +1662,79 @@ function batchReviewAssess(item,preview,fixture,recheck,teams,now=Date.now(),gra
 }
 // Update 35.0E pure review END
 
+// Update 35.0F2 — independent, fresh capture-review evidence from the
+// existing ESPN identity/log runner. This is LOCAL state, not a trusted receipt.
+function batchCaptureStage(item,athleteId,result,fixture,teams,at=Date.now(),grace=300000){
+ const teamId=teams[item?.team];
+ if(!result||result.status!=='ready'||!Number.isSafeInteger(at)||
+   !/^\d{1,20}$/.test(String(athleteId||''))||
+   (item.espnAthleteId&&String(item.espnAthleteId)!==String(athleteId))||
+   !fixture||fixture.id!==item.eventId||fixture.start!==item.eventStartMs||
+   fixture.start<=at+grace||![fixture.homeId,fixture.awayId].includes(teamId)||
+   !Number.isFinite(result.modelOver)||result.modelOver<.02||result.modelOver>.98||
+   !Number.isInteger(result.overHits12)||result.overHits12<0||result.overHits12>12||
+   result.sample12!==12||
+   !((result.sample24===null&&result.overHits24===null)||
+     (result.sample24===24&&Number.isInteger(result.overHits24)&&
+      result.overHits24>=0&&result.overHits24<=24))||
+   lrValidateLine(item.line)===null||!Number.isFinite(lrValidateOdds(item.odds)))
+  return null;
+ return {
+  signature:batchReviewSignature(item),at,
+  payload:{
+   player:item.player,team:item.team,athleteId:String(athleteId),teamId,
+   eventId:fixture.id,eventStartMs:fixture.start,
+   homeId:fixture.homeId,awayId:fixture.awayId,
+   market:item.market,line:item.line,side:item.side,odds:item.odds,
+   modelOver:result.modelOver,hits12:result.overHits12,games12:12,
+   hits24:result.overHits24,games24:result.sample24,
+   confirmedObservedQuote:true
+  }
+ };
+}
+function batchCaptureAssess(item,stage,fixture,recheck,teams,now=Date.now(),grace=300000){
+ const signature=batchReviewSignature(item),p=stage?.payload,teamId=teams[item?.team];
+ const fresh=Number.isSafeInteger(stage?.at)&&stage.at<=now&&
+  now-stage.at<=5*60000&&stage.signature===signature;
+ const quote=Boolean(recheck?.signature===signature&&
+  Number.isSafeInteger(recheck.at)&&recheck.at<=now&&now-recheck.at<=5*60000);
+ const validFixture=Boolean(fixture&&fixture.id===item?.eventId&&
+  fixture.start===item.eventStartMs&&fixture.start>now+grace&&
+  [fixture.homeId,fixture.awayId].includes(teamId));
+ const bound=Boolean(p&&p.player===item.player&&p.team===item.team&&
+  p.market===item.market&&p.line===item.line&&p.side===item.side&&
+  p.odds===item.odds&&p.teamId===teamId&&
+  p.eventId===item.eventId&&p.eventStartMs===item.eventStartMs&&
+  p.homeId===fixture?.homeId&&p.awayId===fixture?.awayId&&
+  /^\d{1,20}$/.test(String(p.athleteId||''))&&
+  (!item.espnAthleteId||p.athleteId===String(item.espnAthleteId))&&
+  p.confirmedObservedQuote===true&&
+  Number.isFinite(p.modelOver)&&p.modelOver>=.02&&p.modelOver<=.98&&
+  Number.isInteger(p.hits12)&&p.hits12>=0&&p.hits12<=12&&p.games12===12&&
+  ((p.hits24===null&&p.games24===null)||
+  (p.games24===24&&Number.isInteger(p.hits24)&&p.hits24>=0&&p.hits24<=24)));
+ const reasons=[];
+ if(!fresh||!bound)reasons.push('Refresh this exact line via separate ESPN capture review (last 5 minutes)');
+ if(!validFixture)reasons.push('Reload the correct upcoming ESPN fixture');
+ if(!quote)reasons.push('Reconfirm current Betano line and price (last 5 minutes)');
+ return {ready:reasons.length===0,reasons,quote,fresh,validFixture,bound};
+}
+// Update 35.0F2 pure eligibility END
+
+
 const batchResearchRun=document.getElementById('batchResearchRun'),
  batchResearchStatus=document.getElementById('batchResearchStatus'),
  batchResearchResults=document.getElementById('batchResearchResults');
 let batchResearchBusy=false,batchResearchEpoch=0,batchResearchPreview=new Map();
+// Deliberately false until owner explicitly approves a production Firebase
+// deployment AND a separate security-reviewed release enabling the callable.
+const BATCH_CAPTURE_DEPLOYED=false;
+const batchCaptureVerify=document.getElementById('batchCaptureVerify'),
+ batchCaptureVerifyStatus=document.getElementById('batchCaptureVerifyStatus'),
+ batchCaptureDryRun=document.getElementById('batchCaptureDryRun'),
+ batchCaptureSubmit=document.getElementById('batchCaptureSubmit'),
+ batchCaptureStatus=document.getElementById('batchCaptureStatus');
+let batchCaptureStages=new Map(),batchCaptureApprovals=new Map();
 const batchReviewSummary=document.getElementById('batchReviewSummary'),
  batchReviewRows=document.getElementById('batchReviewRows'),
  batchCaptureReview=document.getElementById('batchCaptureReview');
@@ -1673,14 +1742,18 @@ let batchQuoteRechecks=new Map();
 function batchResearchInvalidate(message='Draft list changed. Research batch again when ready.'){
  batchResearchEpoch++;
  batchResearchPreview.clear();batchResearchResults.replaceChildren();
- batchQuoteRechecks.clear();batchReviewDraw();
+ batchQuoteRechecks.clear();batchCaptureStages.clear();batchCaptureApprovals.clear();batchReviewDraw();
  batchResearchRun.disabled=batchResearchBusy||!batchOffers.length;
+ batchCaptureVerify.disabled=batchResearchBusy||!batchOffers.length;
+ batchCaptureVerifyStatus.textContent='Draft changed. Refresh ESPN separately for secure batch review.';
  batchResearchStatus.textContent=message;
 }
 function batchResearchReset(){
  batchResearchEpoch++;batchResearchBusy=false;batchResearchPreview.clear();
- batchQuoteRechecks.clear();batchResearchResults.replaceChildren();batchReviewDraw();
- batchResearchRun.disabled=true;
+ batchQuoteRechecks.clear();batchCaptureStages.clear();batchCaptureApprovals.clear();
+ batchResearchResults.replaceChildren();batchReviewDraw();
+ batchResearchRun.disabled=true;batchCaptureVerify.disabled=true;
+ batchCaptureVerifyStatus.textContent='Prepare genuine offers, then explicitly refresh ESPN for batch review.';
  batchResearchRun.textContent='Research entire batch (ESPN only)';
  batchResearchStatus.textContent='Prepare genuine local drafts, then run the ESPN-only preview. Nothing saved.';
 }
@@ -1786,6 +1859,7 @@ function batchReviewDraw(){
      ' @ '+Number(item.odds).toFixed(2)+
      '. This only marks a temporary manual recheck, NOT a bookmaker verification or Firebase capture.'))return;
    batchQuoteRechecks.set(item.key,{signature:batchReviewSignature(item),at:Date.now()});
+   batchCaptureApprovals.delete(item.key); // Any renewed quote acknowledgement requires fresh approval.
    batchReviewDraw();
   });
   const single=researchCreate('button','Use for research','mini');
@@ -1823,6 +1897,7 @@ function batchReset(){
 function batchRender(){
  batchOfferRows.replaceChildren();
  batchResearchRun.disabled=batchResearchBusy||!batchOffers.length;
+ batchCaptureVerify.disabled=batchResearchBusy||!batchOffers.length;
  for(const [i,item] of batchOffers.entries()){
   const row=researchCreate('div',null,'batch-offer-item');
   if(item.key===batchActiveKey)row.dataset.active='true';
