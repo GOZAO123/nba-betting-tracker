@@ -105,6 +105,7 @@ test("explicit ESPN DNP is a separate non-scoring category, never a win or loss"
  assert.match(html,/state==='DNP \/ NO ACTION'\?'DNP · no action'/);
  assert.match(html,/data\.voided===true/);
  assert.match(html,/resultStat===null&&data\.resultWon===null/);
+ assert.match(html,/Cloud refresh failed after the trusted server response/);
 });
 
 test("Wilson uncertainty reports sparse 0/2 outcomes and refuses n=0",()=>{
