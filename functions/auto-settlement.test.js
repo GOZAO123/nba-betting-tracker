@@ -206,6 +206,8 @@ test("same production ESPN extractor differentiates explicit DNP, real zero and 
   assert.throws(() => extract(finalBoxscore([{
     ...dnpPlayer(), stats: ["12:00", "6", "2", "1", "1-3"]
   }]), makeEntry()), /Contradictory ESPN DNP/);
+  assert.throws(() => extract(finalBoxscore([dnpPlayer()]),
+    makeEntry({line: -1})), /Stored betting line is invalid/);
   const noFinal = finalBoxscore([dnpPlayer()]);
   noFinal.header.competitions[0].status.type.state = "in";
   assert.throws(() => extract(noFinal, makeEntry()), /Game not completed/);
@@ -283,7 +285,7 @@ test("DNP transaction is idempotent and cannot overwrite manual settlement or ch
 test("manual trusted settlement includes server-only DNP transaction and no-action return", () => {
   const source = fs.readFileSync(path.join(__dirname, "index.js"), "utf8");
   const start = source.indexOf("exports.ledgerSettleProspective=onCall(");
-  const end = source.indexOf("const { onSchedule }", start);
+  const end = source.indexOf("// Update 34.6", start);
   assert.ok(start > 0 && end > start);
   const block = source.slice(start, end);
   assert.match(block, /ledgerAssertOwner\(request\)/);
