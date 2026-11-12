@@ -819,7 +819,7 @@ test("35.0F2 selection rejects duplicated trusted document IDs across two approv
  assert.match(p.problems.join(" "),/duplicate prospective/);
 });
 
-test("35.0F2 fresh check always requires manual initiation and never calls the undeployed backend",()=>{
+test("35.0F2 research refresh remains manually triggered; only 35.0F4 submit can invoke batch backend",()=>{
  for(const id of ["batchCaptureVerify","batchCaptureVerifyStatus","batchCaptureDryRun",
  "batchCaptureSubmit","batchCaptureStatus"]){
   assert.equal([...html.matchAll(new RegExp('id="'+id+'"','g'))].length,1,id);
@@ -833,10 +833,11 @@ test("35.0F2 fresh check always requires manual initiation and never calls the u
  assert.match(block,/batchCaptureStage\(item,player\.athlete\.id/);
  assert.match(block,/batchResearchMatchRoster/);
  assert.match(block,/auth\.currentUser\?\.uid===uid&&ledgerSession===session&&/);
- assert.doesNotMatch(block,/httpsCallable|setDoc|runTransaction|setInterval|oddsPapi[A-Z]/);
- assert.match(html,/const BATCH_CAPTURE_DEPLOYED=false/);
- assert.match(html,/batchCaptureSubmit\.disabled=true/);
- assert.doesNotMatch(html,/ledgerBatchCaptureProspective/);
+ const research=block.slice(0,block.indexOf("// Update 35.0F4: trusted callable"));
+ assert.doesNotMatch(research,/httpsCallable|setDoc|runTransaction|setInterval|oddsPapi[A-Z]/);
+ assert.match(html,/const BATCH_CAPTURE_DEPLOYED=true/);
+ assert.match(html,/batchCaptureSubmit\.addEventListener\('click'/);
+ assert.match(html,/httpsCallable\(oddsFunctions,'ledgerBatchCaptureProspective'\)/);
  assert.match(html,/httpsCallable\(oddsFunctions,'ledgerCaptureProspective'\)/);
 });
 
@@ -858,12 +859,13 @@ test("35.0F2 approvals are per-row, explicit and cleared by changes/signout",()=
  assert.doesNotMatch(block,/innerHTML|insertAdjacentHTML/);
 });
 
-test("35.0F2 review preserves unsupported-batch disablement on production",()=>{
- assert.match(html,/Batch capture is disabled until the trusted Firebase function is explicitly approved/);
- assert.match(html,/Secure batch capture — deployment pending/);
- assert.match(html,/batchCaptureSubmit\.disabled=true/);
- assert.match(html,/BATCH_CAPTURE_DEPLOYED=false/);
- assert.match(html,/This screen cannot write any batch observations/);
+test("35.0F2 staged research and approval alone cannot write without final explicit Save",()=>{
+ assert.match(html,/The trusted batch function is deployed/);
+ assert.match(html,/Securely save approved observations/);
+ assert.match(html,/batchCaptureSubmit\.disabled=!BATCH_CAPTURE_DEPLOYED/);
+ assert.match(html,/BATCH_CAPTURE_DEPLOYED=true/);
+ assert.match(html,/This checkbox only prepares approval/);
+ assert.match(html,/batchCaptureSubmit\.addEventListener\('click'/);
 });
 
 
@@ -917,10 +919,10 @@ test("35.0F3 cards preserve explicit manual quote recheck and approval confirmat
  assert.doesNotMatch(review,/httpsCallable|fetch\s*\(|setDoc|runTransaction|getDocsFromServer|setInterval/);
 });
 
-test("35.0F3 keeps cloud batch capture disabled, old research and Android viewport untouched",()=>{
- assert.match(html,/const BATCH_CAPTURE_DEPLOYED=false/);
- assert.match(html,/batchCaptureSubmit\.disabled=true/);
- assert.doesNotMatch(html,/ledgerBatchCaptureProspective/);
+test("35.0F3 keeps original research and Android viewport untouched through batch integration",()=>{
+ assert.match(html,/const BATCH_CAPTURE_DEPLOYED=true/);
+ assert.match(html,/batchCaptureSubmit\.disabled=!BATCH_CAPTURE_DEPLOYED/);
+ assert.match(html,/batchCaptureSubmit\.addEventListener\('click'/);
  assert.match(html,/function batchResearchDraw\(\)[\s\S]*?researchCreate\('table'\)/);
  assert.match(html,/batchResearchRun\.addEventListener\('click'/);
  assert.match(html,/batchCaptureVerify\.addEventListener\('click'/);
