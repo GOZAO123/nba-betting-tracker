@@ -1625,6 +1625,8 @@ function batchResearchEvaluate(item,games,cutoff=Date.now()){
  return {status:'ready',games:research.eligibleGames,
   hits12:selected(research.w12),sample12:research.w12.n,
   estimate:model(research.w12),
+  modelOver:research.w12.model,overHits12:research.w12.hits,
+  overHits24:research.w24?.hits??null,
   hits24:research.w24?selected(research.w24):null,
   sample24:research.w24?.n||null,
   estimate24:research.w24?model(research.w24):null};
@@ -2067,21 +2069,27 @@ batchOfferClear.addEventListener('click',()=>{
 // Update 35.0D: one explicitly triggered, bounded and non-capturing ESPN run.
 // 12 distinct team rosters + two season logs per unique player <= 52 URL lookups.
 // Existing readEspnIdentity reuses cached successful responses for 30 minutes.
-batchResearchRun.addEventListener('click',async()=>{
+async function batchExecuteResearch(forCapture=false){
  const user=auth.currentUser;
  if(!user||batchResearchBusy||ledgerBusy||ledgerPageBusy||lrRun.disabled)return;
  let plan;
  try{plan=batchResearchPlan(batchOffers,ESPN_NBA_TEAM_IDS)}
  catch(error){batchResearchStatus.textContent=error.message||String(error);return}
- if(!confirm('Research '+batchOffers.length+' local offers using ESPN only? '+
+ if(!confirm((forCapture?
+   'Refresh ESPN history and identity specifically for a short-lived capture review of ':
+   'Research ')+batchOffers.length+' local offers using ESPN only? '+
    'Up to '+plan.potentialRequests+' ESPN URL lookups may be needed (some may be cached). '+
    'No OddsPapi calls, betting recommendations or Firebase research writes.'))return;
  const uid=user.uid,session=ledgerSession,run=++batchResearchEpoch,
   snapshots=batchOffers.map(item=>({...item})),cutoff=Date.now();
  const stillCurrent=()=>auth.currentUser?.uid===uid&&ledgerSession===session&&
   batchResearchEpoch===run;
- batchResearchBusy=true;batchResearchRun.disabled=true;
+ batchResearchBusy=true;batchResearchRun.disabled=true;batchCaptureVerify.disabled=true;
  batchResearchRun.textContent='Researching ESPN batch…';
+ batchCaptureStages.clear();batchCaptureApprovals.clear();
+ batchCaptureVerifyStatus.textContent=forCapture?
+  'Refreshing verified ESPN evidence for each exact quote. Nothing is saved.':
+  'Previous secure-capture approvals cleared. Historical preview is not capture authorization.';
  batchResearchPreview.clear();batchResearchResults.replaceChildren();batchReviewDraw();
  try{
   const rosters=new Map();
@@ -2138,7 +2146,7 @@ batchResearchRun.addEventListener('click',async()=>{
   // Two player workers; each performs at most two sequential gamelog requests.
   await Promise.all(Array.from({length:Math.min(2,plan.players.length)},()=>worker()));
   if(!stillCurrent())return;
-  const preview=new Map();
+  const preview=new Map(),staged=new Map();
   let ready=0,insufficient=0,failed=0;
   for(const item of snapshots){
    const teamId=ESPN_NBA_TEAM_IDS[item.team],
@@ -2155,6 +2163,11 @@ batchResearchRun.addEventListener('click',async()=>{
        linked.start!==item.eventStartMs))
      throw Error('Linked ESPN fixture identity changed. Reload it before capture.');
     result=batchResearchEvaluate(item,player.games,cutoff);
+    if(forCapture&&result.status==='ready'&&linked){
+     const verification=batchCaptureStage(item,player.athlete.id,result,
+      linked,ESPN_NBA_TEAM_IDS,cutoff,LEDGER_GRACE);
+     if(verification)staged.set(item.key,verification);
+    }
     if(result.status==='ready')ready++;
     else insufficient++;
     const seasonNotes=player.notes.join('; ');
@@ -2170,7 +2183,12 @@ batchResearchRun.addEventListener('click',async()=>{
   }
   if(!stillCurrent())return;
   batchResearchPreview=preview;
+  if(forCapture)batchCaptureStages=staged;
   batchResearchDraw();
+  if(forCapture)batchCaptureVerifyStatus.textContent=staged.size+
+   ' of '+snapshots.length+' exact observations refreshed with ESPN-derived raw historical estimates. '+
+   'These temporary checks expire after five minutes; reconfirm bookmaker prices and approve each row. '+
+   'No Firebase writes or independently verified bookmaker odds.';
   batchResearchStatus.textContent='ESPN-only batch preview: '+ready+' historical estimates, '+
    insufficient+' with insufficient data, '+failed+' rejected ('+snapshots.length+
    ' local offers). Up to '+plan.potentialRequests+' endpoint lookups; cached replies reused. '+
@@ -2183,11 +2201,26 @@ batchResearchRun.addEventListener('click',async()=>{
  }finally{
   if(stillCurrent()){
    batchResearchBusy=false;batchResearchRun.disabled=!batchOffers.length;
+   batchCaptureVerify.disabled=!batchOffers.length;
    batchResearchRun.textContent='Research entire batch (ESPN only)';
+   batchReviewDraw();
   }
  }
+}
+batchResearchRun.addEventListener('click',async()=>{await batchExecuteResearch(false)});
+batchCaptureVerify.addEventListener('click',async()=>{await batchExecuteResearch(true)});
+batchCaptureDryRun.addEventListener('click',()=>{
+ if(!auth.currentUser||ledgerBusy||ledgerPageBusy||batchResearchBusy)return;
+ const plan=batchCaptureSelectedPlan(batchOffers,batchCaptureApprovals,batchCaptureStages,
+  batchQuoteRechecks,ledgerEvents,ESPN_NBA_TEAM_IDS,Date.now(),LEDGER_GRACE);
+ batchCaptureStatus.textContent=plan.ready?
+  plan.count+' exact quote observations passed local capture rehearsal. '+
+  'This is NOT a cloud write, Firebase receipt, verified bookmaker price or model validation. '+
+  'Production batch capture is DISABLED until separately approved.':
+  'Not ready for batch capture rehearsal: '+plan.problems.slice(0,5).join('; ')+
+  '. No Firebase writes occurred.';
 });
-
+batchCaptureSubmit.disabled=true; // Never call the undeployed function in Phase 2.
 
 // Update 34.3: manual, ESPN-verified prospective prop research ledger.
 const ledgerDate=document.getElementById('ledgerDate'),
