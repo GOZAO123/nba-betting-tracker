@@ -299,7 +299,7 @@ test("Trusted capture writes exact frozen fields and separate server receipt", a
 
 test("Under side stores complement of unvalidated over estimate; ESPN lookups deduplicated",async()=>{
  const h=makeCaptureHarness(),cache={scoreboards:new Map(),rosters:new Map()};
- const common={teamId:"11",start:Date.now()+3600000,homeId:"11",awayId:"27",
+ const common={eventId:"401000001",teamId:"11",start:Date.now()+3600000,homeId:"11",awayId:"27",
   hits12:7,games12:12,hits24:null,games24:null,modelOver:0.41};
  const a=good(1,{...common,side:"Under"});
  const b=good(2,{...common,side:"Over"});
@@ -308,7 +308,7 @@ test("Under side stores complement of unvalidated over estimate; ESPN lookups de
  assert.equal(h.records.size,2);
  assert.equal(h.calls.length,2);
  const entries=[...h.records.values()];
- assert.ok(entries.some(x=>x.modelSelected===0.59));
+ assert.ok(entries.some(x=>Math.abs(x.modelSelected-0.59)<1e-12));
  assert.ok(entries.some(x=>x.modelSelected===0.41));
 });
 
