@@ -191,6 +191,9 @@ function dnpPlayer() {
 test("same production ESPN extractor differentiates explicit DNP, real zero and absent stats", () => {
   const extract = getProductionExtractor();
   assert.deepEqual(extract(finalBoxscore([dnpPlayer()]), makeEntry()), { kind: "dnp" });
+  assert.deepEqual(extract(finalBoxscore([{
+    athlete: { id: "11" }, dnp: true, stats: []
+  }]), makeEntry()), { kind: "dnp" });
   const scored = extract(finalBoxscore([playedPlayer(["20:00", "12", "0", "3", "0-1"])]),
     makeEntry({ market: "REB", line: 0.5, side: "Under" }));
   assert.deepEqual(scored, { stat: 0, won: true });
