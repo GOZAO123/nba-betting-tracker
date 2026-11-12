@@ -8,9 +8,10 @@ function summarizeOddsAccount(account) {
   }
   const active = account.subscriptions.filter(s =>
     s && typeof s === "object" && s.is_active === true);
-  const selected = active.length === 1 ? active[0] :
-    active.filter(s => typeof account.current_subscription_id === "string" &&
-      s.subscription_id === account.current_subscription_id)[0];
+  const currentId = account.current_subscription_id;
+  const candidates = typeof currentId === "string" && currentId.length ?
+    active.filter(s => s.subscription_id === currentId) : active;
+  const selected = candidates.length === 1 ? candidates[0] : null;
   if (!selected) return {
     status: "subscription-unavailable",
     monthlyLimit: null, monthlyUsed: null, monthlyRemaining: null,
