@@ -2777,7 +2777,7 @@ function ledgerState(row){
  if(!Number.isFinite(ms))return 'UNVERIFIED TIMESTAMP';
  if(ms>=row.eventStartMs-LEDGER_GRACE)return 'LATE / EXCLUDED';
  if(row.status==='settled')return 'SETTLED';
- if(row.status==='void')return row.voidReason==='ESPN_EXPLICIT_DNP'?'DNP / VOID':'UNVERIFIED STATUS';
+ if(row.status==='void')return row.voidReason==='ESPN_EXPLICIT_DNP'?'DNP / NO ACTION':'UNVERIFIED STATUS';
  return row.status==='pending'?'PENDING':'UNVERIFIED STATUS';
 }
 function ledgerRef(uid,id){return doc(db,'users',uid,'propResearchLedger',id)}
@@ -2909,7 +2909,7 @@ function ledgerDashboardMetrics(rows,stateOf,hasMore=rows.length>=50){
  const add=(s,r,state)=>{
   s.records++;
   if(state==='PENDING'){s.pending++;return}
-  if(state==='DNP / VOID'){s.voided++;return}
+  if(state==='DNP / NO ACTION'){s.voided++;return}
   if(state!=='SETTLED'){s.excluded++;return}
   s.settled++;
   if(typeof r.resultWon!=='boolean'||!Number.isFinite(r.resultStat))return;
@@ -3037,7 +3037,7 @@ function ledgerDraw(){
    Number.isFinite(row.capturedServerAt?.toMillis?.())
     ?ledgerLisbonTime(row.capturedServerAt.toMillis())+(row.capturedVia==='trusted_firebase_callable'?' · Backend':' · Legacy'):'Server receipt not available',
    state,state==='SETTLED'?row.resultStat+' · '+(row.resultWon?'Won':'Lost'):
-    state==='DNP / VOID'?'DNP · no action':'—'
+    state==='DNP / NO ACTION'?'DNP · no action':'—'
   ])tr.append(researchCreate('td',v));
   const buttonCell=researchCreate('td');
   const button=researchCreate('button','Check ESPN final','mini');
