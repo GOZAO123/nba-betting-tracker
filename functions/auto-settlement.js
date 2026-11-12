@@ -39,19 +39,27 @@ function frozenFieldsMatch(before, after) {
 }
 
 async function writeVerifiedSettlement({ db, ref, original, outcome, serverTimestamp }) {
-  if (!Number.isFinite(outcome?.stat) || typeof outcome?.won !== "boolean")
+  const dnp = outcome?.kind === "dnp" &&
+    !Object.hasOwn(outcome, "stat") && !Object.hasOwn(outcome, "won");
+  if (!dnp && (outcome?.kind === "dnp" ||
+      !Number.isFinite(outcome?.stat) || typeof outcome?.won !== "boolean"))
     throw new Error("Invalid ESPN settlement outcome");
   return db.runTransaction(async tx => {
     const snapshot = await tx.get(ref);
     if (!snapshot.exists) return false;
     const current = snapshot.data();
     // A simultaneous manual settlement or retried scheduled invocation is a no-op.
-    if (current.status === "settled") return false;
+    if (current.status === "settled" || current.status === "void") return false;
     if (current.status !== "pending" || !frozenFieldsMatch(original, current) ||
         !Number.isSafeInteger(current.eventStartMs) ||
         receiptTime(current) >= current.eventStartMs - CAPTURE_GRACE_MS)
       throw new Error("Pending record or original frozen fields failed validation");
-    tx.update(ref, {
+    tx.update(ref, dnp ? {
+      // Research no-action, not independently authenticated bookmaker void.
+      status: "void", voidReason: "ESPN_EXPLICIT_DNP",
+      resultStat: null, resultWon: null, settledAt: serverTimestamp(),
+      settlementSource: "ESPN Final verified DNP by scheduled server: event/team/athlete"
+    } : {
       status: "settled", resultStat: outcome.stat, resultWon: outcome.won,
       settledAt: serverTimestamp(),
       settlementSource: "ESPN Final verified by scheduled server: event/team/athlete"
@@ -70,7 +78,7 @@ async function runAutomaticSettlement({ snapshots, now, fetchSummary, extractFin
 
   const summary = {
     examined: snapshots.length, eligible: 0, gamesFetched: 0,
-    settled: 0, alreadySettled: 0, unresolved: 0, errors: 0,
+    settled: 0, voided: 0, alreadySettled: 0, unresolved: 0, errors: 0,
     truncatedGames: false
   };
   const groups = new Map();
@@ -102,7 +110,8 @@ async function runAutomaticSettlement({ snapshots, now, fetchSummary, extractFin
       let outcome;
       try {
         // Reuse the EXACT same ESPN Final event/team/athlete/stat validation as
-        // the existing manual callable; DNP, postponements and mismatches fail.
+        // the manual callable: only explicit DNP can void; missing data,
+        // postponements and mismatches remain pending.
         outcome = extractFinal(espn, record.entry);
       } catch (_) {
         summary.unresolved++;
@@ -112,8 +121,10 @@ async function runAutomaticSettlement({ snapshots, now, fetchSummary, extractFin
         const wrote = await writeVerifiedSettlement({
           db, ref: record.ref, original: record.entry, outcome, serverTimestamp
         });
-        if (wrote) summary.settled++;
-        else summary.alreadySettled++;
+        if (wrote) {
+          if (outcome.kind === "dnp") summary.voided++;
+          else summary.settled++;
+        } else summary.alreadySettled++;
       } catch (_) {
         // Firestore transaction failure or an immutable-field mismatch.
         summary.errors++;
