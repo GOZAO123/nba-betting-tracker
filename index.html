@@ -1843,12 +1843,7 @@ function batchReviewDraw(){
   batchCaptureStatus.textContent='No local approvals; Firebase batch capture remains disabled.';
   return;
  }
- const now=Date.now(),table=researchCreate('table'),
-  head=researchCreate('thead'),header=researchCreate('tr');
- for(const name of ['Offer and manual odds','ESPN research preview','Verified upcoming fixture',
-  'Manually rechecked quote','Review state','Actions','Secure batch approval (local only)'])header.append(researchCreate('th',name));
- head.append(header);table.append(head);
- const body=researchCreate('tbody');
+ const now=Date.now(),body=document.createDocumentFragment();
  let historical=0,linked=0,quoted=0,prepared=0,readyForBatch=0;
  for(const [i,item] of batchOffers.entries()){
   const preview=batchResearchPreview.get(item.key),
@@ -1859,10 +1854,16 @@ function batchReviewDraw(){
   if(result.fixtureValid)linked++;
   if(result.quoteValid)quoted++;
   if(result.preparedForIndividual)prepared++;
-  const row=researchCreate('tr');
-  row.append(researchCreate('td',item.player+' · '+item.market+' '+item.line+
-   ' '+item.side+' @ '+Number(item.odds).toFixed(2)+' (manual)'));
-  const research=researchCreate('td');
+  const row=researchCreate('article',null,'batch-review-card');
+  row.setAttribute('aria-label','Local review '+(i+1)+' of '+batchOffers.length+': '+item.player);
+  const header=researchCreate('div',null,'batch-review-header');
+  const playerHeading=researchCreate('div',null,'batch-review-heading');
+  playerHeading.append(researchCreate('h4',(i+1)+'. '+item.player),
+   researchCreate('span',item.market+' '+item.line+' '+item.side+
+    ' @ '+Number(item.odds).toFixed(2)+' (manual Betano quote)','batch-review-quote'));
+  header.append(playerHeading);
+  const fields=researchCreate('div',null,'batch-review-grid');
+  const research=researchCreate('div',null,'batch-review-detail');
   research.append(researchCreate('strong',result.research?
    (100*preview.estimate).toFixed(1)+'% experimental · n='+preview.sample12:
    preview?.status==='insufficient'?'Insufficient ESPN sample':
@@ -1871,13 +1872,18 @@ function batchReviewDraw(){
    research.append(researchCreate('span',' · '+(preview.message||'No score'),'batch-review-warn'));
   if(result.research)research.append(researchCreate('span',
    ' Historical research preview only; fresh individual research required.'));
-  row.append(research);
-  const fixtureCell=researchCreate('td',result.fixtureValid?
+  const researchField=researchCreate('div',null,'batch-review-field');
+  researchField.append(researchCreate('span','ESPN historical preview','batch-review-label'),research);
+  fields.append(researchField);
+  const fixtureCell=researchCreate('div',result.fixtureValid?
    fixture.away+' @ '+fixture.home+' · '+ledgerLisbonTime(fixture.start):
    'Missing, changed or too near tipoff. Verify upcoming ESPN fixture.');
   if(!result.fixtureValid)fixtureCell.classList.add('batch-review-warn');
-  row.append(fixtureCell);
-  const quote=researchCreate('td');
+  fixtureCell.classList.add('batch-review-detail');
+  const fixtureField=researchCreate('div',null,'batch-review-field');
+  fixtureField.append(researchCreate('span','Upcoming ESPN fixture','batch-review-label'),fixtureCell);
+  fields.append(fixtureField);
+  const quote=researchCreate('div',null,'batch-review-detail');
   const reviewedAt=recheck&&Number.isFinite(recheck.at)?
    new Intl.DateTimeFormat('en-GB',{
     timeZone:'Europe/Lisbon',hour:'2-digit',minute:'2-digit',hour12:false
@@ -1886,9 +1892,11 @@ function batchReviewDraw(){
    'Rechecked '+reviewedAt+' Lisbon · user acknowledgement only':
    reviewedAt?'Recheck expired or draft changed':'Not recently rechecked'));
   quote.append(researchCreate('span',
-   ' This is not independently verified Betano availability.'));
-  row.append(quote);
-  const status=researchCreate('td',null,'batch-review-status');
+   'Not independently verified by Betano.'));
+  const quoteField=researchCreate('div',null,'batch-review-field');
+  quoteField.append(researchCreate('span','Manual quote recheck','batch-review-label'),quote);
+  fields.append(quoteField);
+  const status=researchCreate('div',null,'batch-review-status');
   const heading=researchCreate('strong',result.preparedForIndividual?
    'Prepared for individual verification':'Review incomplete',
    result.preparedForIndividual?'batch-review-good':'batch-review-warn');
@@ -1896,8 +1904,9 @@ function batchReviewDraw(){
    result.preparedForIndividual?
     'Must still rerun individual ESPN research and approve secure backend capture.':
     result.reasons.join('; ')));
-  row.append(status);
-  const actions=researchCreate('td');
+  header.append(status);
+  const footer=researchCreate('div',null,'batch-review-footer');
+  const actions=researchCreate('div',null,'batch-review-actions');
   const check=researchCreate('button','Recheck price','mini');
   check.type='button';check.disabled=batchResearchBusy||ledgerBusy||ledgerPageBusy;
   check.addEventListener('click',()=>{
@@ -1914,13 +1923,13 @@ function batchReviewDraw(){
   const single=researchCreate('button','Use for research','mini');
   single.type='button';single.disabled=batchResearchBusy||ledgerBusy||ledgerPageBusy;
   single.addEventListener('click',()=>batchSelectDraft(item,i));
-  actions.append(check,single);row.append(actions);
+  actions.append(check,single);
   const eligibility=batchCaptureAssess(item,batchCaptureStages.get(item.key),
    fixture,recheck,ESPN_NBA_TEAM_IDS,now,LEDGER_GRACE);
   const signature=batchReviewSignature(item),approval=batchCaptureApprovals.get(item.key);
   if(!eligibility.ready&&approval)batchCaptureApprovals.delete(item.key);
   if(eligibility.ready)readyForBatch++;
-  const approvalCell=researchCreate('td');
+  const approvalCell=researchCreate('div',null,'batch-review-approval');
   const approvalBox=researchCreate('div',null,'batch-capture-approval');
   const tick=document.createElement('input');
   tick.type='checkbox';tick.checked=eligibility.ready&&approval===signature;
@@ -1949,10 +1958,17 @@ function batchReviewDraw(){
    }else batchCaptureApprovals.delete(item.key);
    batchReviewDraw();
   });
-  approvalBox.append(tick,description);approvalCell.append(approvalBox);
-  row.append(approvalCell);body.append(row);
+  const approvalId='batch-capture-approval-'+i;
+  tick.id=approvalId;
+  description.htmlFor=approvalId;
+  description.setAttribute('aria-disabled',String(tick.disabled));
+  approvalBox.append(tick,description);approvalCell.append(
+   researchCreate('span','Secure batch approval · local only','batch-review-label'),
+   approvalBox);
+  footer.append(actions,approvalCell);
+  row.append(header,fields,footer);body.append(row);
  }
- table.append(body);batchReviewRows.append(table);
+ batchReviewRows.append(body);
  const approved=[...batchCaptureApprovals.entries()].filter(([key,sig])=>
   batchOffers.some(item=>item.key===key&&batchReviewSignature(item)===sig)).length;
  batchCaptureDryRun.disabled=approved===0||batchResearchBusy||ledgerBusy||ledgerPageBusy;
