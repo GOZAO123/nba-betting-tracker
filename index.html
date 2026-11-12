@@ -3155,7 +3155,10 @@ async function ledgerSettle(id){
    row.player+' · '+row.market+' '+row.line+' '+row.side+
    ' · ESPN final '+data.resultStat+' → '+(data.resultWon?'Win':'Loss')+
    '. Research settlement only, not independent Betano verification.';
-  await ledgerLoad();
+  try{await ledgerLoad()}
+  catch(_){
+   ledgerStatus.textContent+=' Cloud refresh failed after the trusted server response. Load the cloud ledger before trying anything again.';
+  }
  }catch(err){
   if(auth.currentUser?.uid===uid&&session===ledgerSession)
    ledgerStatus.textContent='Not settled: '+(err.message||String(err))+
