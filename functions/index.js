@@ -835,12 +835,20 @@ function ledgerExtractFinalFromEspn(summary,entry) {
     String(x.team?.id||"")===String(entry.teamId));
   if (sides.length!==1)
     throw new HttpsError("failed-precondition","Matching ESPN player-team box score unavailable.");
-  let found=null;
+  let found=null,explicitDnp=false,nonDnpRow=false;
   for(const group of sides[0].statistics||[]){
     const labels=group.labels||[];
     for(const player of group.athletes||[]){
       if (String(player?.athlete?.id||"")!==String(entry.athleteId))continue;
-      if (player.didNotPlay===true||player.dnp===true)continue;
+      if (player.didNotPlay===true||player.dnp===true){
+        const flaggedMinutes=ledgerParseStat(labels,player.stats,["MIN"],"minutes");
+        if (Number.isFinite(flaggedMinutes)&&flaggedMinutes>0)
+          throw new HttpsError("failed-precondition","Contradictory ESPN DNP flag and played minutes.");
+        explicitDnp=true;
+        continue;
+      }
+      // An unflagged row with missing stats is NOT proof of DNP.
+      nonDnpRow=true;
       const values=player.stats;
       const minutes=ledgerParseStat(labels,values,["MIN"],"minutes");
       if (!Number.isFinite(minutes)||minutes<=0)continue;
@@ -860,11 +868,19 @@ function ledgerExtractFinalFromEspn(summary,entry) {
       found=v;
     }
   }
-  if(found===null)
-    throw new HttpsError("failed-precondition","Player DNP or stat unavailable; record remains pending.");
+  // Stored research inputs must be sound even when the player was inactive.
   if(!Number.isFinite(entry.line)||Math.floor(entry.line)+0.5!==entry.line||
      !["Over","Under"].includes(entry.side))
     throw new HttpsError("failed-precondition","Stored betting line is invalid.");
+  // A true ESPN identity-matched DNP is distinct from an absent box score.
+  // Conflicting DNP and non-DNP rows must stay unresolved.
+  if(explicitDnp){
+    if(nonDnpRow||found!==null)
+      throw new HttpsError("failed-precondition","Conflicting ESPN DNP evidence; record remains pending.");
+    return {kind:"dnp"};
+  }
+  if(found===null)
+    throw new HttpsError("failed-precondition","Player stat unavailable or DNP not explicitly verified; record remains pending.");
   return {stat:found,won:entry.side==="Over"?found>entry.line:found<entry.line};
 }
 exports.ledgerSettleProspective=onCall(
@@ -900,11 +916,20 @@ exports.ledgerSettleProspective=onCall(
       if(!Number.isFinite(time)||time>=current.eventStartMs-LEDGER_CAPTURE_GRACE_MS||
          current.status!=="pending")
         throw new HttpsError("failed-precondition","Record no longer eligible to settle.");
-      tx.update(ref,{status:"settled",resultStat:result.stat,resultWon:result.won,
-        settledAt:FieldValue.serverTimestamp(),
-        settlementSource:"ESPN Final verified by server: event/team/athlete"});
+      if(result.kind==="dnp"){
+        // Research no-action only; never claim an independently confirmed Betano void.
+        tx.update(ref,{status:"void",voidReason:"ESPN_EXPLICIT_DNP",
+          resultStat:null,resultWon:null,settledAt:FieldValue.serverTimestamp(),
+          settlementSource:"ESPN Final verified DNP by server: event/team/athlete"});
+      }else{
+        tx.update(ref,{status:"settled",resultStat:result.stat,resultWon:result.won,
+          settledAt:FieldValue.serverTimestamp(),
+          settlementSource:"ESPN Final verified by server: event/team/athlete"});
+      }
     },{maxAttempts:3});
-    return {settled:true,resultStat:result.stat,resultWon:result.won,recordId:id};
+    return {settled:true,voided:result.kind==="dnp",
+      resultStat:result.kind==="dnp"?null:result.stat,
+      resultWon:result.kind==="dnp"?null:result.won,recordId:id};
   }
 );
 

@@ -1,6 +1,8 @@
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
 const {
   eligibleForAutomaticSettlement, frozenFieldsMatch,
   runAutomaticSettlement, MAX_EVENT_AGE_MS, MIN_EVENT_AGE_MS
@@ -84,8 +86,8 @@ test("same ESPN game is fetched once and settlements only update result fields",
   assert.equal(rows.rows[0].ref.state.capturedServerAt.toMillis(), START - 60 * 60 * 1000);
 });
 
-test("DNP, not-Final, postponed, player/team mismatch leave every entry pending", async () => {
-  for (const cause of ["DNP", "not Final", "postponed", "wrong team", "wrong athlete"]) {
+test("unverifiable DNP, not-Final, postponed, player/team mismatch leave entries pending", async () => {
+  for (const cause of ["DNP without ESPN flag", "not Final", "postponed", "wrong team", "wrong athlete"]) {
     const f = createFixture([makeEntry()]);
     const result = await runAutomaticSettlement({
       snapshots: f.rows, now: NOW, db: f.db, serverTimestamp: stamp,
@@ -150,4 +152,150 @@ test("caps ESPN event requests at 16 and rejects larger overrides", async () => 
     snapshots: f.rows, now: NOW, db: f.db, serverTimestamp: stamp,
     fetchSummary: async () => ({}), extractFinal: () => ({}), maxEvents: 17
   }));
+});
+
+function getProductionExtractor() {
+  const source = fs.readFileSync(path.join(__dirname, "index.js"), "utf8");
+  const first = source.indexOf("function ledgerParseStat(");
+  const last = source.indexOf("exports.ledgerSettleProspective=onCall(", first);
+  assert.ok(first > 0 && last > first);
+  class HttpsError extends Error {
+    constructor(code, message) { super(message); this.code = code; }
+  }
+  return new Function("HttpsError",
+    source.slice(first, last) + "\nreturn ledgerExtractFinalFromEspn;")(HttpsError);
+}
+function finalBoxscore(athletes, overrides = {}) {
+  return {
+    header: { id: "401", competitions: [{
+      id: "401", date: new Date(START).toISOString(),
+      competitors: [{ team: { id: "2" } }, { team: { id: "3" } }],
+      status: { type: { state: "post", completed: true, name: "STATUS_FINAL" } }
+    }] },
+    boxscore: { players: [{
+      team: { id: "2" }, statistics: [{
+        labels: ["MIN", "PTS", "REB", "AST", "3PT"],
+        athletes
+      }]
+    }] },
+    ...overrides
+  };
+}
+function playedPlayer(stats = ["24:20", "25", "5", "6", "1-3"]) {
+  return { athlete: { id: "11" }, didNotPlay: false, stats };
+}
+function dnpPlayer() {
+  return { athlete: { id: "11" }, didNotPlay: true, reason: "COACH'S DECISION", stats: [] };
+}
+
+test("same production ESPN extractor differentiates explicit DNP, real zero and absent stats", () => {
+  const extract = getProductionExtractor();
+  assert.deepEqual(extract(finalBoxscore([dnpPlayer()]), makeEntry()), { kind: "dnp" });
+  assert.deepEqual(extract(finalBoxscore([{
+    athlete: { id: "11" }, dnp: true, stats: []
+  }]), makeEntry()), { kind: "dnp" });
+  const scored = extract(finalBoxscore([playedPlayer(["20:00", "12", "0", "3", "0-1"])]),
+    makeEntry({ market: "REB", line: 0.5, side: "Under" }));
+  assert.deepEqual(scored, { stat: 0, won: true });
+  assert.throws(() => extract(finalBoxscore([]), makeEntry()), /stat unavailable/);
+  assert.throws(() => extract(finalBoxscore([
+    { athlete: { id: "11" }, stats: [] }
+  ]), makeEntry()), /stat unavailable/);
+  assert.throws(() => extract(finalBoxscore([
+    { athlete: { id: "99" }, didNotPlay: true }
+  ]), makeEntry()), /stat unavailable/);
+  assert.throws(() => extract(finalBoxscore([dnpPlayer(), playedPlayer()]),
+    makeEntry()), /Conflicting ESPN DNP/);
+  assert.throws(() => extract(finalBoxscore([{
+    ...dnpPlayer(), stats: ["12:00", "6", "2", "1", "1-3"]
+  }]), makeEntry()), /Contradictory ESPN DNP/);
+  assert.throws(() => extract(finalBoxscore([dnpPlayer()]),
+    makeEntry({line: -1})), /Stored betting line is invalid/);
+  const noFinal = finalBoxscore([dnpPlayer()]);
+  noFinal.header.competitions[0].status.type.state = "in";
+  assert.throws(() => extract(noFinal, makeEntry()), /Game not completed/);
+  const wrongGame = finalBoxscore([dnpPlayer()]);
+  wrongGame.header.id = "999";
+  assert.throws(() => extract(wrongGame, makeEntry()), /event ID mismatch/);
+  const wrongTeam = finalBoxscore([dnpPlayer()]);
+  wrongTeam.boxscore.players[0].team.id = "3";
+  assert.throws(() => extract(wrongTeam, makeEntry()), /box score unavailable/);
+});
+
+test("scheduled job marks only explicit DNPs void and excludes score; normal players still settle", async () => {
+  const entries = [
+    makeEntry({ athleteId: "11", market: "REB", line: 4.5, side: "Under" }),
+    makeEntry({ athleteId: "12", market: "PTS" })
+  ];
+  const f = createFixture(entries);
+  let calls = 0;
+  const extract = getProductionExtractor();
+  const result = await runAutomaticSettlement({
+    snapshots: f.rows, now: NOW, db: f.db, serverTimestamp: stamp,
+    fetchSummary: async () => {
+      calls++;
+      return finalBoxscore([dnpPlayer(), {
+        athlete: { id: "12" }, didNotPlay: false,
+        stats: ["23:00", "22", "3", "2", "1-2"]
+      }]);
+    },
+    extractFinal: extract
+  });
+  assert.equal(calls, 1);
+  assert.deepEqual([result.settled, result.voided, result.unresolved, result.errors], [1, 1, 0, 0]);
+  const noAction = f.rows[0].ref.state;
+  assert.equal(noAction.status, "void");
+  assert.equal(noAction.voidReason, "ESPN_EXPLICIT_DNP");
+  assert.equal(noAction.resultStat, null);
+  assert.equal(noAction.resultWon, null);
+  assert.equal(noAction.odds, 1.82);
+  assert.equal(noAction.modelSelected, 0.4);
+  assert.equal(noAction.capturedServerAt.toMillis(), START - 60 * 60 * 1000);
+  const played = f.rows[1].ref.state;
+  assert.equal(played.status, "settled");
+  assert.equal(played.resultStat, 22);
+  assert.equal(played.resultWon, true);
+  assert.equal(eligibleForAutomaticSettlement(noAction, NOW + 86400000), false);
+});
+
+test("DNP transaction is idempotent and cannot overwrite manual settlement or changed fields", async () => {
+  const f = createFixture([makeEntry()]);
+  f.rows[0].ref.state.status = "void";
+  const once = await runAutomaticSettlement({
+    snapshots: f.rows, now: NOW, db: f.db, serverTimestamp: stamp,
+    fetchSummary: async () => ({}), extractFinal: () => ({ kind: "dnp" })
+  });
+  assert.equal(once.alreadySettled, 1);
+  assert.equal(f.changes, 0);
+  const changed = createFixture([makeEntry()]);
+  changed.rows[0].ref.state.line = 99.5;
+  const failed = await runAutomaticSettlement({
+    snapshots: changed.rows, now: NOW, db: changed.db, serverTimestamp: stamp,
+    fetchSummary: async () => ({}), extractFinal: () => ({ kind: "dnp" })
+  });
+  assert.equal(failed.errors, 1);
+  assert.equal(changed.changes, 0);
+  const malformed = createFixture([makeEntry()]);
+  const malformedResult = await runAutomaticSettlement({
+    snapshots: malformed.rows, now: NOW, db: malformed.db, serverTimestamp: stamp,
+    fetchSummary: async () => ({}),
+    extractFinal: () => ({ kind: "dnp", stat: 0, won: false })
+  });
+  assert.equal(malformedResult.errors, 1);
+  assert.equal(malformed.changes, 0);
+});
+
+test("manual trusted settlement includes server-only DNP transaction and no-action return", () => {
+  const source = fs.readFileSync(path.join(__dirname, "index.js"), "utf8");
+  const start = source.indexOf("exports.ledgerSettleProspective=onCall(");
+  const end = source.indexOf("// Update 34.6", start);
+  assert.ok(start > 0 && end > start);
+  const block = source.slice(start, end);
+  assert.match(block, /ledgerAssertOwner\(request\)/);
+  assert.match(block, /ledgerExtractFinalFromEspn\(summary,entry\)/);
+  assert.match(block, /result\.kind==="dnp"/);
+  assert.match(block, /status:"void",voidReason:"ESPN_EXPLICIT_DNP"/);
+  assert.match(block, /resultStat:null,resultWon:null/);
+  assert.match(block, /voided:result\.kind==="dnp"/);
+  assert.doesNotMatch(block, /oddsPapi|\.collection\("propResearchLedger"\)\.add/i);
 });
