@@ -3286,6 +3286,171 @@ function ledgerRenderDashboard(container,result){
   'Research only: manually selected Betano quotes are not independently verified; experimental frozen estimates are uncalibrated. Small and correlated samples, self-selection and missing data prevent claims of reliable probabilities, betting value or audited ROI.','warning notice'));
  container.append(dashboard);
 }
+// Update 35.2B pure data-quality coverage metrics BEGIN
+function ledgerDataQualityMetrics(rows,stateOf,now,hasMore){
+ if(!Array.isArray(rows)||typeof stateOf!=='function'||!Number.isFinite(now))
+  throw Error('Invalid research coverage inputs.');
+ const markets=['PTS','REB','AST','3PT','PR','PA','RA','PRA'];
+ const byMarket=new Map(markets.map(m=>[m,0]));
+ const games=new Map(),players=new Set(),teams=new Set(),days=new Set(),observations=new Set();
+ const anomalies={identity:0,receipt:0,late:0,quote:0,estimate:0,duplicate:0,incompleteSettlement:0};
+ const oldPending=[];
+ const validId=v=>/^\d{1,20}$/.test(String(v??''));
+ const validStart=v=>Number.isSafeInteger(v)&&v>0;
+ const dayFormat=new Intl.DateTimeFormat('sv-SE',{timeZone:'Europe/Lisbon',
+  year:'numeric',month:'2-digit',day:'2-digit'});
+ for(const r of rows){
+  if(!r||typeof r!=='object'){anomalies.identity++;continue}
+  const gameId=validId(r.eventId)?String(r.eventId):null;
+  const athleteId=validId(r.athleteId)?String(r.athleteId):null;
+  const teamId=validId(r.teamId)?String(r.teamId):null;
+  const hasStart=validStart(r.eventStartMs);
+  if(!gameId||!athleteId||!teamId||!hasStart)anomalies.identity++;
+  if(athleteId)players.add(athleteId);
+  if(teamId)teams.add(teamId);
+  if(gameId){
+   if(!games.has(gameId))games.set(gameId,{eventId:gameId,count:0,
+    away:typeof r.away==='string'?r.away:'',home:typeof r.home==='string'?r.home:'',
+    start:hasStart?r.eventStartMs:null});
+   games.get(gameId).count++;
+  }
+  if(hasStart)days.add(dayFormat.format(new Date(r.eventStartMs)));
+  if(byMarket.has(r.market))byMarket.set(r.market,byMarket.get(r.market)+1);
+  if(!Number.isFinite(r.odds)||r.odds<=1||
+   !Number.isFinite(r.line)||Math.floor(r.line)+.5!==r.line||
+   !['Over','Under'].includes(r.side)||!byMarket.has(r.market))anomalies.quote++;
+  if(!Number.isFinite(r.modelSelected)||r.modelSelected<0||r.modelSelected>1||
+   !Number.isFinite(r.modelOver)||r.modelOver<0||r.modelOver>1)
+   anomalies.estimate++;
+  let receipt=null;
+  try{receipt=r.capturedServerAt?.toMillis?.()}catch(_){}
+  if(!Number.isFinite(receipt))anomalies.receipt++;
+  else if(hasStart&&receipt>=r.eventStartMs-5*60000)anomalies.late++;
+  if(gameId&&athleteId&&byMarket.has(r.market)&&
+   ['Over','Under'].includes(r.side)&&Number.isFinite(r.line)){
+   const key=[gameId,athleteId,r.market,r.line,r.side].join('|');
+   if(observations.has(key))anomalies.duplicate++;else observations.add(key);
+  }
+  const state=stateOf(r);
+  if(state==='SETTLED'&&(!Number.isFinite(r.resultStat)||typeof r.resultWon!=='boolean'))
+   anomalies.incompleteSettlement++;
+  if(state==='PENDING'&&hasStart&&now-r.eventStartMs>=24*3600000){
+   oldPending.push({player:typeof r.player==='string'?r.player:'Unknown player',
+    team:typeof r.team==='string'?r.team:'Unknown team',market:r.market,
+    line:r.line,side:r.side,ageHours:Math.floor((now-r.eventStartMs)/3600000),
+    eventId:gameId});
+  }
+ }
+ const topGames=[...games.values()].sort((a,b)=>b.count-a.count||
+  a.eventId.localeCompare(b.eventId));
+ oldPending.sort((a,b)=>b.ageHours-a.ageHours||a.player.localeCompare(b.player));
+ const total=rows.length,topThreeCount=topGames.slice(0,3).reduce((sum,g)=>sum+g.count,0);
+ return {loaded:total,limited:Boolean(hasMore),gameCount:games.size,playerCount:players.size,
+  teamCount:teams.size,dayCount:days.size,marketCount:[...byMarket.values()].filter(Boolean).length,
+  byMarket:[...byMarket].map(([name,count])=>({name,count})),
+  topThreeCount,topGames:topGames.slice(0,3),oldPendingCount:oldPending.length,
+  oldPending:oldPending.slice(0,10),anomalies};
+}
+// Update 35.2B pure data-quality coverage metrics END
+
+function ledgerRenderDataQuality(container,quality){
+ const pct=(n,d)=>d?(100*n/d).toFixed(1)+'%':'—';
+ const section=researchCreate('section',null,'ledger-dashboard');
+ section.setAttribute('aria-label','Research data quality and coverage');
+ section.append(researchCreate('h4','🧭 Research data quality · loaded observations'));
+ const tiles=researchCreate('div',null,'ledger-kpis');
+ const values=[
+  ['Unique ESPN games',quality.gameCount,'Loaded event IDs'],
+  ['Unique ESPN players',quality.playerCount,'Athlete IDs across loaded records'],
+  ['NBA teams represented',quality.teamCount,'Recorded team IDs'],
+  ['Lisbon game dates',quality.dayCount,'Calendar dates, not checklist days'],
+  ['Markets represented',quality.marketCount+'/8','Of 8 supported research markets'],
+  ['Top 3 games',pct(quality.topThreeCount,quality.loaded),'Share of loaded observations']
+ ];
+ for(const [name,value,note] of values){
+  const tile=researchCreate('div',null,'ledger-kpi');
+  tile.append(researchCreate('span',name),researchCreate('strong',value),
+   researchCreate('small',note));tiles.append(tile);
+ }
+ section.append(tiles);
+ section.append(researchCreate('p',
+  'Coverage counts only the '+quality.loaded+' loaded prospective records'+
+  (quality.limited?'; older pages may exist.':'.')+
+  ' It is NOT the number of bookmaker offers available, a complete historical archive, or independent betting outcomes. All records were manually selected.','muted notice'));
+ if(quality.gameCount>0&&quality.topThreeCount/Math.max(1,quality.loaded)>=.5)
+  section.append(researchCreate('p',
+   'Concentration warning: the three most represented games account for '+
+   pct(quality.topThreeCount,quality.loaded)+
+   ' of these observations. Correlated game exposures reduce the effective independent sample.','warning notice'));
+ const market=researchCreate('details',null,'ledger-breakdown');
+ market.append(researchCreate('summary','Market distribution · '+quality.marketCount+'/8 represented'));
+ const marketScroll=researchCreate('div',null,'boxscore'),marketTable=researchCreate('table');
+ const marketHead=researchCreate('tr');
+ for(const label of ['Market','Loaded observations','Share of loaded records'])
+  marketHead.append(researchCreate('th',label));
+ const mThead=researchCreate('thead');mThead.append(marketHead);marketTable.append(mThead);
+ const marketBody=researchCreate('tbody');
+ for(const m of quality.byMarket){
+  const tr=researchCreate('tr');
+  for(const value of [m.name,m.count,pct(m.count,quality.loaded)])
+   tr.append(researchCreate('td',value));
+  marketBody.append(tr);
+ }
+ marketTable.append(marketBody);marketScroll.append(marketTable);
+ market.append(marketScroll);section.append(market);
+ const game=researchCreate('details',null,'ledger-breakdown');
+ game.append(researchCreate('summary','Largest game concentrations · up to three games'));
+ const gameScroll=researchCreate('div',null,'boxscore'),gameTable=researchCreate('table');
+ const gHead=researchCreate('thead'),gHeader=researchCreate('tr');
+ for(const label of ['ESPN fixture','Loaded observations','Share'])
+  gHeader.append(researchCreate('th',label));
+ gHead.append(gHeader);gameTable.append(gHead);
+ const gBody=researchCreate('tbody');
+ for(const g of quality.topGames){
+  const tr=researchCreate('tr');
+  const label=(g.away||'Away')+' @ '+(g.home||'Home')+
+   (Number.isFinite(g.start)?' · '+ledgerCsvLisbon(g.start):'');
+  for(const value of [label,g.count,pct(g.count,quality.loaded)])
+   tr.append(researchCreate('td',value));
+  gBody.append(tr);
+ }
+ gameTable.append(gBody);gameScroll.append(gameTable);game.append(gameScroll);
+ section.append(game);
+ const warnings=Object.entries(quality.anomalies).filter(([,count])=>count>0);
+ if(warnings.length){
+  const labels={identity:'incomplete ESPN identity/fixture',receipt:'missing server receipt',
+   late:'late server receipt',quote:'invalid line/odds/market',
+   estimate:'missing or invalid frozen model estimate',
+   duplicate:'duplicate event/player/market/line/side',incompleteSettlement:'incomplete settled result'};
+  section.append(researchCreate('p','Data-quality flags in loaded records: '+
+   warnings.map(([name,count])=>count+' '+labels[name]).join('; ')+
+   '. These indicators never modify records or change settlement scoring.','warning notice'));
+ }else{
+  section.append(researchCreate('p',
+   'No structural data-quality anomalies detected in the loaded rows. This does not verify bookmaker prices, model accuracy or ESPN source completeness.','muted notice'));
+ }
+ if(quality.oldPendingCount){
+  const pending=researchCreate('details',null,'ledger-breakdown');
+  pending.open=true;
+  pending.append(researchCreate('summary','⚠ Unresolved pending observations ≥24h after scheduled tip-off · '+
+   quality.oldPendingCount));
+  pending.append(researchCreate('p',
+   'Review flags only: an old pending record is NOT evidence of DNP, a zero-stat game, a loss or a confirmed bookmaker void. Do not retry an already investigated missing ESPN identity without new authoritative evidence.','warning notice'));
+  const items=researchCreate('ul');
+  for(const r of quality.oldPending){
+   const item=researchCreate('li',r.player+' · '+r.team+' · '+
+    r.market+' '+r.side+' '+r.line+' · '+r.ageHours+'h since scheduled tip-off');
+   items.append(item);
+  }
+  pending.append(items);
+  if(quality.oldPendingCount>quality.oldPending.length)
+   pending.append(researchCreate('p',
+    'Showing first '+quality.oldPending.length+' unresolved rows; load/export records for further review.','muted'));
+  section.append(pending);
+ }
+ container.append(section);
+}
+
 // Descriptive calibration only. Manual quote selection biases samples.
 function ledgerCalibration(entries){
  const bins=Array.from({length:5},(_,i)=>({low:i/5,high:(i+1)/5,
@@ -3301,6 +3466,7 @@ function ledgerCalibration(entries){
 function ledgerDraw(){
  ledgerResults.replaceChildren();
  ledgerRenderDashboard(ledgerResults,ledgerDashboardMetrics(ledgerRows,ledgerState,ledgerMoreAvailable));
+ ledgerRenderDataQuality(ledgerResults,ledgerDataQualityMetrics(ledgerRows,ledgerState,Date.now(),ledgerMoreAvailable));
  if(!ledgerRows.length){
   ledgerResults.append(researchCreate('p','No research entries yet. Do not invent test odds; only record actual observed offers.','muted'));return;
  }
