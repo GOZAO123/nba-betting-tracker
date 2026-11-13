@@ -1,7 +1,7 @@
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { makeLeagueMarketAuditRunner } = require("./league-market-audit-runner");
+const { makeLeagueMarketAuditRunner, safeAuditFailure } = require("./league-market-audit-runner");
 const NOW = Date.parse("2026-11-13T11:29:00.000Z");
 const iso = minutes => new Date(NOW + minutes * 60000).toISOString();
 const CATALOGUE = [{
@@ -169,4 +169,198 @@ test("production wiring remains a named owner-only callable with two fixed endpo
   assert.match(block, /readLimitedJson\(response\)/);
   assert.doesNotMatch(block, /setInterval|onSchedule|setDoc|updateDoc|addDoc|ledgerCaptureProspective/);
   assert.equal((block.match(/await fetch\(/g)||[]).length, 1);
+});
+
+test("diagnostic failure reports only fixed stages and codes, never provider text", () => {
+  const sensitive = "raw-api-key-player-quoted-odds-account-user-id";
+  const examples = [
+    ["BUDGET_RESERVE", Object.assign(Error(sensitive), { code: "resource-exhausted" }), "DAILY_BUDGET_BLOCKED"],
+    ["BUDGET_RESERVE", Error(sensitive), "BUDGET_UNAVAILABLE"],
+    ["CATALOGUE_FETCH", Error("Provider response exceeds safe byte limit."), "RESPONSE_TOO_LARGE"],
+    ["LEAGUE_FETCH", Error("OddsPapi HTTP failure; a quota call may have been consumed."), "UPSTREAM_HTTP_ERROR"],
+    ["CATALOGUE_FETCH", Error("Provider response is not safely streamable."), "RESPONSE_NOT_STREAMABLE"],
+    ["CATALOGUE_FETCH", new SyntaxError(sensitive), "RESPONSE_JSON_INVALID"],
+    ["LEAGUE_FETCH", Object.assign(Error(sensitive), { name: "TimeoutError" }), "UPSTREAM_TIMEOUT"],
+    ["CATALOGUE_FETCH", Error(sensitive), "UPSTREAM_OTHER_FAILURE"],
+    ["CATALOGUE_VALIDATE", Error("Invalid or oversized catalogue data."), "CATALOGUE_FORMAT_OR_COUNT_LIMIT"],
+    ["CATALOGUE_VALIDATE", Error("Official catalogue has no usable NBA full-game player-prop definitions."), "NO_ELIGIBLE_CATALOGUE_MARKETS"],
+    ["CATALOGUE_VALIDATE", Error(sensitive), "CATALOGUE_VALIDATION_FAILED"],
+    ["LEAGUE_ANALYZE", Error("Invalid or oversized fixtures data."), "FIXTURE_FORMAT_OR_COUNT_LIMIT"],
+    ["LEAGUE_ANALYZE", Error("Market processing ceiling exceeded."), "MARKET_PROCESSING_LIMIT"],
+    ["LEAGUE_ANALYZE", Error("Selection processing ceiling exceeded."), "SELECTION_PROCESSING_LIMIT"],
+    ["LEAGUE_ANALYZE", Error(sensitive), "LEAGUE_VALIDATION_FAILED"],
+    ["COOLDOWN", Error(sensitive), "COOLDOWN_FAILED"],
+    ["ANY_UNTRUSTED_STAGE", Error(sensitive), "OTHER_FAILURE"]
+  ];
+  for (const [stage, error, reason] of examples) {
+    const diagnostic = safeAuditFailure(stage, error);
+    assert.deepEqual(diagnostic, {
+      stage: stage === "ANY_UNTRUSTED_STAGE" ? "UNKNOWN_STAGE" : stage,
+      reason
+    });
+    assert.equal(Object.isFrozen(diagnostic), true);
+    assert.doesNotMatch(JSON.stringify(diagnostic), /raw-api-key|player|quoted|odds|account-user-id/i);
+    assert.equal(Object.keys(diagnostic).length, 2);
+  }
+});
+
+test("first upstream rejection reports catalogue fetch stage once and never triggers league request", async () => {
+  const messages = [], secret = "provider-secret-full-url-and-player-name";
+  let reserved = 0, oddsRequests = 0;
+  const run = makeLeagueMarketAuditRunner({
+    ownerUid: "fake-owner", now: () => NOW,
+    reserve: async n => { reserved += n; },
+    fetchCatalogue: async () => { throw new Error(secret); },
+    fetchOdds: async () => { oddsRequests++; return ODDS; },
+    onFailure: info => messages.push(info)
+  });
+  await assert.rejects(run(owner), error => error.message === secret);
+  assert.equal(reserved, 2);
+  assert.equal(oddsRequests, 0);
+  assert.deepEqual(messages, [{ stage: "CATALOGUE_FETCH", reason: "UPSTREAM_OTHER_FAILURE" }]);
+  assert.doesNotMatch(JSON.stringify(messages), /provider-secret|full-url|player-name/);
+});
+
+test("zero eligible catalogue markets are logged separately from fetch, without a second provider request", async () => {
+  const messages = [], s = setup({ catalogue: [] });
+  let fetches = 0;
+  const run = makeLeagueMarketAuditRunner({
+    ownerUid: "fake-owner", now: () => NOW,
+    reserve: async () => {},
+    fetchCatalogue: async () => [],
+    fetchOdds: async () => { fetches++; return ODDS; },
+    onFailure: value => messages.push(value)
+  });
+  await assert.rejects(run(owner), /no usable/);
+  assert.equal(fetches, 0);
+  assert.deepEqual(messages, [
+    { stage: "CATALOGUE_VALIDATE", reason: "NO_ELIGIBLE_CATALOGUE_MARKETS" }
+  ]);
+});
+
+test("oversized catalogue fails with bounded catalogue validation stage", async () => {
+  const messages = [];
+  let oddsCalls = 0;
+  const run = makeLeagueMarketAuditRunner({
+    ownerUid: "fake-owner", now: () => NOW,
+    reserve: async () => {},
+    fetchCatalogue: async () => new Array(50001).fill(CATALOGUE[0]),
+    fetchOdds: async () => { oddsCalls++; return ODDS; },
+    onFailure: entry => messages.push(entry)
+  });
+  await assert.rejects(run(owner), /oversized catalogue/);
+  assert.equal(oddsCalls, 0);
+  assert.deepEqual(messages, [
+    { stage: "CATALOGUE_VALIDATE", reason: "CATALOGUE_FORMAT_OR_COUNT_LIMIT" }
+  ]);
+});
+
+test("reservation and second-fetch failure are distinguished and no automatic retries occur", async () => {
+  const reports = [];
+  const denied = Object.assign(Error("confidential budget record"), { code: "resource-exhausted" });
+  const blocked = makeLeagueMarketAuditRunner({
+    ownerUid: "fake-owner", now: () => NOW,
+    reserve: async () => { throw denied; },
+    fetchCatalogue: async () => { throw Error("must not reach"); },
+    fetchOdds: async () => { throw Error("must not reach"); },
+    onFailure: report => reports.push(report)
+  });
+  await assert.rejects(blocked(owner), error => error === denied);
+  assert.deepEqual(reports, [{ stage: "BUDGET_RESERVE", reason: "DAILY_BUDGET_BLOCKED" }]);
+
+  let catalogueCount = 0, oddsCount = 0, reserveCount = 0;
+  const run = makeLeagueMarketAuditRunner({
+    ownerUid: "fake-owner", now: () => NOW,
+    reserve: async n => { reserveCount += n; },
+    fetchCatalogue: async () => { catalogueCount++; return CATALOGUE; },
+    fetchOdds: async () => { oddsCount++; throw new Error("OddsPapi HTTP failure; a quota call may have been consumed."); },
+    onFailure: value => reports.push(value)
+  });
+  await assert.rejects(run(owner), /HTTP failure/);
+  assert.equal(catalogueCount, 1);
+  assert.equal(oddsCount, 1);
+  assert.equal(reserveCount, 2);
+  assert.deepEqual(reports[1], { stage: "LEAGUE_FETCH", reason: "UPSTREAM_HTTP_ERROR" });
+});
+
+test("invalid fixture response has league analyze classification and cache remains unavailable", async () => {
+  const reports = [], s = setup();
+  let catalogueCount = 0, oddsCount = 0;
+  const run = makeLeagueMarketAuditRunner({
+    ownerUid: "fake-owner", now: () => NOW,
+    reserve: async () => {},
+    fetchCatalogue: async () => { catalogueCount++; return CATALOGUE; },
+    fetchOdds: async () => { oddsCount++; return {}; },
+    onFailure: value => reports.push(value)
+  });
+  await assert.rejects(run(owner), /fixtures/);
+  await assert.rejects(run(owner), /fixtures/);
+  assert.equal(catalogueCount, 1);
+  assert.equal(oddsCount, 2);
+  assert.deepEqual(reports, [
+    { stage: "LEAGUE_ANALYZE", reason: "FIXTURE_FORMAT_OR_COUNT_LIMIT" },
+    { stage: "LEAGUE_ANALYZE", reason: "FIXTURE_FORMAT_OR_COUNT_LIMIT" }
+  ]);
+});
+
+test("success and rejected callers are silent; callback exceptions cannot hide original error", async () => {
+  const reports = [];
+  const good = makeLeagueMarketAuditRunner({
+    ownerUid: "fake-owner", now: () => NOW,
+    reserve: async () => {}, fetchCatalogue: async () => CATALOGUE,
+    fetchOdds: async () => ODDS, onFailure: v => reports.push(v)
+  });
+  await assert.rejects(good({ ...owner, data: { override: true } }), /no parameters/);
+  await good(owner);
+  await good(owner); // cache hit
+  assert.deepEqual(reports, []);
+
+  const original = new Error("original network exception");
+  const bad = makeLeagueMarketAuditRunner({
+    ownerUid: "fake-owner", now: () => NOW,
+    reserve: async () => {}, fetchCatalogue: async () => { throw original; },
+    fetchOdds: async () => ODDS,
+    onFailure: () => { throw new Error("logger unavailable"); }
+  });
+  await assert.rejects(bad(owner), e => e === original);
+});
+
+test("two simultaneous callers share one fixed-code failure report and one reservation", async () => {
+  let release;
+  const wait = new Promise(resolve => { release = resolve; });
+  const reports = [];
+  let reservations = 0, catalogues = 0;
+  const run = makeLeagueMarketAuditRunner({
+    ownerUid: "fake-owner", now: () => NOW,
+    reserve: async n => { reservations += n; },
+    fetchCatalogue: async () => { catalogues++; await wait; throw Error("internal-secret-quote"); },
+    fetchOdds: async () => ODDS,
+    onFailure: value => reports.push(value)
+  });
+  const first = run(owner), second = run(owner);
+  release();
+  await Promise.all([
+    assert.rejects(first, /internal-secret-quote/),
+    assert.rejects(second, /internal-secret-quote/)
+  ]);
+  assert.equal(reservations, 2);
+  assert.equal(catalogues, 1);
+  assert.deepEqual(reports, [{ stage: "CATALOGUE_FETCH", reason: "UPSTREAM_OTHER_FAILURE" }]);
+});
+
+test("production audit wiring logs only sanitized diagnostic and preserves manual limits", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const src = fs.readFileSync(path.join(__dirname, "index.js"), "utf8");
+  const start = src.indexOf("// Update 35.1C2 — deliberately manual");
+  const end = src.indexOf("function ledgerAssertOwner(request)", start);
+  assert.ok(start > 0 && end > start);
+  const audit = src.slice(start, end);
+  assert.match(audit, /onFailure: \(\{ stage, reason \}\) =>/);
+  assert.match(audit, /console\.warn\("NBA market audit safe failure", \{ stage, reason \}\)/);
+  assert.match(audit, /reserve: reserveDiagnosticRequests/);
+  assert.match(audit, /maxInstances: 1, concurrency: 1/);
+  assert.match(audit, /return readLimitedJson\(response\)/);
+  assert.doesNotMatch(audit, /console\.(log|error|debug)\(/);
+  assert.doesNotMatch(audit, /setInterval|onSchedule|setDoc|addDoc/);
 });
