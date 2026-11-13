@@ -668,6 +668,9 @@ async function fetchLeagueAuditJson(path, params) {
 const runNbaMarketAudit = makeLeagueMarketAuditRunner({
   ownerUid: LEDGER_OWNER,
   reserve: reserveDiagnosticRequests,
+  // Whitelisted stage/reason only. Never pass or log the original Error.
+  onFailure: ({ stage, reason }) =>
+    console.warn("NBA market audit safe failure", { stage, reason }),
   fetchCatalogue: () => fetchLeagueAuditJson("/v4/markets", { language: "en" }),
   fetchOdds: () => fetchLeagueAuditJson("/v4/odds-by-tournaments", {
     tournamentIds: "132", bookmaker: "betano.pt", language: "en", verbosity: 3
