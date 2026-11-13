@@ -1,0 +1,172 @@
+"use strict";
+const test = require("node:test");
+const assert = require("node:assert/strict");
+const { makeLeagueMarketAuditRunner } = require("./league-market-audit-runner");
+const NOW = Date.parse("2026-11-13T11:29:00.000Z");
+const iso = minutes => new Date(NOW + minutes * 60000).toISOString();
+const CATALOGUE = [{
+  marketId: 101, sportId: 11, playerProp: true,
+  marketName: "Over Under Player Points (incl. overtime)",
+  period: "fulltime", handicap: 20.5,
+  outcomes: [{ outcomeId: 201, outcomeName: "Over" }, { outcomeId: 202, outcomeName: "Under" }]
+}];
+const ODDS = [{
+  fixtureId: "synthetic1", tournamentId: 132, sportId: 11, hasOdds: true,
+  startTime: iso(140), bookmakerOdds: { "betano.pt": {
+    bookmakerIsActive: true, suspended: false,
+    markets: { "101": { marketActive: true, outcomes: {
+      "201": { players: { "301": {
+        playerName: "Synthetic Player", price: 1.87, active: true, changedAt: iso(-3)
+      } } }
+    } } }
+  } }
+}];
+const owner = { auth: { uid: "fake-owner", token: { email_verified: true } }, data: {} };
+function setup(opts = {}) {
+  let ticks = NOW, requests = 0, reserved = 0, catalogues = 0, odds = 0, waits = 0;
+  const events = [];
+  const run = makeLeagueMarketAuditRunner({
+    ownerUid: "fake-owner", now: () => ticks,
+    reserve: async n => { events.push("reserve:" + n); reserved += n; if (opts.rejectReservation) throw Error("limit"); },
+    fetchCatalogue: async () => { events.push("catalogue"); requests++; catalogues++; return opts.catalogue ?? CATALOGUE; },
+    waitBetweenRequests: async () => { events.push("wait"); waits++; },
+    fetchOdds: async () => { events.push("odds"); requests++; odds++; if (opts.rejectOdds) throw Error("provider failure"); return opts.odds ?? ODDS; }
+  });
+  return { run, advance: n => { ticks += n; }, events,
+    metrics: () => ({ requests, reserved, catalogues, odds, waits }) };
+}
+
+test("fresh manual invocation reserves two before requests and returns aggregate only", async () => {
+  const s = setup(), r = await s.run(owner);
+  assert.deepEqual(s.events, ["reserve:2", "catalogue", "wait", "odds"]);
+  assert.equal(r.requestsUsedOnThisClick, 2);
+  assert.equal(r.cached, false);
+  assert.equal(r.catalogueCached, false);
+  assert.equal(r.activePriceEntries, 1);
+  assert.equal(r.families.find(x => x.family === "PTS").fresh15m, 1);
+  assert.equal(r.playerIdentity, "NOT_ESPN_VERIFIED");
+  assert.equal(r.pricesBookmakerVerified, false);
+  assert.equal(r.researchSaved, false);
+  assert.ok(!JSON.stringify(r).includes("Synthetic Player"));
+  assert.ok(!JSON.stringify(r).includes("1.87"));
+  assert.equal(r.diagnosticVersion, "35.1C-MANUAL");
+});
+
+test("15-minute snapshot re-use is zero-call; stale snapshot reuses 12h catalogue for one request", async () => {
+  const s = setup();
+  await s.run(owner);
+  s.advance(8 * 60000);
+  const cached = await s.run(owner);
+  assert.equal(cached.cached, true);
+  assert.equal(cached.requestsUsedOnThisClick, 0);
+  s.advance(8 * 60000);
+  const refreshed = await s.run(owner);
+  assert.equal(refreshed.catalogueCached, true);
+  assert.equal(refreshed.requestsUsedOnThisClick, 1);
+  assert.deepEqual(s.events, ["reserve:2", "catalogue", "wait", "odds", "reserve:1", "odds"]);
+  assert.deepEqual(s.metrics(), { requests: 3, reserved: 3, catalogues: 1, odds: 2, waits: 1 });
+});
+
+test("the catalogue TTL causes two fresh calls again after expiry", async () => {
+  const s = setup();
+  await s.run(owner);
+  s.advance(12 * 3600000 + 1);
+  const r = await s.run(owner);
+  assert.equal(r.catalogueCached, false);
+  assert.equal(r.requestsUsedOnThisClick, 2);
+  assert.equal(s.metrics().catalogues, 2);
+  assert.equal(s.metrics().reserved, 4);
+});
+
+test("rejects unauthorized/anonymous/unverified and data overrides before any reserve", async () => {
+  const s = setup();
+  for (const request of [null, {}, { auth: { uid: "fake-owner" } },
+    { auth: { uid: "other", token: { email_verified: true } }, data: {} },
+    { auth: { uid: "fake-owner", token: { email_verified: false } }, data: {} }]) {
+    await assert.rejects(s.run(request), /verified owner/);
+  }
+  await assert.rejects(s.run({ ...owner, data: { force: true } }), /no parameters/);
+  await assert.rejects(s.run({ ...owner, data: [] }), /no parameters/);
+  assert.deepEqual(s.metrics(), { requests: 0, reserved: 0, catalogues: 0, odds: 0, waits: 0 });
+});
+
+test("reservation failure fails closed and never calls provider", async () => {
+  const s = setup({ rejectReservation: true });
+  await assert.rejects(s.run(owner), /limit/);
+  assert.deepEqual(s.events, ["reserve:2"]);
+  assert.equal(s.metrics().requests, 0);
+});
+
+test("unusable catalogue avoids second provider call and no report is cached", async () => {
+  const s = setup({ catalogue: [] });
+  await assert.rejects(s.run(owner), /no usable/);
+  assert.deepEqual(s.events, ["reserve:2", "catalogue"]);
+  assert.equal(s.metrics().odds, 0);
+  assert.equal(s.metrics().reserved, 2);
+});
+
+test("no retries after upstream error; catalogue is retained and next manual attempt needs one reservation", async () => {
+  let fail = true, reserveCount = 0, catalogueCount = 0, oddsCount = 0;
+  const run = makeLeagueMarketAuditRunner({ ownerUid: "fake-owner", now: () => NOW,
+    reserve: async n => { reserveCount += n; },
+    fetchCatalogue: async () => { catalogueCount++; return CATALOGUE; },
+    fetchOdds: async () => { oddsCount++; if (fail) throw Error("no service"); return ODDS; }
+  });
+  await assert.rejects(run(owner), /no service/);
+  assert.equal(oddsCount, 1);
+  fail = false;
+  const good = await run(owner);
+  assert.equal(good.requestsUsedOnThisClick, 1);
+  assert.equal(reserveCount, 3);
+  assert.equal(catalogueCount, 1);
+  assert.equal(oddsCount, 2);
+});
+
+test("concurrent clicks share one flight even with two upstream requests", async () => {
+  let release;
+  const blocked = new Promise(resolve => { release = resolve; });
+  let reserves = 0, catalogueCount = 0, oddsCount = 0;
+  const run = makeLeagueMarketAuditRunner({ ownerUid: "fake-owner", now: () => NOW,
+    reserve: async n => { reserves += n; },
+    fetchCatalogue: async () => { catalogueCount++; await blocked; return CATALOGUE; },
+    fetchOdds: async () => { oddsCount++; return ODDS; }
+  });
+  const a = run(owner), b = run(owner);
+  release();
+  const [first, second] = await Promise.all([a,b]);
+  assert.equal(first.requestsUsedOnThisClick, 2);
+  assert.equal(second.requestsUsedOnThisClick, 0);
+  assert.equal(second.cached, true);
+  assert.equal(reserves, 2);
+  assert.equal(catalogueCount, 1);
+  assert.equal(oddsCount, 1);
+});
+
+test("bad fixture payload rejects safely and does not poison 15-minute cache", async () => {
+  const s = setup({ odds: {} });
+  await assert.rejects(s.run(owner), /fixtures/);
+  assert.equal(s.metrics().reserved, 2);
+  await assert.rejects(s.run(owner), /fixtures/);
+  assert.equal(s.metrics().reserved, 3); // Catalogue was valid, second run costs one slot.
+});
+
+test("production wiring remains a named owner-only callable with two fixed endpoints", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const src = fs.readFileSync(path.join(__dirname, "index.js"), "utf8");
+  const start = src.indexOf("// Update 35.1C2 — deliberately manual");
+  const end = src.indexOf("function ledgerAssertOwner(request)", start);
+  assert.ok(start > 0 && end > start);
+  const block = src.slice(start, end);
+  assert.match(block, /exports\.oddsPapiNbaMarketAudit = onCall/);
+  assert.match(block, /ownerUid: LEDGER_OWNER/);
+  assert.match(block, /reserve: reserveDiagnosticRequests/);
+  assert.match(block, /maxInstances: 1, concurrency: 1/);
+  assert.match(block, /request\.auth\.token\?\.email_verified !== true/);
+  assert.match(block, /\/v4\/markets/);
+  assert.match(block, /\/v4\/odds-by-tournaments/);
+  assert.match(block, /bookmaker: "betano.pt"/);
+  assert.match(block, /readLimitedJson\(response\)/);
+  assert.doesNotMatch(block, /setInterval|onSchedule|setDoc|updateDoc|addDoc|ledgerCaptureProspective/);
+  assert.equal((block.match(/await fetch\(/g)||[]).length, 1);
+});

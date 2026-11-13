@@ -649,6 +649,57 @@ exports.oddsPapiNbaFeasibilityProbe = onCall(
   }
 );
 
+// Update 35.1C2 — deliberately manual, aggregate-only NBA market-ID audit.
+// Requires ONE extra metered catalogue call on a cold instance, then ONE league
+// call. Reuses 12h catalogue/15m result cache within this function instance.
+// Never touch the existing account preflight or automate bookmaker polling.
+// Deploy ONLY this named function, after distinct owner approval.
+const { makeLeagueMarketAuditRunner } = require("./league-market-audit-runner");
+async function fetchLeagueAuditJson(path, params) {
+  const url = new URL("https://api.oddspapi.io" + path);
+  for (const [name, value] of Object.entries(params)) url.searchParams.set(name, String(value));
+  url.searchParams.set("apiKey", oddsPapiKey.value());
+  const response = await fetch(url, {
+    signal: AbortSignal.timeout(35000),
+    headers: { Accept: "application/json" }
+  });
+  return readLimitedJson(response);
+}
+const runNbaMarketAudit = makeLeagueMarketAuditRunner({
+  ownerUid: LEDGER_OWNER,
+  reserve: reserveDiagnosticRequests,
+  fetchCatalogue: () => fetchLeagueAuditJson("/v4/markets", { language: "en" }),
+  fetchOdds: () => fetchLeagueAuditJson("/v4/odds-by-tournaments", {
+    tournamentIds: "132", bookmaker: "betano.pt", language: "en", verbosity: 3
+  }),
+  // Official catalogue endpoint publishes a 1000ms cooldown. No retries.
+  waitBetweenRequests: () => new Promise(resolve => setTimeout(resolve, 1200))
+});
+exports.oddsPapiNbaMarketAudit = onCall(
+  {
+    region: "europe-west1", secrets: [oddsPapiKey],
+    maxInstances: 1, concurrency: 1, timeoutSeconds: 120,
+    memory: "512MiB", enforceAppCheck: false
+  },
+  async request => {
+    if (!request.auth || request.auth.uid !== LEDGER_OWNER ||
+        request.auth.token?.email_verified !== true)
+      throw new HttpsError("permission-denied", "Only the authorised owner can audit NBA league markets.");
+    if (!oddsPapiKey.value())
+      throw new HttpsError("failed-precondition", "Odds provider secret unavailable. No request made.");
+    try {
+      return await runNbaMarketAudit(request);
+    } catch (error) {
+      if (error instanceof HttpsError) throw error;
+      if (error.code === "invalid-argument")
+        throw new HttpsError("invalid-argument", "Manual league market audit accepts no parameters.");
+      // Never expose provider text, API query strings, odds or identities.
+      throw new HttpsError("unavailable",
+        "Manual NBA market audit unavailable. Up to two diagnostic slots may have been reserved. Do not retry automatically.");
+    }
+  }
+);
+
 function ledgerAssertOwner(request) {
   if (!request.auth) throw new HttpsError("unauthenticated","Google sign-in required.");
   if (request.auth.uid !== LEDGER_OWNER || request.auth.token.email_verified !== true)

@@ -530,6 +530,8 @@ main{width:100%;min-width:0}
   <div id="oddsAccountCheckResult" class="muted" aria-live="polite"></div>
   <div class="row"><button id="oddsCoverageBtn" type="button" class="mini">Preview NBA league coverage (1 quota request)</button><span id="oddsCoverageStatus" class="muted" role="status">Owner only · manual · up to 1 OddsPapi monthly request · no research saved · six/UTC-day limit applies.</span></div>
   <div id="oddsCoverageResult" class="muted" aria-live="polite"></div>
+  <div class="row"><button id="oddsMarketAuditBtn" type="button" class="mini">Audit NBA prop markets (up to 2 quota requests)</button><span id="oddsMarketAuditStatus" class="muted" role="status">Owner only · manual · 1–2 metered calls on a fresh audit · 6/UTC-day limit · no bookmaker prices or research saved.</span></div>
+  <div id="oddsMarketAuditResult" class="muted" aria-live="polite"></div>
   <div class="row"><button id="oddsProbeBtn" type="button" class="mini">Test OddsPapi NBA connection</button><span id="oddsProbeStatus" class="muted" role="status">Test uses one API request. Available only to the configured owner.</span></div><div id="oddsProbeResult" class="muted"></div>
   <div class="row"><button id="nbaOddsTestBtn" type="button" class="mini">Test Betano PT NBA odds</button><span id="nbaOddsTestStatus" class="muted">One request; 15-minute server cache when successful.</span></div><div id="nbaOddsTestResult" class="muted"></div>
   <div class="row"><button id="detailedPropsBtn" type="button" class="mini">Test detailed NBA player props</button><span id="detailedPropsStatus" class="muted">Up to 2 OddsPapi requests; cached for 30 minutes.</span></div><div id="detailedPropsResult" class="muted"></div>
@@ -657,6 +659,79 @@ document.getElementById('oddsCoverageBtn')?.addEventListener('click', async()=>{
  }catch(e){
   status.textContent='Coverage preview unavailable ('+(e.code||'unknown')+
    '). One quota request and one UTC diagnostic reservation may have been consumed; do not retry automatically.';
+ }finally{btn.disabled=false}
+});
+
+// Update 35.1C2 — explicit owner-only, up-to-two-call read-only market-ID audit.
+// Displays aggregate catalogue joins only; never auto-starts or saves quotes.
+document.getElementById('oddsMarketAuditBtn')?.addEventListener('click',async()=>{
+ const btn=document.getElementById('oddsMarketAuditBtn'),
+  status=document.getElementById('oddsMarketAuditStatus'),
+  out=document.getElementById('oddsMarketAuditResult');
+ const uid=auth.currentUser?.uid;
+ if(!uid){status.textContent='Sign in with Google first.';return}
+ if(!confirm('Run a manual NBA league market-ID audit? On a fresh server instance this can consume TWO OddsPapi monthly requests (official market catalogue + betano.pt NBA league odds), even on provider errors, and reserve two of six UTC-day diagnostic slots. Cached results may use fewer. No player identities, bookmaker prices, research records or bets will be saved. Continue?'))return;
+ btn.disabled=true;out.replaceChildren();
+ status.textContent='Auditing official market IDs against one NBA league snapshot…';
+ try{
+  const {data}=await httpsCallable(oddsFunctions,'oddsPapiNbaMarketAudit')({});
+  if(auth.currentUser?.uid!==uid)return;
+  const expected=['PTS','REB','AST','3PT','PR','PA','RA','PRA'];
+  if(!data||data.diagnosticVersion!=='35.1C-MANUAL'||
+     data.playerIdentity!=='NOT_ESPN_VERIFIED'||data.pricesBookmakerVerified!==false||
+     data.researchSaved!==false||!Array.isArray(data.families)||
+     data.families.length!==expected.length||
+     !data.families.every((f,i)=>f.family===expected[i]))
+   throw Error('Unexpected market audit summary.');
+  const count=v=>Number.isSafeInteger(v)&&v>=0?String(v):'unknown';
+  const stamp=v=>typeof v==='string'&&Number.isFinite(Date.parse(v))?
+   new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Lisbon',
+    day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit',
+    hour12:false}).format(new Date(v))+' Lisbon':'unknown';
+  const line=value=>{
+   const p=document.createElement('p');p.textContent=value;out.append(p);
+  };
+  line('Official OddsPapi catalogue × NBA tournament 132 · exact betano.pt · '+stamp(data.receivedAt));
+  line('Provider requests on this click: '+count(data.requestsUsedOnThisClick)+
+   (data.cached?' (15-minute server snapshot cache)':
+    data.catalogueCached?' (12-hour catalogue cache reused)':' (fresh catalogue and league snapshot)'));
+  line('Official catalogue definitions: '+count(data.totalCatalogueDefinitions)+
+   ' · eligible NBA full-game player-prop IDs: '+count(data.eligibleCatalogueMarketIds)+
+   ' · ambiguous catalogue IDs excluded: '+count(data.ambiguousCatalogueMarketIds));
+  line('League fixtures returned: '+count(data.totalFixtures)+
+   ' · eligible with odds within 72h: '+count(data.eligibleFixtures)+
+   ' · active betano.pt fixture objects: '+count(data.activeBookmakerFixtures));
+  line('Active market objects: '+count(data.activeMarketObjects)+
+   ' · exact catalogue-ID matched objects: '+count(data.matchedMarketObjects)+
+   ' · distinct other/unmapped active IDs: '+count(data.distinctUnmappedMarketIds));
+  line('Named active provider price entries in mapped markets: '+count(data.activePriceEntries)+
+   ' · changed in last 15m: '+count(data.fresh15m)+
+   ' · older: '+count(data.older15m)+
+   ' · missing/invalid timestamps: '+count(data.missingOrInvalidTimestamp)+
+   ' · explicitly main-line flagged: '+count(data.mainLineFlagged));
+  const wrap=document.createElement('div');wrap.className='boxscore';
+  const table=document.createElement('table'),head=document.createElement('thead'),tr=document.createElement('tr');
+  for(const label of ['Market','Matched market objects','Active named entries','Recent ≤15m','Older','Missing/invalid time','Flagged main line']){
+   const th=document.createElement('th');th.textContent=label;tr.append(th);
+  }
+  head.append(tr);table.append(head);
+  const body=document.createElement('tbody');
+  for(const family of data.families){
+   const row=document.createElement('tr');
+   for(const value of [family.family,count(family.marketObjects),count(family.activePriceEntries),
+     count(family.fresh15m),count(family.older15m),
+     count(family.missingOrInvalidTimestamp),count(family.mainLineFlagged)]){
+    const td=document.createElement('td');td.textContent=value;row.append(td);
+   }
+   body.append(row);
+  }
+  table.append(body);wrap.append(table);out.append(wrap);
+  line('Official market-ID mapping only. Entries are NOT ESPN-verified players or independently verified Betano Portugal offers. A count of 0 does not prove a prop category is unavailable. No research saved and no polling.');
+  status.textContent='Manual read-only NBA market audit complete. No research records saved.';
+ }catch(e){
+  if(auth.currentUser?.uid===uid)
+   status.textContent='Market audit unavailable ('+(e.code||'unknown')+
+    '). Up to two monthly provider requests and UTC diagnostic reservations may have been consumed. Do not retry automatically.';
  }finally{btn.disabled=false}
 });
 
