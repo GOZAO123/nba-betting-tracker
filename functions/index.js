@@ -1070,3 +1070,35 @@ exports.ledgerAutoSettleProspective = onSchedule(
       console.warn("Pending ledger scan cap reached; some records may need manual settlement.");
   }
 );
+
+
+// Update 35.2C — owner-clicked one-off reviewed official-NBA no-action exception.
+// The fixed official NBA sources were reviewed BEFORE deploying this source;
+// the callable does NOT claim to fetch or parse them live. It verifies ESPN
+// Final + athlete absence and safeguards all frozen fields in one transaction.
+// No automatic triggering, OddsPapi access, or general manual DNP override.
+const { REVIEWED_CASE, reconcileReviewedInactive } =
+  require("./reconcile-reviewed-inactive");
+exports.ledgerReconcileReviewedInactive = onCall(
+  {region:"europe-west1",maxInstances:1,concurrency:1,timeoutSeconds:40,
+   memory:"256MiB",enforceAppCheck:false},
+  async request => {
+    ledgerAssertOwner(request);
+    if (!request.data || typeof request.data !== "object" ||
+        Array.isArray(request.data) || Object.keys(request.data).length !== 1 ||
+        request.data.recordId !== REVIEWED_CASE.recordId)
+      throw new HttpsError("invalid-argument",
+        "Only the pre-reviewed official NBA nonparticipation case is supported.");
+    try {
+      return await reconcileReviewedInactive({
+        db:getFirestore(), uid:request.auth.uid,
+        recordId:request.data.recordId, now:Date.now(),
+        fetchEspnFinal:id=>ledgerGetEspn("summary?event="+encodeURIComponent(id)),
+        serverTimestamp:()=>FieldValue.serverTimestamp()
+      });
+    } catch (error) {
+      if (error instanceof HttpsError) throw error;
+      throw new HttpsError("failed-precondition",error.message);
+    }
+  }
+);
