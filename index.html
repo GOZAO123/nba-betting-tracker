@@ -528,6 +528,8 @@ main{width:100%;min-width:0}
  <details class="scanner-dev"><summary>⚙️ Developer tools <span class="muted">· Manual API tests</span></summary><div class="scanner-dev-content"><p class="muted notice">These buttons make live API requests when tapped. Avoid unnecessary tests to protect the free allowance.</p>
   <div class="row"><button id="oddsAccountCheckBtn" type="button" class="mini">Check OddsPapi plan &amp; quota (unmetered)</button><span id="oddsAccountCheckStatus" class="muted" role="status">Owner only · manual account-status check · 0 billable OddsPapi requests · no odds collected.</span></div>
   <div id="oddsAccountCheckResult" class="muted" aria-live="polite"></div>
+  <div class="row"><button id="oddsCoverageBtn" type="button" class="mini">Preview NBA league coverage (1 quota request)</button><span id="oddsCoverageStatus" class="muted" role="status">Owner only · manual · up to 1 OddsPapi monthly request · no research saved · six/UTC-day limit applies.</span></div>
+  <div id="oddsCoverageResult" class="muted" aria-live="polite"></div>
   <div class="row"><button id="oddsProbeBtn" type="button" class="mini">Test OddsPapi NBA connection</button><span id="oddsProbeStatus" class="muted" role="status">Test uses one API request. Available only to the configured owner.</span></div><div id="oddsProbeResult" class="muted"></div>
   <div class="row"><button id="nbaOddsTestBtn" type="button" class="mini">Test Betano PT NBA odds</button><span id="nbaOddsTestStatus" class="muted">One request; 15-minute server cache when successful.</span></div><div id="nbaOddsTestResult" class="muted"></div>
   <div class="row"><button id="detailedPropsBtn" type="button" class="mini">Test detailed NBA player props</button><span id="detailedPropsStatus" class="muted">Up to 2 OddsPapi requests; cached for 30 minutes.</span></div><div id="detailedPropsResult" class="muted"></div>
@@ -602,6 +604,59 @@ document.getElementById('oddsAccountCheckBtn')?.addEventListener('click', async(
   }
  }catch(e){
   status.textContent='Account check unavailable ('+(e.code||'unknown')+'). No odds were requested.';
+ }finally{btn.disabled=false}
+});
+
+// Update 35.1B — single-click, one-request MAX feasibility preview. Never auto-run.
+document.getElementById('oddsCoverageBtn')?.addEventListener('click', async()=>{
+ const btn=document.getElementById('oddsCoverageBtn'),
+  status=document.getElementById('oddsCoverageStatus'),
+  out=document.getElementById('oddsCoverageResult');
+ if(!auth.currentUser){status.textContent='Sign in with Google first.';return}
+ if(!confirm('Run a manual NBA league coverage preview? This may consume ONE request from your OddsPapi monthly quota even if the provider responds with an error. It also reserves one of six UTC-day diagnostic slots. No bookmaker prices, research records or bets will be saved. Continue?'))return;
+ btn.disabled=true;status.textContent='Checking league coverage using at most one provider request…';out.replaceChildren();
+ try{
+  const {data}=await httpsCallable(oddsFunctions,'oddsPapiNbaFeasibilityProbe')({});
+  if(data?.status!=='ok'||data?.mappingStatus!=='NOT_VERIFIED')throw Error('Unexpected coverage summary.');
+  const number=v=>Number.isSafeInteger(v)&&v>=0?String(v):'unknown';
+  const date=v=>{
+   if(typeof v!=='string'||!Number.isFinite(Date.parse(v)))return 'none';
+   return new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Lisbon',
+    day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit',
+    hour12:false}).format(new Date(v))+' Lisbon';
+  };
+  const c=data.exclusionCounts||{};
+  const lines=[
+   'Source: OddsPapi NBA league (tournament 132), exact betano.pt · read-only snapshot '+date(data.receivedAt),
+   'Provider quota used on this click: '+number(data.requestsUsedOnThisClick)+
+    (data.cached?' · 15-minute server cache reused':' · new snapshot'),
+   'Provider fixtures: '+number(data.totalFixtures)+
+    ' · upcoming within '+number(data.horizonHours)+'h: '+number(data.upcomingWithinWindow)+
+    ' · fixtures with odds: '+number(data.fixturesWithOdds),
+   'Active Betano PT fixture objects: '+number(data.activeBookmakerFixtures)+
+    ' · active markets: '+number(data.activeMarkets)+
+    ' · distinct UNMAPPED market IDs: '+number(data.distinctMarketIds),
+   'Named active price entries (NOT verified player props): '+number(data.activeNamedEntries)+
+    ' · unique UNVERIFIED names: '+number(data.uniqueUnverifiedNames)+
+    ' · main-line entries: '+number(data.mainLineEntries),
+   'ChangedAt freshness (15 min): recent '+number(data.fresh15m)+
+    ' · older '+number(data.older15m)+' · missing '+number(data.missingChangedAt)+
+    ' · invalid '+number(c.invalidTimestamps),
+   'Fixture range: '+date(data.earliestStart)+' → '+date(data.latestStart),
+   'Exclusions: outside window '+number(c.outsideWindow)+', invalid fixtures '+number(c.invalidFixture)+
+    ', duplicates '+number(c.duplicateFixture)+', no odds '+number(c.noOdds)+
+    ', missing bookmaker '+number(c.missingBookmaker)+', inactive/suspended bookmaker '+number(c.suspendedBookmaker),
+   'Other exclusions: inactive markets '+number(c.inactiveMarkets)+
+    ', inactive selections '+number(c.inactiveSelections)+', missing names '+number(c.missingPlayerNames)+
+    ', invalid decimal prices '+number(c.invalidPrices),
+   'Market mapping: NOT VERIFIED. PTS, REB, AST, 3PT, PR, PA, RA, PRA availability cannot be inferred from this one request.',
+   'Nothing saved · no ESPN lookup · no automatic polling · provider quote identities and prices unverified.'
+  ];
+  for(const value of lines){const p=document.createElement('p');p.textContent=value;out.append(p)}
+  status.textContent='Manual read-only coverage preview complete. No research records saved.';
+ }catch(e){
+  status.textContent='Coverage preview unavailable ('+(e.code||'unknown')+
+   '). One quota request and one UTC diagnostic reservation may have been consumed; do not retry automatically.';
  }finally{btn.disabled=false}
 });
 
