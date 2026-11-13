@@ -3028,6 +3028,8 @@ async function ledgerLoad(append=false){
  if(append&&(!ledgerMoreAvailable||!ledgerLastDoc))return false;
  ledgerPageBusy=true;ledgerRefresh.disabled=true;ledgerLoadMore.disabled=true;
  ledgerExportCsv.disabled=true;
+ // Render only after cloud loading completes, to re-enable eligible actions.
+ let loaded=false;
  try{
   const constraints=[orderBy('clientCapturedMs','desc')];
   if(append)constraints.push(startAfter(ledgerLastDoc));
@@ -3040,13 +3042,14 @@ async function ledgerLoad(append=false){
   ledgerLastDoc=page.docs.length?page.docs[page.docs.length-1]:(append?ledgerLastDoc:null);
   ledgerMoreAvailable=next.moreAvailable;
   ledgerLoadMore.hidden=!ledgerMoreAvailable;
-  ledgerDraw();
+  loaded=true;
   return true;
  }finally{
   if(auth.currentUser?.uid===uid&&session===ledgerSession){
    ledgerPageBusy=false;ledgerRefresh.disabled=false;
    ledgerLoadMore.disabled=!ledgerMoreAvailable;
    ledgerExportCsv.disabled=!ledgerRows.length;
+   if(loaded)ledgerDraw();
   }
  }
 }
