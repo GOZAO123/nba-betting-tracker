@@ -604,6 +604,52 @@ const LEDGER_ALLOWED_MARKETS = Object.freeze(["PTS","REB","AST","3PT","PR","PA",
 const LEDGER_CAPTURE_GRACE_MS = 5*60*1000;
 const LEDGER_OWNER = "I6ZhMcObXxNVdfv2AqapDxwIaet1";
 
+ 
+// Update 35.1B — owner-only, manual, read-only league-coverage feasibility.
+// EXACTLY one metered upstream request at most, with transactional daily reservation.
+// IMPORTANT: deploy only this named function after explicit approval. Current main
+// does not contain the separately deployed oddsPapiAccountPreflight source from PR #17.
+// A full functions deployment from main would therefore risk deleting preflight.
+const { makeFeasibilityRunner, readLimitedJson } = require("./odds-feasibility");
+const runNbaOddsFeasibility = makeFeasibilityRunner({
+  ownerUid: LEDGER_OWNER,
+  reserve: reserveDiagnosticRequests,
+  fetchOdds: async () => {
+    const url = new URL("https://api.oddspapi.io/v4/odds-by-tournaments");
+    url.searchParams.set("tournamentIds", "132");
+    url.searchParams.set("bookmaker", "betano.pt");
+    url.searchParams.set("language", "en");
+    url.searchParams.set("verbosity", "3");
+    url.searchParams.set("apiKey", oddsPapiKey.value());
+    const response = await fetch(url, {
+      signal: AbortSignal.timeout(35000),
+      headers: { Accept: "application/json" }
+    });
+    return readLimitedJson(response);
+  }
+});
+exports.oddsPapiNbaFeasibilityProbe = onCall(
+  {
+    region: "europe-west1", secrets: [oddsPapiKey],
+    maxInstances: 1, concurrency: 1, timeoutSeconds: 75,
+    memory: "512MiB", enforceAppCheck: false
+  },
+  async request => {
+    if (!request.auth || request.auth.uid !== LEDGER_OWNER || request.auth.token.email_verified !== true)
+      throw new HttpsError("permission-denied", "Only the authorised owner can preview league coverage.");
+    if (!oddsPapiKey.value())
+      throw new HttpsError("failed-precondition", "Odds provider secret is unavailable. No request made.");
+    try {
+      return await runNbaOddsFeasibility(request);
+    } catch (error) {
+      if (error instanceof HttpsError) throw error;
+      // Never expose API credentials, raw provider text or fixture/bookmaker data.
+      throw new HttpsError("unavailable",
+        "League coverage preview unavailable. A reserved diagnostic slot may be consumed; no research was saved.");
+    }
+  }
+);
+
 function ledgerAssertOwner(request) {
   if (!request.auth) throw new HttpsError("unauthenticated","Google sign-in required.");
   if (request.auth.uid !== LEDGER_OWNER || request.auth.token.email_verified !== true)
