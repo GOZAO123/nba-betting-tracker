@@ -237,6 +237,61 @@ test("paginator guards account changes, duplicate requests and leaves reads expl
 });
 
 
+// Update 35.2C1 — regression: reviewed-inactive button must not stay disabled
+// after a successful, explicitly triggered cloud ledger load.
+function makeSyntheticLedgerLoader(fetchPage){
+ const begin=html.indexOf("async function ledgerLoad(append=false){");
+ const end=html.indexOf("function ledgerLoadedMessage(){",begin);
+ assert.ok(begin>0&&end>begin,"Production ledger loader is present");
+ const source=html.slice(begin,end);
+ return new Function("fetchPage",[
+  "const auth={currentUser:{uid:'test-owner'}},db={};",
+  "let ledgerSession=0,ledgerRows=[],ledgerPageBusy=false,ledgerBusy=false,ledgerLastDoc=null,ledgerMoreAvailable=false;",
+  "const LEDGER_PAGE_SIZE=50;",
+  "const ledgerResults={replaceChildren(){}};",
+  "const ledgerRefresh={disabled:false},ledgerLoadMore={disabled:true,hidden:true},ledgerExportCsv={disabled:true};",
+  "const orderBy=()=>({}),limit=()=>({}),startAfter=()=>({}),query=(...args)=>args,collection=()=>({});",
+  "const getDocsFromServer=fetchPage;",
+  "const ledgerCombinePages=(current,docs,append)=>({records:(append?current:[]).concat(docs.map(d=>({...d.data(),id:d.id}))),moreAvailable:docs.length===LEDGER_PAGE_SIZE});",
+  "const snapshots=[];",
+  "const ledgerDraw=()=>snapshots.push({pageBusy:ledgerPageBusy,rows:ledgerRows.length,reviewDisabled:ledgerPageBusy||ledgerBusy,exportDisabled:ledgerExportCsv.disabled});",
+  source,
+  "return {ledgerLoad,snapshots,state:()=>({pageBusy:ledgerPageBusy,refreshDisabled:ledgerRefresh.disabled,exportDisabled:ledgerExportCsv.disabled,rows:ledgerRows.length})};"
+ ].join("\n"))(fetchPage);
+}
+test("review action becomes enabled after cloud loading unlocks pagination",async()=>{
+ const draw=html.slice(html.indexOf("function ledgerDraw(){"),
+  html.indexOf("// Settlement is manual",html.indexOf("function ledgerDraw(){")));
+ assert.match(draw,/reviewed\.disabled=state!=='PENDING'\|\|ledgerBusy\|\|ledgerPageBusy/);
+ const page={docs:[{id:"synthetic-pending",data:()=>({status:"pending"})}]};
+ const app=makeSyntheticLedgerLoader(async()=>page);
+ assert.equal(await app.ledgerLoad(false),true);
+ assert.deepEqual(app.snapshots,[{
+  pageBusy:false,rows:1,reviewDisabled:false,exportDisabled:false
+ }]);
+ assert.equal(app.state().refreshDisabled,false);
+ assert.equal(app.state().pageBusy,false);
+});
+test("failed cloud reads release busy flag without rendering stale success",async()=>{
+ const app=makeSyntheticLedgerLoader(async()=>{throw Error("read rejected")});
+ await assert.rejects(app.ledgerLoad(false),/read rejected/);
+ assert.equal(app.snapshots.length,0);
+ assert.equal(app.state().pageBusy,false);
+ assert.equal(app.state().refreshDisabled,false);
+ assert.equal(app.state().rows,0);
+});
+test("older-record pagination redraws unlocked exactly once per successful page",async()=>{
+ const first=Array.from({length:50},(_,i)=>({id:"p"+i,data:()=>({status:"pending"})}));
+ const second=[{id:"p50",data:()=>({status:"pending"})}];
+ let n=0;
+ const app=makeSyntheticLedgerLoader(async()=>({docs:n++===0?first:second}));
+ assert.equal(await app.ledgerLoad(),true);
+ assert.equal(await app.ledgerLoad(true),true);
+ assert.deepEqual(app.snapshots.map(s=>[s.pageBusy,s.rows,s.reviewDisabled]),
+  [[false,50,false],[false,51,false]]);
+ assert.equal(n,2);
+});
+
 // Update 35.2A: deterministic in-memory ledger CSV export (synthetic only).
 const csvBegin="// Update 35.2A ledger CSV export BEGIN";
 const csvEnd="// Update 35.2A ledger CSV export END";
