@@ -604,7 +604,6 @@ const LEDGER_ALLOWED_MARKETS = Object.freeze(["PTS","REB","AST","3PT","PR","PA",
 const LEDGER_CAPTURE_GRACE_MS = 5*60*1000;
 const LEDGER_OWNER = "I6ZhMcObXxNVdfv2AqapDxwIaet1";
 
- 
 // Update 35.1B — owner-only, manual, read-only league-coverage feasibility.
 // EXACTLY one metered upstream request at most, with transactional daily reservation.
 // IMPORTANT: deploy only this named function after explicit approval. Current main
@@ -635,7 +634,7 @@ exports.oddsPapiNbaFeasibilityProbe = onCall(
     memory: "512MiB", enforceAppCheck: false
   },
   async request => {
-    if (!request.auth || request.auth.uid !== LEDGER_OWNER || request.auth.token.email_verified !== true)
+    if (!request.auth || request.auth.uid !== LEDGER_OWNER || request.auth.token?.email_verified !== true)
       throw new HttpsError("permission-denied", "Only the authorised owner can preview league coverage.");
     if (!oddsPapiKey.value())
       throw new HttpsError("failed-precondition", "Odds provider secret is unavailable. No request made.");
