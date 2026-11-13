@@ -3072,7 +3072,7 @@ const LEDGER_CSV_COLUMNS=Object.freeze([
  'result_stat','result_won','void_reason','settlement_source','disclaimer'
 ]);
 function ledgerCsvEpoch(ms){
- return Number.isSafeInteger(ms)&&Math.abs(ms)<=8640000000000000?ms:null;
+ return Number.isFinite(ms)&&Math.abs(ms)<=8640000000000000?ms:null;
 }
 function ledgerCsvReceiptMs(ts){
  if(!ts||typeof ts!=='object')return null;
