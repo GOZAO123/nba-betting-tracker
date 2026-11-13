@@ -486,7 +486,7 @@ main{width:100%;min-width:0}
   <div class="row"><label for="ledgerDate">NBA fixture date (US Eastern):</label><input id="ledgerDate" type="date"><button id="ledgerFind" class="mini" type="button">Find upcoming fixtures (ESPN)</button></div>
   <div class="row"><label for="ledgerFixture">ESPN fixture:</label><select id="ledgerFixture" aria-label="Upcoming ESPN fixture" style="min-width:300px"><option value="">Load fixtures first</option></select></div>
   <div class="row"><label><input type="checkbox" id="ledgerQuoteConfirmed"> I actually observed this Betano line and price before tip-off (not a made-up test quote).</label></div>
-  <div class="row"><button id="ledgerSave" type="button" class="primary">Save via trusted backend</button><button id="ledgerRefresh" class="mini" type="button">↻ Load my cloud ledger</button><button id="ledgerLoadMore" class="mini" type="button" hidden disabled>Load 50 older records</button></div>
+  <div class="row"><button id="ledgerSave" type="button" class="primary">Save via trusted backend</button><button id="ledgerRefresh" class="mini" type="button">↻ Load my cloud ledger</button><button id="ledgerLoadMore" class="mini" type="button" hidden disabled>Load 50 older records</button><button id="ledgerExportCsv" class="mini" type="button" disabled>⬇ Export loaded CSV</button></div>
   <p id="ledgerStatus" class="muted" role="status">First run Actual line research above using the genuine line, side and decimal odds. Then choose an upcoming ESPN game and confirm your observed price. No automatic saving.</p>
   <div id="ledgerResults" class="research-results"></div>
   <details class="scanner-dev" id="ledgerDryRunPanel">
@@ -2666,6 +2666,7 @@ const ledgerDate=document.getElementById('ledgerDate'),
  ledgerSave=document.getElementById('ledgerSave'),
  ledgerRefresh=document.getElementById('ledgerRefresh'),
  ledgerLoadMore=document.getElementById('ledgerLoadMore'),
+ ledgerExportCsv=document.getElementById('ledgerExportCsv'),
  ledgerStatus=document.getElementById('ledgerStatus'),
  ledgerResults=document.getElementById('ledgerResults');
 const LEDGER_GRACE=5*60*1000;
@@ -2717,6 +2718,7 @@ function ledgerReset(){
  ledgerSession++;ledgerEvents.clear();ledgerRows=[];
  ledgerLastDoc=null;ledgerMoreAvailable=false;ledgerPageBusy=false;
  ledgerRefresh.disabled=false;ledgerLoadMore.disabled=true;ledgerLoadMore.hidden=true;
+ ledgerExportCsv.disabled=true;
  ledgerResults.replaceChildren();ledgerFixture.replaceChildren();
  ledgerFixture.add(new Option('Load upcoming games',''));
  ledgerQuoteConfirmed.checked=false;ledgerDate.value=ledgerToday();
@@ -3025,6 +3027,7 @@ async function ledgerLoad(append=false){
  if(ledgerPageBusy)return false;
  if(append&&(!ledgerMoreAvailable||!ledgerLastDoc))return false;
  ledgerPageBusy=true;ledgerRefresh.disabled=true;ledgerLoadMore.disabled=true;
+ ledgerExportCsv.disabled=true;
  try{
   const constraints=[orderBy('clientCapturedMs','desc')];
   if(append)constraints.push(startAfter(ledgerLastDoc));
@@ -3043,6 +3046,7 @@ async function ledgerLoad(append=false){
   if(auth.currentUser?.uid===uid&&session===ledgerSession){
    ledgerPageBusy=false;ledgerRefresh.disabled=false;
    ledgerLoadMore.disabled=!ledgerMoreAvailable;
+   ledgerExportCsv.disabled=!ledgerRows.length;
   }
  }
 }
@@ -3051,6 +3055,122 @@ function ledgerLoadedMessage(){
   (ledgerMoreAvailable?' · older records may exist; load 50 more when needed.':
    ' · no further records in the ordered query.');
 }
+// Update 35.2A ledger CSV export BEGIN
+// Explicitly export ONLY the already-loaded, timestamp-ordered ledger pages.
+// Fixed allowlist: no Firebase account identifiers, secrets, or extra document fields.
+const LEDGER_CSV_COLUMNS=Object.freeze([
+ 'export_schema','export_scope','export_generated_utc','export_loaded_count',
+ 'export_more_pages_may_exist','record_id','schema_version','record_status',
+ 'derived_eligibility','source','captured_via',
+ 'player','athlete_id','team','team_id','event_id','home','away','home_id','away_id',
+ 'event_start_ms','event_start_utc','event_start_lisbon',
+ 'market','side','line','decimal_odds',
+ 'model_over','model_selected','hits12','games12','hits24','games24',
+ 'client_captured_ms','captured_server_utc','captured_server_lisbon',
+ 'captured_server_seconds','captured_server_nanoseconds',
+ 'settled_utc','settled_lisbon','settled_seconds','settled_nanoseconds',
+ 'result_stat','result_won','void_reason','settlement_source','disclaimer'
+]);
+function ledgerCsvEpoch(ms){
+ return Number.isSafeInteger(ms)&&Math.abs(ms)<=8640000000000000?ms:null;
+}
+function ledgerCsvReceiptMs(ts){
+ if(!ts||typeof ts!=='object')return null;
+ try{
+  if(typeof ts.toMillis==='function')return ledgerCsvEpoch(ts.toMillis());
+ }catch(_){return null}
+ const s=ts.seconds,n=ts.nanoseconds;
+ if(!Number.isSafeInteger(s)||!Number.isInteger(n)||n<0||n>=1000000000)return null;
+ return ledgerCsvEpoch(s*1000+Math.floor(n/1000000));
+}
+function ledgerCsvIso(ms){
+ return ms===null?'':new Date(ms).toISOString();
+}
+function ledgerCsvLisbon(ms){
+ if(ms===null)return '';
+ const p=new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Lisbon',
+  year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',
+  hourCycle:'h23'}).formatToParts(new Date(ms));
+ const v=t=>p.find(x=>x.type===t)?.value||'';
+ return v('year')+'-'+v('month')+'-'+v('day')+' '+v('hour')+':'+v('minute')+' Europe/Lisbon';
+}
+function ledgerCsvField(value){
+ if(value===null||value===undefined)return '""';
+ let raw;
+ if(typeof value==='string')raw=value;
+ else if(typeof value==='number')raw=Number.isFinite(value)?String(value):'';
+ else if(typeof value==='boolean')raw=value?'true':'false';
+ else raw='';
+ // CSV injection: protect any spreadsheet formula after leading whitespace/control.
+ if(/^[\s\uFEFF\u200B-\u200D]*[=+\-@]/u.test(raw))raw="'"+raw;
+ return '"'+raw.replace(/"/g,'""')+'"';
+}
+function ledgerCsvBuild(rows,moreAvailable,whenMs){
+ if(!Array.isArray(rows)||!Number.isFinite(whenMs))
+  throw Error('Cannot export an invalid ledger snapshot.');
+ const when=ledgerCsvEpoch(Math.trunc(whenMs));
+ if(when===null)throw Error('Invalid export timestamp.');
+ const header=LEDGER_CSV_COLUMNS.map(ledgerCsvField).join(',');
+ const data=rows.map(r=>{
+  if(!r||typeof r!=='object')throw Error('Invalid loaded ledger record.');
+  const tip=ledgerCsvEpoch(r.eventStartMs);
+  const client=ledgerCsvEpoch(r.clientCapturedMs);
+  const captured=ledgerCsvReceiptMs(r.capturedServerAt);
+  const settled=ledgerCsvReceiptMs(r.settledAt);
+  const seconds=ts=>Number.isSafeInteger(ts?.seconds)?ts.seconds:null;
+  const nanos=ts=>Number.isInteger(ts?.nanoseconds)&&ts.nanoseconds>=0&&
+   ts.nanoseconds<1000000000?ts.nanoseconds:null;
+  const c={
+   export_schema:1,export_scope:'LOADED_RECORDS_ONLY',
+   export_generated_utc:ledgerCsvIso(when),export_loaded_count:rows.length,
+   export_more_pages_may_exist:Boolean(moreAvailable),
+   record_id:r.id,schema_version:r.schemaVersion,record_status:r.status,
+   derived_eligibility:ledgerState(r),
+   source:r.source,captured_via:r.capturedVia,
+   player:r.player,athlete_id:r.athleteId,team:r.team,team_id:r.teamId,
+   event_id:r.eventId,home:r.home,away:r.away,
+   home_id:r.homeId,away_id:r.awayId,
+   event_start_ms:tip,event_start_utc:ledgerCsvIso(tip),
+   event_start_lisbon:ledgerCsvLisbon(tip),
+   market:r.market,side:r.side,line:r.line,decimal_odds:r.odds,
+   model_over:r.modelOver,model_selected:r.modelSelected,
+   hits12:r.hits12,games12:r.games12,hits24:r.hits24,games24:r.games24,
+   client_captured_ms:client,captured_server_utc:ledgerCsvIso(captured),
+   captured_server_lisbon:ledgerCsvLisbon(captured),
+   captured_server_seconds:seconds(r.capturedServerAt),
+   captured_server_nanoseconds:nanos(r.capturedServerAt),
+   settled_utc:ledgerCsvIso(settled),settled_lisbon:ledgerCsvLisbon(settled),
+   settled_seconds:seconds(r.settledAt),settled_nanoseconds:nanos(r.settledAt),
+   result_stat:r.resultStat,result_won:r.resultWon,void_reason:r.voidReason,
+   settlement_source:r.settlementSource,disclaimer:r.disclaimer
+  };
+  return LEDGER_CSV_COLUMNS.map(k=>ledgerCsvField(c[k])).join(',');
+ });
+ return '\uFEFF'+[header,...data].join('\r\n')+'\r\n';
+}
+// Update 35.2A ledger CSV export END
+ledgerExportCsv.addEventListener('click',()=>{
+ if(!auth.currentUser||ledgerBusy||ledgerPageBusy||!ledgerRows.length)return;
+ const uid=auth.currentUser.uid,session=ledgerSession;
+ try{
+  // Snapshot the existing rows: never fetch additional Firestore or provider data.
+  const now=Date.now(),csv=ledgerCsvBuild(ledgerRows.slice(),ledgerMoreAvailable,now);
+  if(auth.currentUser?.uid!==uid||session!==ledgerSession)return;
+  const file='nba-research-loaded-only-'+new Date(now).toISOString()
+   .replace(/[:.]/g,'-')+'.csv';
+  const blob=new Blob([csv],{type:'text/csv;charset=utf-8'});
+  const url=URL.createObjectURL(blob),a=document.createElement('a');
+  a.href=url;a.download=file;document.body.append(a);a.click();a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),2000);
+  ledgerStatus.textContent='CSV prepared from '+ledgerRows.length+
+   ' loaded records only'+(ledgerMoreAvailable?' · older pages may exist.':'.')+
+   ' No additional Firestore, ESPN or OddsPapi requests.';
+ }catch(err){
+  if(auth.currentUser?.uid===uid&&session===ledgerSession)
+   ledgerStatus.textContent='Could not export the loaded research: '+(err.message||String(err));
+ }
+});
+
 ledgerRefresh.addEventListener('click',async()=>{
  if(ledgerBusy||ledgerPageBusy||!auth.currentUser)return;
  try{if(await ledgerLoad(false))ledgerStatus.textContent=ledgerLoadedMessage()}
