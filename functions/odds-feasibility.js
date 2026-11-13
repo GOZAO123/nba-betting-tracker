@@ -2,6 +2,9 @@
 
 // Update 35.1B — pure, bounded diagnostic. Never persists or exposes raw odds.
 const MAX_RESPONSE_BYTES = 12 * 1024 * 1024;
+// The global official /v4/markets catalogue can exceed the NBA-odds limit.
+// Scope this larger bound ONLY to the manual audit catalogue reader.
+const MAX_CATALOGUE_RESPONSE_BYTES = 32 * 1024 * 1024;
 const MAX_FIXTURES = 250;
 const MAX_MARKETS = 18000;
 const MAX_ENTRIES = 180000;
@@ -120,13 +123,13 @@ function summariseLeagueOdds(payload, now = Date.now()) {
 }
 
 // Fully bound the *decoded* response body, regardless of Content-Length header.
-async function readLimitedJson(response) {
+async function readJsonWithByteLimit(response, maxBytes) {
   if (!response?.ok) throw new Error("OddsPapi HTTP failure; a quota call may have been consumed.");
   if (!response.body || typeof response.body.getReader !== "function") {
     throw new Error("Provider response is not safely streamable.");
   }
   const length = Number(response.headers?.get?.("content-length"));
-  if (Number.isFinite(length) && length > MAX_RESPONSE_BYTES) {
+  if (Number.isFinite(length) && length > maxBytes) {
     await response.body.cancel?.();
     throw new Error("Provider response exceeds safe byte limit.");
   }
@@ -138,16 +141,22 @@ async function readLimitedJson(response) {
       const { done, value } = await reader.read();
       if (done) break;
       bytes += value.byteLength;
-      if (bytes > MAX_RESPONSE_BYTES) throw new Error("Provider response exceeds safe byte limit.");
+      if (bytes > maxBytes) throw new Error("Provider response exceeds safe byte limit.");
       raw += decoder.decode(value, { stream: true });
     }
     raw += decoder.decode();
     return JSON.parse(raw);
   } finally {
-    if (bytes > MAX_RESPONSE_BYTES) await reader.cancel().catch(() => {});
+    if (bytes > maxBytes) await reader.cancel().catch(() => {});
     reader.releaseLock();
   }
 }
+
+// Fixed wrappers prevent call sites from choosing an arbitrary higher byte limit.
+// All pre-existing odds diagnostics keep the 12 MiB limit without modification.
+const readLimitedJson = response => readJsonWithByteLimit(response, MAX_RESPONSE_BYTES);
+const readMarketCatalogueJson = response =>
+  readJsonWithByteLimit(response, MAX_CATALOGUE_RESPONSE_BYTES);
 
 // Injected dependencies enable offline tests of authentication, quota, and
 // single-flight behaviour without importing Firebase or contacting OddsPapi.
@@ -183,4 +192,4 @@ function makeFeasibilityRunner({ ownerUid, reserve, fetchOdds, now = Date.now })
   };
 }
 
-module.exports = { summariseLeagueOdds, readLimitedJson, makeFeasibilityRunner };
+module.exports = { summariseLeagueOdds, readLimitedJson, readMarketCatalogueJson, makeFeasibilityRunner };
