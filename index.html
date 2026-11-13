@@ -3630,8 +3630,8 @@ async function ledgerReconcileReviewedInactive(id){
   if(data?.voided!==true||data.reason!=='NBA_OFFICIAL_REVIEWED_INACTIVE'||
      data.recordId!==id)
    throw Error('Server did not return the expected reviewed no-action receipt');
-  ledgerStatus.textContent='Reviewed official NBA nonparticipation confirmed by trusted server; '+
-   'research no-action only, not a Betano-verified void.';
+  ledgerStatus.textContent='Trusted server saved reviewed NBA nonparticipation using pre-reviewed official sources '+
+   'and live ESPN Final checks. Research no-action only, not a Betano-verified void.';
   try{await ledgerLoad()}
   catch(_){ledgerStatus.textContent+=' Cloud refresh failed; reload the ledger to confirm exact receipt.'}
  }catch(err){
