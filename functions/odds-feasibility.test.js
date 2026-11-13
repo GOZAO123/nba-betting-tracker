@@ -1,7 +1,7 @@
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { summariseLeagueOdds, readLimitedJson, makeFeasibilityRunner } = require("./odds-feasibility");
+const { summariseLeagueOdds, readLimitedJson, readMarketCatalogueJson, makeFeasibilityRunner } = require("./odds-feasibility");
 const NOW = Date.parse("2026-11-13T12:00:00.000Z");
 const iso = offset => new Date(NOW + offset).toISOString();
 const selection = (overrides = {}) => ({
@@ -170,4 +170,51 @@ test("quota failure causes zero provider calls; provider error is not retried", 
   });
   await assert.rejects(failed(request), /provider unavailable/);
   assert.equal(calls, 1);
+});
+
+
+test("catalogue-specific reader accepts 12+ MiB synthetic JSON while NBA odds remains 12 MiB", async () => {
+  const raw = JSON.stringify([{ marketId: 101, playerProp: true,
+    filler: "x".repeat(12 * 1024 * 1024) }]);
+  assert.ok(Buffer.byteLength(raw) > 12 * 1024 * 1024);
+  assert.ok(Buffer.byteLength(raw) < 32 * 1024 * 1024);
+  await assert.rejects(readLimitedJson(new Response(raw)), /safe byte limit/);
+  const marketDefinitions = await readMarketCatalogueJson(new Response(raw));
+  assert.equal(marketDefinitions.length, 1);
+  assert.equal(marketDefinitions[0].marketId, 101);
+  assert.equal(marketDefinitions[0].filler.length, 12 * 1024 * 1024);
+});
+
+test("catalogue reader rejects oversized Content-Length without reading body", async () => {
+  let cancelled = 0, pulled = 0;
+  const body = new ReadableStream({
+    pull(controller) { pulled++; controller.enqueue(new Uint8Array([91, 93])); controller.close(); },
+    cancel() { cancelled++; }
+  }, { highWaterMark: 0 });
+  const response = {
+    ok: true, headers: { get: name => name === "content-length" ? String(32 * 1024 * 1024 + 1) : null },
+    body
+  };
+  await assert.rejects(readMarketCatalogueJson(response), /Provider response exceeds safe byte limit/);
+  assert.equal(pulled, 0);
+  assert.equal(cancelled, 1);
+});
+
+test("catalogue reader rejects streamed bytes above 32 MiB even with a false low header", async () => {
+  let cancelled = 0, pulls = 0;
+  const chunk = new Uint8Array(8 * 1024 * 1024);
+  const body = new ReadableStream({
+    pull(controller) { pulls++; controller.enqueue(chunk); },
+    cancel() { cancelled++; }
+  }, { highWaterMark: 0 });
+  const response = { ok: true, headers: { get: () => "10" }, body };
+  await assert.rejects(readMarketCatalogueJson(response), /Provider response exceeds safe byte limit/);
+  assert.equal(pulls, 5);
+  assert.equal(cancelled, 1);
+});
+
+test("catalogue reader preserves fail-closed HTTP, malformed JSON, and missing-body behavior", async () => {
+  await assert.rejects(readMarketCatalogueJson(new Response("[]", { status: 429 })), /HTTP failure/);
+  await assert.rejects(readMarketCatalogueJson(new Response("[{\"marketId\":1}")), SyntaxError);
+  await assert.rejects(readMarketCatalogueJson({ ok: true, body: null }), /not safely streamable/);
 });

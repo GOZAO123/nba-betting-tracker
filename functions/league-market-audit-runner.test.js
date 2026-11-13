@@ -360,7 +360,54 @@ test("production audit wiring logs only sanitized diagnostic and preserves manua
   assert.match(audit, /console\.warn\("NBA market audit safe failure", \{ stage, reason \}\)/);
   assert.match(audit, /reserve: reserveDiagnosticRequests/);
   assert.match(audit, /maxInstances: 1, concurrency: 1/);
-  assert.match(audit, /return readLimitedJson\(response\)/);
+  assert.match(audit, /path === "\/v4\/markets" \? readMarketCatalogueJson\(response\) : readLimitedJson\(response\)/);
   assert.doesNotMatch(audit, /console\.(log|error|debug)\(/);
   assert.doesNotMatch(audit, /setInterval|onSchedule|setDoc|addDoc/);
+});
+
+test("large but bounded official catalogue passes the manual runner without relaxing quota guards", async () => {
+  const { readMarketCatalogueJson } = require("./odds-feasibility");
+  const raw = JSON.stringify([{ ...CATALOGUE[0], unusedPadding: "a".repeat(12 * 1024 * 1024) }]);
+  assert.ok(Buffer.byteLength(raw) > 12 * 1024 * 1024);
+  let reserved = 0, catalogueCalls = 0, oddsCalls = 0;
+  const reports = [];
+  const run = makeLeagueMarketAuditRunner({
+    ownerUid: "fake-owner", now: () => NOW,
+    reserve: async n => { reserved += n; },
+    fetchCatalogue: async () => { catalogueCalls++; return readMarketCatalogueJson(new Response(raw)); },
+    fetchOdds: async () => { oddsCalls++; return ODDS; },
+    onFailure: issue => reports.push(issue)
+  });
+  const result = await run(owner);
+  assert.equal(reserved, 2);
+  assert.equal(catalogueCalls, 1);
+  assert.equal(oddsCalls, 1);
+  assert.equal(result.eligibleCatalogueMarketIds, 1);
+  assert.equal(result.matchedMarketObjects, 1);
+  assert.equal(result.requestsUsedOnThisClick, 2);
+  assert.deepEqual(reports, []);
+  assert.equal((await run(owner)).requestsUsedOnThisClick, 0);
+  assert.equal(reserved, 2);
+  assert.equal(catalogueCalls, 1);
+  assert.equal(oddsCalls, 1);
+  assert.doesNotMatch(JSON.stringify(result), /unusedPadding|Synthetic Player/);
+});
+
+test("production audit alone selects the larger market reader and retains 12 MiB odds reader", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const src = fs.readFileSync(path.join(__dirname, "index.js"), "utf8");
+  const shared = fs.readFileSync(path.join(__dirname, "odds-feasibility.js"), "utf8");
+  const start = src.indexOf("// Update 35.1C2 — deliberately manual");
+  const end = src.indexOf("function ledgerAssertOwner(request)", start);
+  const audit = src.slice(start, end);
+  assert.ok(start >= 0 && end > start);
+  assert.match(audit, /path === "\/v4\/markets" \? readMarketCatalogueJson\(response\) : readLimitedJson\(response\)/);
+  assert.match(audit, /fetchCatalogue: \(\) => fetchLeagueAuditJson\("\/v4\/markets", \{ language: "en" \}\)/);
+  assert.match(audit, /fetchOdds: \(\) => fetchLeagueAuditJson\("\/v4\/odds-by-tournaments"/);
+  assert.match(shared, /const MAX_RESPONSE_BYTES = 12 \* 1024 \* 1024/);
+  assert.match(shared, /const MAX_CATALOGUE_RESPONSE_BYTES = 32 \* 1024 \* 1024/);
+  assert.match(shared, /const readLimitedJson = response => readJsonWithByteLimit\(response, MAX_RESPONSE_BYTES\)/);
+  assert.match(shared, /readJsonWithByteLimit\(response, MAX_CATALOGUE_RESPONSE_BYTES\)/);
+  assert.doesNotMatch(audit, /setInterval|onSchedule|setDoc|updateDoc|addDoc/);
 });

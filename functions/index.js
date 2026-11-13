@@ -609,7 +609,7 @@ const LEDGER_OWNER = "I6ZhMcObXxNVdfv2AqapDxwIaet1";
 // IMPORTANT: deploy only this named function after explicit approval. Current main
 // does not contain the separately deployed oddsPapiAccountPreflight source from PR #17.
 // A full functions deployment from main would therefore risk deleting preflight.
-const { makeFeasibilityRunner, readLimitedJson } = require("./odds-feasibility");
+const { makeFeasibilityRunner, readLimitedJson, readMarketCatalogueJson } = require("./odds-feasibility");
 const runNbaOddsFeasibility = makeFeasibilityRunner({
   ownerUid: LEDGER_OWNER,
   reserve: reserveDiagnosticRequests,
@@ -663,7 +663,9 @@ async function fetchLeagueAuditJson(path, params) {
     signal: AbortSignal.timeout(35000),
     headers: { Accept: "application/json" }
   });
-  return readLimitedJson(response);
+  // Only the global catalogue receives the higher fixed response ceiling.
+  // The NBA league-odds snapshot still uses the original 12 MiB reader.
+  return path === "/v4/markets" ? readMarketCatalogueJson(response) : readLimitedJson(response);
 }
 const runNbaMarketAudit = makeLeagueMarketAuditRunner({
   ownerUid: LEDGER_OWNER,
