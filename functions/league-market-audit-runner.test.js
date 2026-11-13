@@ -222,7 +222,7 @@ test("first upstream rejection reports catalogue fetch stage once and never trig
 });
 
 test("zero eligible catalogue markets are logged separately from fetch, without a second provider request", async () => {
-  const messages = [], s = setup({ catalogue: [] });
+  const messages = [];
   let fetches = 0;
   const run = makeLeagueMarketAuditRunner({
     ownerUid: "fake-owner", now: () => NOW,

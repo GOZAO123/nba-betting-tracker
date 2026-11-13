@@ -90,40 +90,40 @@ function makeLeagueMarketAuditRunner({
         // Reserve maximum potential upstream calls in existing transactional 6/day guard.
         // Reservations are not refunded if a request fails or is skipped.
         await reserve(catalogueValid ? 1 : 2);
-      let definitions = catalogue;
-      let used = 0;
-      if (!catalogueValid) {
-        stage = "CATALOGUE_FETCH";
-        definitions = await fetchCatalogue();
+        let definitions = catalogue;
+        let used = 0;
+        if (!catalogueValid) {
+          stage = "CATALOGUE_FETCH";
+          definitions = await fetchCatalogue();
+          used++;
+          stage = "CATALOGUE_VALIDATE";
+          // Fail closed before a second metered request if metadata is unusable.
+          const meta = auditOfficialLeagueProps(definitions, [], now());
+          if (meta.totalCatalogueDefinitions === 0 || meta.eligibleCatalogueMarketIds === 0)
+            throw new Error("Official catalogue has no usable NBA full-game player-prop definitions.");
+          catalogue = definitions;
+          catalogueAt = now();
+          // Respect the provider's per-endpoint cooldown without retrying requests.
+          stage = "COOLDOWN";
+          await waitBetweenRequests();
+        }
+        stage = "LEAGUE_FETCH";
+        const odds = await fetchOdds();
         used++;
-        stage = "CATALOGUE_VALIDATE";
-        // Fail closed before a second metered request if metadata is unusable.
-        const meta = auditOfficialLeagueProps(definitions, [], now());
-        if (meta.totalCatalogueDefinitions === 0 || meta.eligibleCatalogueMarketIds === 0)
-          throw new Error("Official catalogue has no usable NBA full-game player-prop definitions.");
-        catalogue = definitions;
-        catalogueAt = now();
-        // Respect the provider's per-endpoint cooldown without retrying requests.
-        stage = "COOLDOWN";
-        await waitBetweenRequests();
-      }
-      stage = "LEAGUE_FETCH";
-      const odds = await fetchOdds();
-      used++;
-      stage = "LEAGUE_ANALYZE";
-      const report = auditOfficialLeagueProps(definitions, odds, now());
-      const data = {
-        ...report,
-        diagnosticVersion: "35.1C-MANUAL",
-        analysis: "READ_ONLY_PROVIDER_SNAPSHOT_NOT_BOOKMAKER_VERIFIED",
-        receivedAt: new Date(now()).toISOString(),
-        cached: false,
-        catalogueCached: catalogueValid,
-        requestsUsedOnThisClick: used
-      };
-      snapshot = data;
-      snapshotAt = now();
-      return data;
+        stage = "LEAGUE_ANALYZE";
+        const report = auditOfficialLeagueProps(definitions, odds, now());
+        const data = {
+          ...report,
+          diagnosticVersion: "35.1C-MANUAL",
+          analysis: "READ_ONLY_PROVIDER_SNAPSHOT_NOT_BOOKMAKER_VERIFIED",
+          receivedAt: new Date(now()).toISOString(),
+          cached: false,
+          catalogueCached: catalogueValid,
+          requestsUsedOnThisClick: used
+        };
+        snapshot = data;
+        snapshotAt = now();
+        return data;
       } catch (error) {
         // Emit one minimal static category; callback errors cannot replace the
         // original exception or introduce a second upstream request.
