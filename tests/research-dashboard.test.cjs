@@ -403,6 +403,133 @@ test("CSV button follows ledger session/load lifecycle and leaves cloud queries 
  assert.match(html,/ledgerState\(r\)/);
 });
 
+// Update 35.2B: data-quality checks use synthetic records only; no real quotes.
+const coverageStart=html.indexOf("// Update 35.2B pure data-quality coverage metrics BEGIN");
+const coverageEnd=html.indexOf("// Update 35.2B pure data-quality coverage metrics END",coverageStart);
+assert.ok(coverageStart>0&&coverageEnd>coverageStart,"Coverage pure function is present");
+const coveragePure=html.slice(coverageStart,coverageEnd);
+const ledgerDataQualityMetrics=new Function(coveragePure+
+ "\nreturn ledgerDataQualityMetrics;")();
+const COVERAGE_NOW=Date.parse("2026-11-13T16:00:00.000Z");
+const coverageState=r=>r.status==="pending"?"PENDING":r.status==="settled"?"SETTLED":
+ r.status==="void"?"DNP / NO ACTION":"UNVERIFIED STATUS";
+function coverageRecord(index,overrides={}){
+ const start=Date.parse("2026-11-12T00:00:00.000Z");
+ return {id:"record-"+index,eventId:String(400000000+index),athleteId:String(10000+index),
+  teamId:"2",player:"Synthetic Player "+index,team:"Example Team",
+  home:"Example Home",away:"Example Away",eventStartMs:start,
+  market:"PTS",line:20.5,side:"Over",odds:1.80,
+  modelOver:0.55,modelSelected:0.55,status:"settled",
+  resultStat:25,resultWon:true,
+  capturedServerAt:{toMillis:()=>start-12*3600000},...overrides};
+}
+test("coverage counts 31 synthetic records across 8 events, 29 athletes, 12 teams and 8 markets",()=>{
+ const eventSizes=[7,6,6,6,2,2,1,1],marketSizes=[6,5,5,4,3,3,3,2],
+  marketNames=["PTS","REB","AST","3PT","PR","PA","RA","PRA"];
+ const eventIds=eventSizes.flatMap((n,i)=>Array(n).fill(String(401000000+i)));
+ const markets=marketSizes.flatMap((n,i)=>Array(n).fill(marketNames[i]));
+ const start=Date.parse("2026-11-12T00:00:00.000Z");
+ const rows=Array.from({length:31},(_,i)=>coverageRecord(i,{
+  eventId:eventIds[i],athleteId:String(10000+i%29),teamId:String(2+i%12),
+  market:markets[i],line:i%2?4.5:20.5,
+  eventStartMs:start+Number(eventIds[i].slice(-1))*3600000,
+  capturedServerAt:{toMillis:()=>start-18*3600000},
+  status:i===7?"pending":"settled",
+  resultStat:i===7?null:25,resultWon:i===7?null:true
+ }));
+ const out=ledgerDataQualityMetrics(rows,coverageState,COVERAGE_NOW,false);
+ assert.deepEqual([out.loaded,out.gameCount,out.playerCount,out.teamCount,out.marketCount],
+  [31,8,29,12,8]);
+ assert.equal(out.topThreeCount,19);
+ assert.deepEqual(out.topGames.map(g=>g.count),[7,6,6]);
+ assert.deepEqual(out.byMarket.map(m=>m.count),marketSizes);
+ assert.equal(out.oldPendingCount,1);
+ assert.equal(out.oldPending[0].player,"Synthetic Player 7");
+ assert.deepEqual(Object.values(out.anomalies),[0,0,0,0,0,0,0]);
+ assert.equal(out.limited,false);
+});
+
+test("coverage flags old pending without changing status, concluding DNP, or counting a loss",()=>{
+ const pending=coverageRecord(1,{status:"pending",player:"Unresolved Example",
+  resultWon:null,resultStat:null});
+ const settled=coverageRecord(2);
+ const dnp=coverageRecord(3,{status:"void",voidReason:"ESPN_EXPLICIT_DNP",
+  resultWon:null,resultStat:null});
+ const snapshot=JSON.stringify(pending);
+ const quality=ledgerDataQualityMetrics([pending,settled,dnp],coverageState,COVERAGE_NOW,false);
+ assert.equal(quality.oldPendingCount,1);
+ assert.equal(quality.oldPending[0].ageHours,40);
+ assert.equal(JSON.stringify(pending),snapshot);
+ assert.equal(quality.anomalies.incompleteSettlement,0);
+ assert.equal(pending.status,"pending");
+ const render=html.slice(html.indexOf("function ledgerRenderDataQuality("),
+  html.indexOf("// Descriptive calibration only.",html.indexOf("function ledgerRenderDataQuality(")));
+ assert.match(render,/old pending record is NOT evidence of DNP/);
+ assert.match(render,/No structural data-quality anomalies/);
+ assert.doesNotMatch(render,/httpsCallable|getDocsFromServer|runTransaction|\.update\(|\.set\(/);
+});
+
+test("pending review threshold uses elapsed time since fixture and is not a claim of final status",()=>{
+ const start=COVERAGE_NOW-24*3600000;
+ const atBoundary=coverageRecord(1,{status:"pending",eventStartMs:start,
+  capturedServerAt:{toMillis:()=>start-3600000},resultWon:null,resultStat:null});
+ const tooRecent=coverageRecord(2,{status:"pending",
+  eventStartMs:start+1,capturedServerAt:{toMillis:()=>start-3600000},
+  resultWon:null,resultStat:null});
+ const out=ledgerDataQualityMetrics([atBoundary,tooRecent],coverageState,COVERAGE_NOW,true);
+ assert.equal(out.oldPendingCount,1);
+ assert.equal(out.oldPending[0].ageHours,24);
+ assert.equal(out.limited,true);
+});
+
+test("coverage flags incomplete identifiers, missing receipt, invalid odds and uncalibrated fields",()=>{
+ const start=Date.parse("2026-11-12T00:00:00.000Z");
+ const records=[
+  coverageRecord(1,{eventId:"missing",athleteId:null,teamId:null,
+   capturedServerAt:null,odds:1,modelSelected:null}),
+  coverageRecord(2,{capturedServerAt:{toMillis:()=>start-4*60000},
+   line:20,modelOver:NaN}),
+  coverageRecord(3,{status:"settled",resultWon:null,resultStat:null}),
+  coverageRecord(4,{player:"Different name",eventId:"400000003",
+   athleteId:"10003",teamId:"2"}),
+  coverageRecord(5,{eventId:"400000003",athleteId:"10003",
+   teamId:"2",market:"PTS",line:20.5,side:"Over"})
+ ];
+ const q=ledgerDataQualityMetrics(records,coverageState,COVERAGE_NOW,false);
+ assert.deepEqual(q.anomalies,{
+  identity:1,receipt:1,late:1,quote:2,estimate:2,duplicate:1,incompleteSettlement:1});
+ assert.equal(q.gameCount,4);
+ assert.equal(q.topThreeCount,4);
+});
+
+test("empty and partial loaded samples are safe and never claim full bookmaker availability",()=>{
+ const empty=ledgerDataQualityMetrics([],coverageState,COVERAGE_NOW,false);
+ assert.deepEqual([empty.loaded,empty.gameCount,empty.playerCount,empty.marketCount,
+  empty.dayCount,empty.oldPendingCount,empty.topThreeCount],[0,0,0,0,0,0,0]);
+ assert.equal(empty.topGames.length,0);
+ assert.equal(empty.byMarket.length,8);
+ assert.throws(()=>ledgerDataQualityMetrics(null,coverageState,COVERAGE_NOW,false),/Invalid research coverage inputs/);
+ const partial=ledgerDataQualityMetrics([coverageRecord(1)],coverageState,COVERAGE_NOW,true);
+ assert.equal(partial.limited,true);
+ const render=html.slice(html.indexOf("function ledgerRenderDataQuality("),
+  html.indexOf("// Descriptive calibration only.",html.indexOf("function ledgerRenderDataQuality(")));
+ assert.match(render,/NOT the number of bookmaker offers available/);
+ assert.match(render,/All records were manually selected/);
+ assert.match(render,/Correlated game exposures/);
+ assert.doesNotMatch(render,/innerHTML|insertAdjacentHTML/);
+});
+
+test("coverage is loaded-record-only and does not alter auth, pagination, or frozen data",()=>{
+ assert.match(html,/ledgerRenderDataQuality\(ledgerResults,ledgerDataQualityMetrics\(ledgerRows,ledgerState,Date\.now\(\),ledgerMoreAvailable\)\)/);
+ assert.doesNotMatch(coveragePure,/fetch\s*\(|httpsCallable|getDocsFromServer|onSnapshot|runTransaction|setInterval|setTimeout/);
+ assert.match(html,/const LEDGER_PAGE_SIZE=50/);
+ assert.match(html,/if\(append\)constraints\.push\(startAfter\(ledgerLastDoc\)\)/);
+ assert.match(html,/ledgerCsvBuild\(ledgerRows\.slice\(\),ledgerMoreAvailable,now\)/);
+ assert.match(html,/httpsCallable\(oddsFunctions,'ledgerSettleProspective'\)/);
+ const a=html.indexOf("function ledgerDataQualityMetrics("),b=html.indexOf("// Update 35.2B pure data-quality coverage metrics END",a);
+ assert.ok(a>0&&b>a);
+});
+
 // Update 35.0B: all batch rows below are synthetic offline parser fixtures.
 // No fixture, odds, or quote in these tests is a verified bookmaker offer.
 const batchParser=(()=>{
