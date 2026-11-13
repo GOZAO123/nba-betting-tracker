@@ -2949,7 +2949,7 @@ function ledgerState(row){
  if(!Number.isFinite(ms))return 'UNVERIFIED TIMESTAMP';
  if(ms>=row.eventStartMs-LEDGER_GRACE)return 'LATE / EXCLUDED';
  if(row.status==='settled')return 'SETTLED';
- if(row.status==='void')return row.voidReason==='ESPN_EXPLICIT_DNP'?'DNP / NO ACTION':'UNVERIFIED STATUS';
+ if(row.status==='void')return ['ESPN_EXPLICIT_DNP','NBA_OFFICIAL_REVIEWED_INACTIVE'].includes(row.voidReason)?'DNP / NO ACTION':'UNVERIFIED STATUS';
  return row.status==='pending'?'PENDING':'UNVERIFIED STATUS';
 }
 function ledgerRef(uid,id){return doc(db,'users',uid,'propResearchLedger',id)}
@@ -3069,7 +3069,9 @@ const LEDGER_CSV_COLUMNS=Object.freeze([
  'client_captured_ms','captured_server_utc','captured_server_lisbon',
  'captured_server_seconds','captured_server_nanoseconds',
  'settled_utc','settled_lisbon','settled_seconds','settled_nanoseconds',
- 'result_stat','result_won','void_reason','settlement_source','disclaimer'
+ 'result_stat','result_won','void_reason','settlement_source','disclaimer',
+ 'reconciliation_source','reconciliation_review_method',
+ 'reconciliation_nba_report_url','reconciliation_nba_postgame_url'
 ]);
 function ledgerCsvEpoch(ms){
  return Number.isFinite(ms)&&Math.abs(ms)<=8640000000000000?ms:null;
@@ -3142,7 +3144,11 @@ function ledgerCsvBuild(rows,moreAvailable,whenMs){
    settled_utc:ledgerCsvIso(settled),settled_lisbon:ledgerCsvLisbon(settled),
    settled_seconds:seconds(r.settledAt),settled_nanoseconds:nanos(r.settledAt),
    result_stat:r.resultStat,result_won:r.resultWon,void_reason:r.voidReason,
-   settlement_source:r.settlementSource,disclaimer:r.disclaimer
+   settlement_source:r.settlementSource,disclaimer:r.disclaimer,
+   reconciliation_source:r.reconciliationEvidence?.source,
+   reconciliation_review_method:r.reconciliationEvidence?.reviewMethod,
+   reconciliation_nba_report_url:r.reconciliationEvidence?.nbaReportUrl,
+   reconciliation_nba_postgame_url:r.reconciliationEvidence?.nbaPostgameUrl
   };
   return LEDGER_CSV_COLUMNS.map(k=>ledgerCsvField(c[k])).join(',');
  });
@@ -3238,7 +3244,7 @@ function ledgerRenderDashboard(container,result){
   ['Loaded records',s.records,'Latest cloud ledger sample'],
   ['Pending',s.pending,'Awaiting settlement'],
   ['Settled',s.settled,'Recorded settlement status'],
-  ['DNP / no action',s.voided,'ESPN explicit DNP · excluded from scoring'],
+  ['DNP / no action',s.voided,'Verified ESPN DNP or reviewed NBA inactivity · excluded from scoring'],
   ['Excluded',s.excluded,'Missing, late or unverified record'],
   ['Wins',s.wins,'Verified outcome records'],
   ['Losses',s.losses,'Verified outcome records'],
@@ -3493,13 +3499,25 @@ function ledgerDraw(){
    Number.isFinite(row.capturedServerAt?.toMillis?.())
     ?ledgerLisbonTime(row.capturedServerAt.toMillis())+(row.capturedVia==='trusted_firebase_callable'?' · Backend':' · Legacy'):'Server receipt not available',
    state,state==='SETTLED'?row.resultStat+' · '+(row.resultWon?'Won':'Lost'):
-    state==='DNP / NO ACTION'?'DNP · no action':'—'
+    state==='DNP / NO ACTION'?(row.voidReason==='NBA_OFFICIAL_REVIEWED_INACTIVE'?'NBA reviewed inactive · no action':'ESPN DNP · no action'):'—'
   ])tr.append(researchCreate('td',v));
   const buttonCell=researchCreate('td');
   const button=researchCreate('button','Check ESPN final','mini');
   button.disabled=state!=='PENDING'||Date.now()<row.eventStartMs+70*60000;
   button.addEventListener('click',()=>ledgerSettle(row.id));
-  buttonCell.append(button);tr.append(buttonCell);body.append(tr);
+  buttonCell.append(button);
+   if(row.id==='401909968_4251_REB_4p5_Under'&&
+      row.eventId==='401909968'&&row.athleteId==='4251'&&
+      row.player==='Paul George'&&row.team==='Boston Celtics'&&
+      row.market==='REB'&&row.line===4.5&&row.side==='Under'){
+    const reviewed=researchCreate('button','Review NBA inactive evidence','mini');
+    reviewed.type='button';
+    reviewed.disabled=state!=='PENDING'||ledgerBusy||ledgerPageBusy||
+     Date.now()<row.eventStartMs+70*60000;
+    reviewed.addEventListener('click',()=>ledgerReconcileReviewedInactive(row.id));
+    buttonCell.append(reviewed);
+   }
+   tr.append(buttonCell);body.append(tr);
  }
  table.append(body);const scroller=researchCreate('div',null,'boxscore');
  scroller.append(table);ledgerResults.append(scroller);
@@ -3588,6 +3606,41 @@ function ledgerExtractFinal(box,record){
   throw Error('Invalid stored betting line');
  return {resultStat:value,resultWon:record.side==='Over'?value>record.line:value<record.line};
 }
+// Update 35.2C — one pre-reviewed official NBA case, never a generic DNP control.
+// The trusted backend rechecks ESPN Final/athlete absence and the frozen receipt.
+// Official NBA injury/postgame sources were reviewed separately, NOT live parsed.
+async function ledgerReconcileReviewedInactive(id){
+ const user=auth.currentUser,row=ledgerRows.find(x=>x.id===id);
+ if(!user||ledgerBusy||ledgerPageBusy||!row||ledgerState(row)!=='PENDING'||
+    id!=='401909968_4251_REB_4p5_Under'||
+    row.eventId!=='401909968'||row.athleteId!=='4251'||
+    row.player!=='Paul George'||row.team!=='Boston Celtics'||
+    row.market!=='REB'||row.line!==4.5||row.side!=='Under'||
+    Date.now()<row.eventStartMs+70*60000)return;
+ if(!confirm('Review the one pre-reviewed official NBA inactive case for Paul George? '+
+  'The backend must recheck ESPN Final and the frozen record. Official NBA source pages '+
+  'were manually reviewed, not parsed live. A verified research no-action is NOT a '+
+  'Betano-confirmed void, win or loss. Continue?'))return;
+ const uid=user.uid,session=ledgerSession;
+ ledgerBusy=true;
+ try{
+  ledgerStatus.textContent='Trusted backend checking exact saved record and ESPN Final absence…';
+  const {data}=await httpsCallable(oddsFunctions,'ledgerReconcileReviewedInactive')({recordId:id});
+  if(auth.currentUser?.uid!==uid||session!==ledgerSession)return;
+  if(data?.voided!==true||data.reason!=='NBA_OFFICIAL_REVIEWED_INACTIVE'||
+     data.recordId!==id)
+   throw Error('Server did not return the expected reviewed no-action receipt');
+  ledgerStatus.textContent='Reviewed official NBA nonparticipation confirmed by trusted server; '+
+   'research no-action only, not a Betano-verified void.';
+  try{await ledgerLoad()}
+  catch(_){ledgerStatus.textContent+=' Cloud refresh failed; reload the ledger to confirm exact receipt.'}
+ }catch(err){
+  if(auth.currentUser?.uid===uid&&session===ledgerSession)
+   ledgerStatus.textContent='Reviewed inactive update NOT confirmed: '+
+    (err.message||String(err))+'. Load cloud ledger before retrying.';
+ }finally{ledgerBusy=false}
+}
+
 async function ledgerSettle(id){
  const user=auth.currentUser,row=ledgerRows.find(x=>x.id===id);
  if(!user||ledgerBusy||ledgerPageBusy||!row||ledgerState(row)!=='PENDING')return;
