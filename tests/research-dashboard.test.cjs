@@ -1139,3 +1139,27 @@ test("manual league coverage trigger is explicit and read-only",()=>{
  assert.match(handler,/mappingStatus!=='NOT_VERIFIED'/);
  assert.doesNotMatch(handler,/setInterval|setTimeout|onAuthStateChanged|ledgerCaptureProspective|ledgerBatchCapture/);
 });
+
+test("35.1C2 manual league market audit is explicit, bounded and read-only",()=>{
+ assert.match(html,/id="oddsMarketAuditBtn"/);
+ assert.match(html,/id="oddsMarketAuditStatus"/);
+ assert.match(html,/id="oddsMarketAuditResult"/);
+ const start=html.indexOf("document.getElementById('oddsMarketAuditBtn')?.addEventListener");
+ const end=html.indexOf("document.getElementById('detailedPropsBtn')?.addEventListener",start);
+ assert.ok(start>0&&end>start);
+ const src=html.slice(start,end);
+ assert.match(src,/auth\.currentUser/);
+ assert.match(src,/if\(!confirm\(/);
+ assert.match(src,/TWO OddsPapi monthly requests/);
+ assert.match(src,/httpsCallable\(oddsFunctions,'oddsPapiNbaMarketAudit'\)\(\{\}\)/);
+ assert.equal((src.match(/httpsCallable\(oddsFunctions,'oddsPapiNbaMarketAudit'\)/g)||[]).length,1);
+ assert.match(src,/data\.families\.every/);
+ assert.match(src,/NOT_ESPN_VERIFIED/);
+ assert.match(src,/pricesBookmakerVerified!==false/);
+ assert.match(src,/researchSaved!==false/);
+ assert.match(src,/timeZone:'Europe\/Lisbon'/);
+ assert.match(src,/textContent=value/);
+ assert.match(src,/btn\.disabled=true/);
+ assert.match(src,/btn\.disabled=false/);
+ assert.doesNotMatch(src,/setInterval|onSchedule|ledgerCaptureProspective|ledgerBatchCaptureProspective|setDoc|runTransaction|fetch\(/);
+});
