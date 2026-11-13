@@ -490,15 +490,15 @@ test("coverage flags incomplete identifiers, missing receipt, invalid odds and u
   coverageRecord(2,{capturedServerAt:{toMillis:()=>start-4*60000},
    line:20,modelOver:NaN}),
   coverageRecord(3,{status:"settled",resultWon:null,resultStat:null}),
-  coverageRecord(4,{player:"Different name",eventId:"400000003",
-   athleteId:"10003",teamId:"2"}),
-  coverageRecord(5,{eventId:"400000003",athleteId:"10003",
+  coverageRecord(4,{player:"Different name",eventId:"400000004",
+   athleteId:"10004",teamId:"2"}),
+  coverageRecord(5,{eventId:"400000004",athleteId:"10004",
    teamId:"2",market:"PTS",line:20.5,side:"Over"})
  ];
  const q=ledgerDataQualityMetrics(records,coverageState,COVERAGE_NOW,false);
  assert.deepEqual(q.anomalies,{
   identity:1,receipt:1,late:1,quote:2,estimate:2,duplicate:1,incompleteSettlement:1});
- assert.equal(q.gameCount,4);
+ assert.equal(q.gameCount,3);
  assert.equal(q.topThreeCount,4);
 });
 
