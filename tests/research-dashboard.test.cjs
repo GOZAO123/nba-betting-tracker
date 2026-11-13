@@ -1124,3 +1124,18 @@ test("35.1A unmetered OddsPapi account preflight never triggers odds capture",()
  assert.doesNotMatch(script,/ledgerBatchCaptureProspective|ledgerSave|\/v4\/odds|setInterval|runTransaction/);
  assert.match(script,/textContent=value/);
 });
+
+
+test("manual league coverage trigger is explicit and read-only",()=>{
+ assert.match(html,/id="oddsCoverageBtn"/);
+ assert.match(html,/id="oddsCoverageStatus"/);
+ assert.match(html,/id="oddsCoverageResult"/);
+ const start=html.indexOf("document.getElementById('oddsCoverageBtn')?.addEventListener");
+ const end=html.indexOf("document.getElementById('detailedPropsBtn')?.addEventListener",start);
+ assert.ok(start>0&&end>start,"new handler exists only in Developer tools");
+ const handler=html.slice(start,end);
+ assert.match(handler,/if\(!confirm\(/,"owner must confirm a quota-consuming check");
+ assert.match(handler,/httpsCallable\(oddsFunctions,'oddsPapiNbaFeasibilityProbe'\)/);
+ assert.match(handler,/mappingStatus!=='NOT_VERIFIED'/);
+ assert.doesNotMatch(handler,/setInterval|setTimeout|onAuthStateChanged|ledgerCaptureProspective|ledgerBatchCapture/);
+});
