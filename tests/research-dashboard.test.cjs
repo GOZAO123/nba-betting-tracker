@@ -236,6 +236,173 @@ test("paginator guards account changes, duplicate requests and leaves reads expl
 });
 
 
+// Update 35.2A: deterministic in-memory ledger CSV export (synthetic only).
+const csvBegin="// Update 35.2A ledger CSV export BEGIN";
+const csvEnd="// Update 35.2A ledger CSV export END";
+const csvStart=html.indexOf(csvBegin),csvStop=html.indexOf(csvEnd,csvStart);
+assert.ok(csvStart>0&&csvStop>csvStart,"Ledger CSV serializer is defined in the frontend");
+const csvPure=html.slice(csvStart+csvBegin.length,csvStop);
+const csvHelpers=new Function("ledgerState",csvPure+
+ "\nreturn {ledgerCsvBuild,ledgerCsvField,LEDGER_CSV_COLUMNS};")(
+ r=>r.status==="void"?"DNP / NO ACTION":r.status==="settled"?"SETTLED":"PENDING"
+);
+function parseCsvForTest(text){
+ const data=text.replace(/^\uFEFF/,""),out=[];
+ let row=[],cell="",quoted=false;
+ for(let i=0;i<data.length;i++){
+  const ch=data[i];
+  if(quoted){
+   if(ch==='"'&&data[i+1]==='"'){cell+='"';i++}
+   else if(ch==='"')quoted=false;
+   else cell+=ch;
+  }else if(ch==='"')quoted=true;
+  else if(ch===','){row.push(cell);cell=""}
+  else if(ch==='\r'&&data[i+1]==='\n'){
+   row.push(cell);out.push(row);row=[];cell="";i++;
+  }else cell+=ch;
+ }
+ assert.equal(quoted,false,"Complete quoted CSV cells");
+ assert.equal(row.length,0,"CSV ends on a CRLF row boundary");
+ return out;
+}
+const csvReceipt=(seconds,nanoseconds=0)=>({
+ seconds,nanoseconds,toMillis:()=>seconds*1000+nanoseconds/1000000
+});
+const csvRecord=(extra={})=>({
+ id:"synthetic-1",schemaVersion:2,status:"settled",
+ source:"manual_betano_unverified",capturedVia:"trusted_firebase_callable",
+ player:"Fictional Player",athleteId:"987654",team:"Example Team",teamId:"18",
+ eventId:"400000000",home:"Example Home",away:"Example Away",
+ homeId:"18",awayId:"2",eventStartMs:Date.parse("2026-07-01T12:30:00.000Z"),
+ market:"AST",side:"Under",line:6.5,odds:1.82,
+ modelOver:0.37,modelSelected:0.63,hits12:5,games12:12,hits24:null,games24:null,
+ clientCapturedMs:Date.parse("2026-07-01T08:10:00.000Z"),
+ capturedServerAt:csvReceipt(1782893400,250000000),
+ settledAt:csvReceipt(1782920000,100000000),
+ resultStat:6,resultWon:true,settlementSource:"Verified ESPN Final",
+ disclaimer:"Manual quote is unverified.",
+ ...extra
+});
+function csvObjects(rows,more=false,when=Date.parse("2026-07-02T12:00:00.000Z")){
+ const parsed=parseCsvForTest(csvHelpers.ledgerCsvBuild(rows,more,when));
+ const headers=parsed.shift();
+ return parsed.map(fields=>Object.fromEntries(headers.map((k,i)=>[k,fields[i]])));
+}
+
+test("ledger CSV exports explicit fixed 47-column schema, actual stored fields and UTC/Lisbon timestamps",()=>{
+ assert.equal(csvHelpers.LEDGER_CSV_COLUMNS.length,47);
+ const entry=csvObjects([csvRecord()])[0];
+ assert.equal(entry.export_schema,"1");
+ assert.equal(entry.export_scope,"LOADED_RECORDS_ONLY");
+ assert.equal(entry.export_generated_utc,"2026-07-02T12:00:00.000Z");
+ assert.equal(entry.record_id,"synthetic-1");
+ assert.equal(entry.source,"manual_betano_unverified");
+ assert.equal(entry.captured_via,"trusted_firebase_callable");
+ assert.equal(entry.athlete_id,"987654");
+ assert.equal(entry.event_id,"400000000");
+ assert.equal(entry.market,"AST");
+ assert.equal(entry.side,"Under");
+ assert.equal(entry.line,"6.5");
+ assert.equal(entry.decimal_odds,"1.82");
+ assert.equal(entry.model_over,"0.37");
+ assert.equal(entry.model_selected,"0.63");
+ assert.equal(entry.hits12,"5");
+ assert.equal(entry.games12,"12");
+ assert.equal(entry.event_start_utc,"2026-07-01T12:30:00.000Z");
+ assert.equal(entry.event_start_lisbon,"2026-07-01 13:30 Europe/Lisbon");
+ assert.equal(entry.record_status,"settled");
+ assert.equal(entry.derived_eligibility,"SETTLED");
+ assert.equal(entry.result_won,"true");
+ assert.equal(entry.settlement_source,"Verified ESPN Final");
+});
+
+test("ledger CSV keeps null distinct from numeric zero/false and legacy/DNP provenance",()=>{
+ const records=[
+  csvRecord({id:"legacy",schemaVersion:1,capturedVia:null,status:"pending",
+   modelOver:null,modelSelected:0,resultStat:null,resultWon:null,
+   capturedServerAt:csvReceipt(1782893400,0),settledAt:null}),
+  csvRecord({id:"dnp",status:"void",voidReason:"ESPN_EXPLICIT_DNP",
+   resultStat:null,resultWon:null,modelSelected:.15}),
+  csvRecord({id:"loss",resultStat:0,resultWon:false,odds:2.05})
+ ];
+ const result=csvObjects(records,true);
+ assert.deepEqual(result.map(r=>r.record_id),["legacy","dnp","loss"]);
+ assert.deepEqual(result.map(r=>r.export_more_pages_may_exist),["true","true","true"]);
+ assert.deepEqual(result.map(r=>r.export_loaded_count),["3","3","3"]);
+ assert.equal(result[0].captured_via,"");
+ assert.equal(result[0].schema_version,"1");
+ assert.equal(result[0].record_status,"pending");
+ assert.equal(result[0].model_over,"");
+ assert.equal(result[0].model_selected,"0");
+ assert.equal(result[0].result_won,"");
+ assert.equal(result[0].settled_utc,"");
+ assert.equal(result[1].derived_eligibility,"DNP / NO ACTION");
+ assert.equal(result[1].result_won,"");
+ assert.equal(result[1].void_reason,"ESPN_EXPLICIT_DNP");
+ assert.equal(result[2].result_stat,"0");
+ assert.equal(result[2].result_won,"false");
+});
+
+test("ledger CSV retains original Firestore timestamp seconds/nanoseconds and fractional milliseconds",()=>{
+ const capture=csvReceipt(1782893400,123456789);
+ const [entry]=csvObjects([csvRecord({capturedServerAt:capture})]);
+ assert.equal(entry.captured_server_seconds,"1782893400");
+ assert.equal(entry.captured_server_nanoseconds,"123456789");
+ assert.equal(entry.captured_server_utc,"2026-07-01T08:10:00.123Z");
+ assert.equal(entry.captured_server_lisbon,"2026-07-01 09:10 Europe/Lisbon");
+});
+
+test("ledger CSV quotes and neutralizes spreadsheet formulas without leaking unknown fields",()=>{
+ for(const attack of ["=1+1","+SUM(1,2)","-1+2","@SUM(2,2)",
+  " \t=HYPERLINK(\"https://example.invalid\")",
+  "\n@DANGEROUS","\uFEFF=1+2","\u200B=CMD"]){
+  assert.ok(csvHelpers.ledgerCsvField(attack).startsWith('"\''),
+   "Formula prefix must be neutralized");
+ }
+ const player=' \t=HYPERLINK("bad")';
+ const note='A "quoted" description, with comma\nand newline';
+ const [entry]=csvObjects([csvRecord({
+  player,disclaimer:note,secret_test_marker:"DO-NOT-EXPORT",
+  ownerUid:"DO-NOT-EXPORT",firebaseApiKey:"DO-NOT-EXPORT"
+ })]);
+ assert.equal(entry.player,"'"+player);
+ assert.equal(entry.disclaimer,note);
+ assert.equal(entry.owner_uid,undefined);
+ assert.equal(entry.secret_test_marker,undefined);
+ assert.equal(JSON.stringify(entry).includes("DO-NOT-EXPORT"),false);
+ const raw=csvHelpers.ledgerCsvBuild([csvRecord({player})],false,0);
+ assert.ok(raw.startsWith("\uFEFF"));
+ assert.match(raw,/""/); // embedded CSV quote escaped
+});
+
+test("ledger CSV records explicit loaded-only scope and never performs additional reads",()=>{
+ const [r]=csvObjects([csvRecord()],false);
+ assert.equal(r.export_scope,"LOADED_RECORDS_ONLY");
+ assert.equal(r.export_more_pages_may_exist,"false");
+ assert.doesNotMatch(csvPure,/getDocsFromServer|httpsCallable|fetch\s*\(|runTransaction|setInterval/);
+ const handler=html.slice(csvStop,html.indexOf("ledgerRefresh.addEventListener(",csvStop));
+ assert.match(handler,/ledgerRows\.slice\(\)/);
+ assert.match(handler,/ledgerMoreAvailable/);
+ assert.match(handler,/if\(!auth\.currentUser\|\|ledgerBusy\|\|ledgerPageBusy\|\|!ledgerRows\.length\)return/);
+ assert.doesNotMatch(handler,/getDocsFromServer|httpsCallable|fetch\s*\(/);
+});
+
+test("CSV button follows ledger session/load lifecycle and leaves cloud queries unchanged",()=>{
+ assert.equal((html.match(/id="ledgerExportCsv"/g)||[]).length,1);
+ assert.match(html,/ledgerExportCsv=document\.getElementById\('ledgerExportCsv'\)/);
+ const reset=html.slice(html.indexOf("function ledgerReset(){"),
+  html.indexOf("ledgerDate.addEventListener('change'"));
+ assert.match(reset,/ledgerExportCsv\.disabled=true/);
+ const load=html.slice(html.indexOf("async function ledgerLoad("),
+  html.indexOf("function ledgerLoadedMessage",html.indexOf("async function ledgerLoad(")));
+ assert.match(load,/ledgerExportCsv\.disabled=true/);
+ assert.match(load,/ledgerExportCsv\.disabled=!ledgerRows\.length/);
+ assert.match(load,/limit\(LEDGER_PAGE_SIZE\)/);
+ assert.match(load,/getDocsFromServer/);
+ assert.match(html,/const LEDGER_PAGE_SIZE=50/);
+ assert.match(html,/ledgerState\(r\)/);
+});
+
 // Update 35.0B: all batch rows below are synthetic offline parser fixtures.
 // No fixture, odds, or quote in these tests is a verified bookmaker offer.
 const batchParser=(()=>{
