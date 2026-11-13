@@ -360,11 +360,10 @@ test("production audit wiring logs only sanitized diagnostic and preserves manua
   assert.match(audit, /console\.warn\("NBA market audit safe failure", \{ stage, reason \}\)/);
   assert.match(audit, /reserve: reserveDiagnosticRequests/);
   assert.match(audit, /maxInstances: 1, concurrency: 1/);
-  assert.match(audit, /return readLimitedJson\(response\)/);
+  assert.match(audit, /path === "\/v4\/markets" \? readMarketCatalogueJson\(response\) : readLimitedJson\(response\)/);
   assert.doesNotMatch(audit, /console\.(log|error|debug)\(/);
   assert.doesNotMatch(audit, /setInterval|onSchedule|setDoc|addDoc/);
 });
-
 
 test("large but bounded official catalogue passes the manual runner without relaxing quota guards", async () => {
   const { readMarketCatalogueJson } = require("./odds-feasibility");
