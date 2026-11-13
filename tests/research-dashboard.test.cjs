@@ -102,7 +102,8 @@ test("explicit ESPN DNP is a separate non-scoring category, never a win or loss"
  assert.match(ledgerStateText,/row\.status==='void'/);
  assert.match(ledgerStateText,/voidReason==='ESPN_EXPLICIT_DNP'/);
  assert.match(html,/\['DNP \/ no action',s\.voided/);
- assert.match(html,/state==='DNP \/ NO ACTION'\?'DNP · no action'/);
+ assert.match(html,/row\.voidReason==='NBA_OFFICIAL_REVIEWED_INACTIVE'/);
+ assert.match(html,/ESPN DNP · no action/);
  assert.match(html,/data\.voided===true/);
  assert.match(html,/resultStat===null&&data\.resultWon===null/);
  assert.match(html,/Cloud refresh failed after the trusted server response/);
@@ -289,8 +290,8 @@ function csvObjects(rows,more=false,when=Date.parse("2026-07-02T12:00:00.000Z"))
  return parsed.map(fields=>Object.fromEntries(headers.map((k,i)=>[k,fields[i]])));
 }
 
-test("ledger CSV exports explicit fixed 47-column schema, actual stored fields and UTC/Lisbon timestamps",()=>{
- assert.equal(csvHelpers.LEDGER_CSV_COLUMNS.length,47);
+test("ledger CSV exports explicit fixed 51-column schema, actual stored fields and UTC/Lisbon timestamps",()=>{
+ assert.equal(csvHelpers.LEDGER_CSV_COLUMNS.length,51);
  const entry=csvObjects([csvRecord()])[0];
  assert.equal(entry.export_schema,"1");
  assert.equal(entry.export_scope,"LOADED_RECORDS_ONLY");
@@ -530,6 +531,53 @@ test("coverage is loaded-record-only and does not alter auth, pagination, or fro
  assert.ok(a>0&&b>a);
 });
 
+// Update 35.2C — a reviewed official NBA no-action is not an ESPN DNP or a bookmaker void.
+test("one-case reviewed NBA inactivity remains non-scoring and displays distinct provenance",()=>{
+ const stateBlock=html.slice(html.indexOf("function ledgerState(row)"),
+  html.indexOf("function ledgerRef(",html.indexOf("function ledgerState(row)")));
+ assert.match(stateBlock,/NBA_OFFICIAL_REVIEWED_INACTIVE/);
+ assert.match(stateBlock,/ESPN_EXPLICIT_DNP/);
+ assert.match(html,/NBA reviewed inactive · no action/);
+ const saved=csvRecord({id:"401909968_4251_REB_4p5_Under",status:"void",
+  voidReason:"NBA_OFFICIAL_REVIEWED_INACTIVE",resultWon:null,resultStat:null,
+  reconciliationEvidence:{
+   source:"official_nba_pre_reviewed_plus_espn_final_absence",
+   reviewMethod:"fixed_pre_reviewed_official_sources_not_live_parsed",
+   nbaReportUrl:"https://ak-static.cms.nba.com/referee/injury/example.pdf",
+   nbaPostgameUrl:"https://www.nba.com/game/example"
+  }});
+ const exported=csvObjects([saved])[0];
+ assert.equal(exported.result_won,"");
+ assert.equal(exported.result_stat,"");
+ assert.equal(exported.void_reason,"NBA_OFFICIAL_REVIEWED_INACTIVE");
+ assert.equal(exported.reconciliation_source,
+  "official_nba_pre_reviewed_plus_espn_final_absence");
+ assert.match(exported.reconciliation_review_method,/not_live_parsed/);
+ assert.match(exported.reconciliation_nba_report_url,/https:\/\/ak-static.cms.nba.com/);
+ assert.match(exported.reconciliation_nba_postgame_url,/https:\/\/www.nba.com/);
+ const m=ledgerDashboardMetrics([saved],()=>"DNP / NO ACTION",false);
+ assert.equal(m.overall.voided,1);
+ assert.equal(m.overall.scored,0);
+ assert.equal(m.overall.wins,0);
+ assert.equal(m.overall.losses,0);
+});
+test("review action is visible only for one eligible record and requires user confirmation",()=>{
+ const draw=html.slice(html.indexOf("function ledgerDraw(){"),
+  html.indexOf("// Settlement is manual",html.indexOf("function ledgerDraw(){")));
+ assert.match(draw,/row\.id==='401909968_4251_REB_4p5_Under'/);
+ assert.match(draw,/row\.athleteId==='4251'/);
+ assert.match(draw,/row\.market==='REB'&&row\.line===4\.5/);
+ assert.match(draw,/reviewed\.disabled=state!=='PENDING'/);
+ assert.match(draw,/ledgerReconcileReviewedInactive\(row\.id\)/);
+ const handler=html.slice(html.indexOf("async function ledgerReconcileReviewedInactive(id){"),
+  html.indexOf("async function ledgerSettle(id){"));
+ assert.match(handler,/if\(!confirm\(/);
+ assert.match(handler,/httpsCallable\(oddsFunctions,'ledgerReconcileReviewedInactive'\)/);
+ assert.match(handler,/reason!=='NBA_OFFICIAL_REVIEWED_INACTIVE'/);
+ assert.match(handler,/row\.market!=='REB'/);
+ assert.match(handler,/Load cloud ledger before retrying/);
+ assert.doesNotMatch(handler,/oddsPapi|runTransaction|getDocsFromServer|setInterval/);
+});
 // Update 35.0B: all batch rows below are synthetic offline parser fixtures.
 // No fixture, odds, or quote in these tests is a verified bookmaker offer.
 const batchParser=(()=>{
