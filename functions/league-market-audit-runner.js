@@ -12,7 +12,24 @@ const SAFE_AUDIT_STAGES = Object.freeze([
   "BUDGET_RESERVE", "CATALOGUE_FETCH", "CATALOGUE_VALIDATE",
   "COOLDOWN", "LEAGUE_FETCH", "LEAGUE_ANALYZE"
 ]);
-function safeAuditFailure(stage, error) {
+// Only known counters, each bounded by the existing 250k global catalogue
+// ceiling, can ever appear in diagnostics. Reject partial/untrusted objects.
+const ELIGIBILITY_KEYS = Object.freeze([
+  "totalDefinitions", "validIds", "firstSeenIds", "sport11", "propTrue",
+  "familyExact", "periodAllowed", "halfPointLine", "overUnderPair",
+  "eligibleIds", "duplicateIds"
+]);
+function safeEligibilityCounts(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const safe = {};
+  for (const key of ELIGIBILITY_KEYS) {
+    const count = value[key];
+    if (!Number.isSafeInteger(count) || count < 0 || count > 250000) return null;
+    safe[key] = count;
+  }
+  return Object.freeze(safe);
+}
+function safeAuditFailure(stage, error, eligibilityCounts = null) {
   const safeStage = SAFE_AUDIT_STAGES.includes(stage) ? stage : "UNKNOWN_STAGE";
   const message = typeof error?.message === "string" ? error.message : "";
   const name = typeof error?.name === "string" ? error.name : "";
@@ -56,7 +73,13 @@ function safeAuditFailure(stage, error) {
   } else if (safeStage === "COOLDOWN") {
     reason = "COOLDOWN_FAILED";
   }
-  return Object.freeze({ stage: safeStage, reason });
+  const diagnostic = { stage: safeStage, reason };
+  if (safeStage === "CATALOGUE_VALIDATE" &&
+      reason === "NO_ELIGIBLE_CATALOGUE_MARKETS") {
+    const counts = safeEligibilityCounts(eligibilityCounts);
+    if (counts) diagnostic.catalogueEligibility = counts;
+  }
+  return Object.freeze(diagnostic);
 }
 
 function makeLeagueMarketAuditRunner({
@@ -96,6 +119,7 @@ function makeLeagueMarketAuditRunner({
       tick - catalogueAt < CATALOGUE_TTL_MS;
     inFlight = (async () => {
       let stage = "BUDGET_RESERVE";
+      let eligibilityCounts = null;
       try {
         // Reserve maximum potential upstream calls in existing transactional 6/day guard.
         // Reservations are not refunded if a request fails or is skipped.
@@ -109,6 +133,7 @@ function makeLeagueMarketAuditRunner({
           stage = "CATALOGUE_VALIDATE";
           // Fail closed before a second metered request if metadata is unusable.
           const meta = auditOfficialLeagueProps(definitions, [], now());
+          eligibilityCounts = meta.catalogueEligibility;
           if (meta.totalCatalogueDefinitions === 0 || meta.eligibleCatalogueMarketIds === 0)
             throw new Error("Official catalogue has no usable NBA full-game player-prop definitions.");
           catalogue = definitions;
@@ -137,7 +162,7 @@ function makeLeagueMarketAuditRunner({
       } catch (error) {
         // Emit one minimal static category; callback errors cannot replace the
         // original exception or introduce a second upstream request.
-        try { onFailure(safeAuditFailure(stage, error)); } catch (_) { /* fail closed */ }
+        try { onFailure(safeAuditFailure(stage, error, eligibilityCounts)); } catch (_) { /* fail closed */ }
         throw error;
       }
     })();
