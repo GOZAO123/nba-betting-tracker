@@ -136,7 +136,8 @@ test("counts fixture-specific market objects and does not conflate identities ac
 });
 
 test("rejects incomplete and oversized data rather than returning partial claims", () => {
-  assert.throws(() => auditOfficialLeagueProps({}, [], NOW), /catalogue/);
+  assert.throws(() => auditOfficialLeagueProps({}, [], NOW), /Invalid catalogue data shape/);
+  assert.throws(() => auditOfficialLeagueProps({ data: {} }, [], NOW), /Invalid catalogue data shape/);
   assert.throws(() => auditOfficialLeagueProps([], { no: "fixtures" }, NOW), /fixtures/);
   assert.throws(() => auditOfficialLeagueProps([], [], NaN), /snapshot/);
   assert.throws(() => auditOfficialLeagueProps(Array(50001).fill(null), [], NOW), /oversized catalogue/);
@@ -146,6 +147,16 @@ test("rejects incomplete and oversized data rather than returning partial claims
   const huge = Object.fromEntries(Array.from({ length: 180001 }, (_, i) => [String(i + 1), { active: false }]));
   const tooMany = { "110000": { marketActive: true, outcomes: { "120000": { players: huge } } } };
   assert.throws(() => auditOfficialLeagueProps(definitions(), [fixture(tooMany)], NOW), /Selection processing ceiling/);
+});
+
+test("catalogue count ceiling is inclusive, but 50,001 entries fail closed", () => {
+  const atLimit = auditOfficialLeagueProps({ data: new Array(50000).fill(null) }, [], NOW);
+  assert.equal(atLimit.totalCatalogueDefinitions, 50000);
+  assert.equal(atLimit.eligibleCatalogueMarketIds, 0);
+  assert.throws(
+    () => auditOfficialLeagueProps({ data: new Array(50001).fill(null) }, [], NOW),
+    /Invalid or oversized catalogue definition count/
+  );
 });
 
 test("timestamps require timezone and provider main-line flags are not inferred", () => {
