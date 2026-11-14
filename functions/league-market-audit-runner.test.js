@@ -237,9 +237,70 @@ test("zero eligible catalogue markets are logged separately from fetch, without 
   });
   await assert.rejects(run(owner), /no usable/);
   assert.equal(fetches, 0);
-  assert.deepEqual(messages, [
-    { stage: "CATALOGUE_VALIDATE", reason: "NO_ELIGIBLE_CATALOGUE_MARKETS" }
-  ]);
+  assert.deepEqual(messages, [{
+    stage: "CATALOGUE_VALIDATE", reason: "NO_ELIGIBLE_CATALOGUE_MARKETS",
+    catalogueEligibility: {
+      totalDefinitions: 0, validIds: 0, firstSeenIds: 0,
+      sport11: 0, propTrue: 0, familyExact: 0,
+      periodAllowed: 0, halfPointLine: 0, overUnderPair: 0,
+      eligibleIds: 0, duplicateIds: 0
+    }
+  }]);
+  assert.ok(Object.isFrozen(messages[0].catalogueEligibility));
+});
+
+test("malformed but bounded catalogue logs per-stage counts, never provider text or prices", async () => {
+  const warnings = [];
+  let reserved = 0, catalogueCalls = 0, oddsCalls = 0;
+  const variations = [
+    { ...CATALOGUE[0], marketName: "private-provider-market-secret" },
+    { ...CATALOGUE[0], marketId: 102, handicap: 20 },
+    { ...CATALOGUE[0], marketId: 103, outcomes: [{ outcomeId: 201, outcomeName: "Over" }] }
+  ];
+  const run = makeLeagueMarketAuditRunner({
+    ownerUid: "fake-owner", now: () => NOW,
+    reserve: async n => { reserved += n; },
+    fetchCatalogue: async () => { catalogueCalls++; return variations; },
+    fetchOdds: async () => { oddsCalls++; return ODDS; },
+    onFailure: info => warnings.push(info)
+  });
+  await assert.rejects(run(owner), /no usable/);
+  assert.equal(reserved, 2);
+  assert.equal(catalogueCalls, 1);
+  assert.equal(oddsCalls, 0);
+  assert.deepEqual(warnings, [{
+    stage: "CATALOGUE_VALIDATE", reason: "NO_ELIGIBLE_CATALOGUE_MARKETS",
+    catalogueEligibility: {
+      totalDefinitions: 3, validIds: 3, firstSeenIds: 3,
+      sport11: 3, propTrue: 3, familyExact: 2,
+      periodAllowed: 2, halfPointLine: 1, overUnderPair: 0,
+      eligibleIds: 0, duplicateIds: 0
+    }
+  }]);
+  assert.doesNotMatch(JSON.stringify(warnings), /private-provider-market-secret|120000|fixtureId|marketId|playerName|price/);
+});
+
+test("eligibility logging accepts only bounded fixed numeric keys", () => {
+  const error = new Error("Official catalogue has no usable NBA full-game player-prop definitions.");
+  const good = {
+    totalDefinitions: 9, validIds: 8, firstSeenIds: 7,
+    sport11: 6, propTrue: 5, familyExact: 4,
+    periodAllowed: 3, halfPointLine: 2, overUnderPair: 1,
+    eligibleIds: 0, duplicateIds: 1
+  };
+  const safe = safeAuditFailure("CATALOGUE_VALIDATE", error,
+    { ...good, apiKey: "private-key", marketId: "private-id", price: 2.15 });
+  assert.deepEqual(safe.catalogueEligibility, good);
+  assert.ok(Object.isFrozen(safe.catalogueEligibility));
+  assert.doesNotMatch(JSON.stringify(safe), /private-key|private-id|apiKey|marketId|price/);
+  const bad = safeAuditFailure("CATALOGUE_VALIDATE", error,
+    { ...good, sport11: "6" });
+  assert.deepEqual(bad, { stage: "CATALOGUE_VALIDATE", reason: "NO_ELIGIBLE_CATALOGUE_MARKETS" });
+  const tooLarge = safeAuditFailure("CATALOGUE_VALIDATE", error,
+    { ...good, sport11: 250001 });
+  assert.equal(tooLarge.catalogueEligibility, undefined);
+  const elsewhere = safeAuditFailure("LEAGUE_ANALYZE", error, good);
+  assert.equal(elsewhere.catalogueEligibility, undefined);
 });
 
 test("global scan ceiling fails closed before a second upstream request", async () => {
@@ -432,8 +493,9 @@ test("production audit wiring logs only sanitized diagnostic and preserves manua
   const end = src.indexOf("function ledgerAssertOwner(request)", start);
   assert.ok(start > 0 && end > start);
   const audit = src.slice(start, end);
-  assert.match(audit, /onFailure: \(\{ stage, reason \}\) =>/);
-  assert.match(audit, /console\.warn\("NBA market audit safe failure", \{ stage, reason \}\)/);
+  assert.match(audit, /onFailure: \(\{ stage, reason, catalogueEligibility \}\) =>/);
+  assert.match(audit, /console\.warn\("NBA market audit safe failure",/);
+  assert.match(audit, /catalogueEligibility \? \{ stage, reason, catalogueEligibility \} : \{ stage, reason \}/);
   assert.match(audit, /reserve: reserveDiagnosticRequests/);
   assert.match(audit, /maxInstances: 1, concurrency: 1/);
   assert.match(audit, /path === "\/v4\/markets" \? readMarketCatalogueJson\(response\) : readLimitedJson\(response\)/);
