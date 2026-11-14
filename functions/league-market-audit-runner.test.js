@@ -183,6 +183,8 @@ test("diagnostic failure reports only fixed stages and codes, never provider tex
     ["LEAGUE_FETCH", Object.assign(Error(sensitive), { name: "TimeoutError" }), "UPSTREAM_TIMEOUT"],
     ["CATALOGUE_FETCH", Error(sensitive), "UPSTREAM_OTHER_FAILURE"],
     ["CATALOGUE_VALIDATE", Error("Invalid catalogue data shape."), "CATALOGUE_FORMAT_INVALID"],
+    ["CATALOGUE_VALIDATE", Error("Global catalogue processing ceiling exceeded."), "CATALOGUE_GLOBAL_COUNT_LIMIT"],
+    ["CATALOGUE_VALIDATE", Error("NBA catalogue subset processing ceiling exceeded."), "CATALOGUE_NBA_SUBSET_LIMIT"],
     ["CATALOGUE_VALIDATE", Error("Invalid or oversized catalogue definition count."), "CATALOGUE_COUNT_LIMIT"],
     ["CATALOGUE_VALIDATE", Error("Invalid or oversized catalogue data."), "CATALOGUE_FORMAT_OR_COUNT_LIMIT"],
     ["CATALOGUE_VALIDATE", Error("Official catalogue has no usable NBA full-game player-prop definitions."), "NO_ELIGIBLE_CATALOGUE_MARKETS"],
@@ -240,20 +242,72 @@ test("zero eligible catalogue markets are logged separately from fetch, without 
   ]);
 });
 
-test("oversized catalogue fails with bounded catalogue validation stage", async () => {
+test("global scan ceiling fails closed before a second upstream request", async () => {
   const messages = [];
-  let oddsCalls = 0;
+  let reserved = 0, catalogueCalls = 0, oddsCalls = 0;
   const run = makeLeagueMarketAuditRunner({
     ownerUid: "fake-owner", now: () => NOW,
-    reserve: async () => {},
-    fetchCatalogue: async () => new Array(50001).fill(CATALOGUE[0]),
+    reserve: async n => { reserved += n; },
+    fetchCatalogue: async () => { catalogueCalls++; return new Array(250001).fill(null); },
     fetchOdds: async () => { oddsCalls++; return ODDS; },
     onFailure: entry => messages.push(entry)
   });
-  await assert.rejects(run(owner), /oversized catalogue/);
+  await assert.rejects(run(owner), /Global catalogue processing ceiling exceeded/);
+  assert.equal(reserved, 2);
+  assert.equal(catalogueCalls, 1);
   assert.equal(oddsCalls, 0);
   assert.deepEqual(messages, [
-    { stage: "CATALOGUE_VALIDATE", reason: "CATALOGUE_COUNT_LIMIT" }
+    { stage: "CATALOGUE_VALIDATE", reason: "CATALOGUE_GLOBAL_COUNT_LIMIT" }
+  ]);
+});
+
+test("large global catalogue with small NBA subset reaches the league snapshot and zero-call cache", async () => {
+  const global = new Array(75000).fill(null);
+  global.push(...CATALOGUE);
+  let reserved = 0, catalogueCalls = 0, oddsCalls = 0;
+  const warnings = [];
+  const run = makeLeagueMarketAuditRunner({
+    ownerUid: "fake-owner", now: () => NOW,
+    reserve: async n => { reserved += n; },
+    fetchCatalogue: async () => { catalogueCalls++; return global; },
+    fetchOdds: async () => { oddsCalls++; return ODDS; },
+    waitBetweenRequests: async () => {},
+    onFailure: info => warnings.push(info)
+  });
+  const report = await run(owner);
+  assert.equal(report.totalCatalogueDefinitions, 75001);
+  assert.equal(report.eligibleCatalogueMarketIds, 1);
+  assert.equal(report.activePriceEntries, 1);
+  assert.equal(report.requestsUsedOnThisClick, 2);
+  assert.equal(reserved, 2);
+  assert.equal(catalogueCalls, 1);
+  assert.equal(oddsCalls, 1);
+  assert.deepEqual(warnings, []);
+  const cached = await run(owner);
+  assert.equal(cached.cached, true);
+  assert.equal(cached.requestsUsedOnThisClick, 0);
+  assert.equal(reserved, 2);
+  assert.equal(catalogueCalls, 1);
+  assert.equal(oddsCalls, 1);
+});
+
+test("eligible NBA subset ceiling logs safe reason and skips league odds", async () => {
+  const template = CATALOGUE[0];
+  const nba = Array.from({ length: 50001 }, (_, i) => ({ ...template, marketId: i + 800000 }));
+  let reserved = 0, oddsCalls = 0;
+  const warnings = [];
+  const run = makeLeagueMarketAuditRunner({
+    ownerUid: "fake-owner", now: () => NOW,
+    reserve: async n => { reserved += n; },
+    fetchCatalogue: async () => nba,
+    fetchOdds: async () => { oddsCalls++; return ODDS; },
+    onFailure: x => warnings.push(x)
+  });
+  await assert.rejects(run(owner), /NBA catalogue subset processing ceiling exceeded/);
+  assert.equal(reserved, 2);
+  assert.equal(oddsCalls, 0);
+  assert.deepEqual(warnings, [
+    { stage: "CATALOGUE_VALIDATE", reason: "CATALOGUE_NBA_SUBSET_LIMIT" }
   ]);
 });
 
