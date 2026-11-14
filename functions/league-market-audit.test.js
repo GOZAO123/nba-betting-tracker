@@ -186,6 +186,34 @@ test("global and NBA-only catalogue processing limits stay separately bounded", 
   );
 });
 
+test("aggregate eligibility funnel identifies the first failed gate and late duplicate quarantine", () => {
+  const good = definitions()[0];
+  const rows = [
+    { ...good, marketId: "invalid-id-not-for-logs" },
+    { ...good, marketId: 400001, sportId: 10 },
+    { ...good, marketId: 400002, playerProp: false },
+    { ...good, marketId: 400003, marketName: "private unsupported market title" },
+    { ...good, marketId: 400004, period: "firsthalf" },
+    { ...good, marketId: 400005, handicap: 20 },
+    { ...good, marketId: 400006, outcomes: [] },
+    { ...good, marketId: 400007 },
+    // A later unrelated-sport definition quarantines the previously valid ID.
+    { ...good, marketId: 400007, sportId: 99 }
+  ];
+  const report = auditOfficialLeagueProps({ data: rows }, [], NOW);
+  assert.deepEqual(report.catalogueEligibility, {
+    totalDefinitions: 9, validIds: 8, firstSeenIds: 7,
+    sport11: 6, propTrue: 5, familyExact: 4,
+    periodAllowed: 3, halfPointLine: 2, overUnderPair: 1,
+    eligibleIds: 0, duplicateIds: 1
+  });
+  assert.equal(report.eligibleCatalogueMarketIds, 0);
+  assert.equal(report.ambiguousCatalogueMarketIds, 1);
+  assert.ok(Object.isFrozen(report.catalogueEligibility));
+  assert.doesNotMatch(JSON.stringify(report.catalogueEligibility),
+    /invalid-id|400007|private unsupported|marketName|handicap|outcomeId|price/i);
+});
+
 test("timestamps require timezone and provider main-line flags are not inferred", () => {
   const x = auditOfficialLeagueProps(definitions(), [fixture({ "110000": {
     marketActive: true, outcomes: { "120000": { players: {
