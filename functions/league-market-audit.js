@@ -50,20 +50,36 @@ function officialCatalogueMap(payload) {
   // Retain only the exact eligible NBA market definitions, never raw entries.
   const mapped = new Map(), seen = new Set(), ambiguous = new Set();
   let nbaDefinitions = 0;
+  // Sequential, aggregate-only eligibility funnel. These are rows passing each
+  // gate on first sight of an ID, before later duplicate-ID quarantine.
+  const counts = {
+    totalDefinitions: definitions.length,
+    validIds: 0, firstSeenIds: 0, sport11: 0, propTrue: 0,
+    familyExact: 0, periodAllowed: 0, halfPointLine: 0,
+    overUnderPair: 0, eligibleIds: 0, duplicateIds: 0
+  };
   for (const def of definitions) {
     if (!object(def)) continue;
     const id = identifier(def.marketId);
     if (!id) continue;
+    counts.validIds++;
     // A duplicate ID is ambiguous even if both definitions appear identical.
     if (seen.has(id)) { ambiguous.add(id); mapped.delete(id); continue; }
     seen.add(id);
-    if (Number(def.sportId) !== 11 || def.playerProp !== true) continue;
+    counts.firstSeenIds++;
+    if (Number(def.sportId) !== 11) continue;
+    counts.sport11++;
+    if (def.playerProp !== true) continue;
+    counts.propTrue++;
     const family = FAMILIES[String(def.marketName || "").trim()];
     if (!family) continue;
+    counts.familyExact++;
     if (def.period != null && def.period !== "fulltime") continue;
+    counts.periodAllowed++;
     const line = def.handicap;
     if (typeof line !== "number" || !Number.isFinite(line) || line <= 0 ||
         line > 1000 || !Number.isInteger(line * 2) || Number.isInteger(line)) continue;
+    counts.halfPointLine++;
     if (!Array.isArray(def.outcomes) || def.outcomes.length !== 2) continue;
     const sides = new Map();
     for (const outcome of def.outcomes) {
@@ -73,12 +89,18 @@ function officialCatalogueMap(payload) {
       sides.set(outcomeId, name);
     }
     if (sides.size !== 2 || new Set(sides.values()).size !== 2) continue;
+    counts.overUnderPair++;
     // This is the protected 50,000-entry NBA subset limit, NOT a global cap.
     if (++nbaDefinitions > MAX_NBA_CATALOGUE)
       throw new Error("NBA catalogue subset processing ceiling exceeded.");
     mapped.set(id, { family, outcomeSides: sides });
   }
-  return { mapped, seen, ambiguous, definitions: definitions.length };
+  // Final eligible count includes late duplicate-ID quarantine, unlike earlier
+  // funnel stages. No market IDs, names, outcome IDs, prices or players are kept.
+  counts.eligibleIds = mapped.size;
+  counts.duplicateIds = ambiguous.size;
+  return { mapped, seen, ambiguous, definitions: definitions.length,
+    catalogueEligibility: Object.freeze(counts) };
 }
 function parseProviderTimestamp(value) {
   if (typeof value !== "string" ||
@@ -88,7 +110,7 @@ function parseProviderTimestamp(value) {
 
 function auditOfficialLeagueProps(catalogue, leagueOdds, now = Date.now()) {
   if (!Number.isFinite(now)) throw new Error("Invalid snapshot time.");
-  const { mapped, ambiguous, definitions } = officialCatalogueMap(catalogue);
+  const { mapped, ambiguous, definitions, catalogueEligibility } = officialCatalogueMap(catalogue);
   const fixtures = dataArray(leagueOdds, "fixtures", MAX_FIXTURES);
   const families = FAMILY_ORDER.map(family => ({
     family, marketObjects: 0, activePriceEntries: 0, fresh15m: 0,
@@ -98,7 +120,7 @@ function auditOfficialLeagueProps(catalogue, leagueOdds, now = Date.now()) {
   const result = {
     diagnosticVersion: "35.1C-OFFLINE-ONLY", analysis: "SYNTHETIC_OR_EXTERNALLY_SUPPLIED_INPUT",
     totalCatalogueDefinitions: definitions, eligibleCatalogueMarketIds: mapped.size,
-    ambiguousCatalogueMarketIds: ambiguous.size,
+    ambiguousCatalogueMarketIds: ambiguous.size, catalogueEligibility,
     totalFixtures: fixtures.length, eligibleFixtures: 0, activeBookmakerFixtures: 0,
     activeMarketObjects: 0, matchedMarketObjects: 0,
     distinctUnmappedMarketIds: 0, activePriceEntries: 0,
