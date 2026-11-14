@@ -140,7 +140,7 @@ test("rejects incomplete and oversized data rather than returning partial claims
   assert.throws(() => auditOfficialLeagueProps({ data: {} }, [], NOW), /Invalid catalogue data shape/);
   assert.throws(() => auditOfficialLeagueProps([], { no: "fixtures" }, NOW), /fixtures/);
   assert.throws(() => auditOfficialLeagueProps([], [], NaN), /snapshot/);
-  assert.throws(() => auditOfficialLeagueProps(Array(50001).fill(null), [], NOW), /oversized catalogue/);
+  assert.throws(() => auditOfficialLeagueProps(Array(250001).fill(null), [], NOW), /Global catalogue processing ceiling/);
   assert.throws(() => auditOfficialLeagueProps([], Array(251).fill(null), NOW), /oversized fixtures/);
   const giantMarkets = Object.fromEntries(Array.from({ length: 18001 }, (_, i) => [String(i + 1), { marketActive: false }]));
   assert.throws(() => auditOfficialLeagueProps(definitions(), [fixture(giantMarkets)], NOW), /Market processing ceiling/);
@@ -149,13 +149,40 @@ test("rejects incomplete and oversized data rather than returning partial claims
   assert.throws(() => auditOfficialLeagueProps(definitions(), [fixture(tooMany)], NOW), /Selection processing ceiling/);
 });
 
-test("catalogue count ceiling is inclusive, but 50,001 entries fail closed", () => {
-  const atLimit = auditOfficialLeagueProps({ data: new Array(50000).fill(null) }, [], NOW);
-  assert.equal(atLimit.totalCatalogueDefinitions, 50000);
-  assert.equal(atLimit.eligibleCatalogueMarketIds, 0);
+test("global catalogue over 50k retains only exact NBA markets and quarantines cross-sport duplicates", () => {
+  const all = definitions();
+  const unrelated = Array.from({ length: 75000 }, (_, i) => ({
+    marketId: 900000 + i, sportId: 99, playerProp: false
+  }));
+  // Even an ineligible foreign-sport duplicate must invalidate the NBA market ID.
+  unrelated.push({ marketId: all[0].marketId, sportId: 99, playerProp: false });
+  const oddsMarkets = Object.fromEntries(all.map((def, i) => [String(def.marketId), market(i)]));
+  const result = auditOfficialLeagueProps({ data: [...unrelated, ...all] },
+    [fixture(oddsMarkets)], NOW);
+  assert.equal(result.totalCatalogueDefinitions, 75009);
+  assert.equal(result.eligibleCatalogueMarketIds, 7);
+  assert.equal(result.ambiguousCatalogueMarketIds, 1);
+  assert.equal(result.matchedMarketObjects, 7);
+  assert.equal(result.activePriceEntries, 14);
+  assert.equal(result.distinctUnmappedMarketIds, 1);
+});
+
+test("global and NBA-only catalogue processing limits stay separately bounded", () => {
+  const atGlobalLimit = auditOfficialLeagueProps({ data: new Array(250000).fill(null) }, [], NOW);
+  assert.equal(atGlobalLimit.totalCatalogueDefinitions, 250000);
+  assert.equal(atGlobalLimit.eligibleCatalogueMarketIds, 0);
   assert.throws(
-    () => auditOfficialLeagueProps({ data: new Array(50001).fill(null) }, [], NOW),
-    /Invalid or oversized catalogue definition count/
+    () => auditOfficialLeagueProps({ data: new Array(250001).fill(null) }, [], NOW),
+    /Global catalogue processing ceiling exceeded/
+  );
+  const example = definitions()[0];
+  const nba = Array.from({ length: 50000 }, (_, i) => ({ ...example, marketId: 700000 + i }));
+  const atNbaLimit = auditOfficialLeagueProps(nba, [], NOW);
+  assert.equal(atNbaLimit.totalCatalogueDefinitions, 50000);
+  assert.equal(atNbaLimit.eligibleCatalogueMarketIds, 50000);
+  assert.throws(
+    () => auditOfficialLeagueProps([...nba, { ...example, marketId: 750000 }], [], NOW),
+    /NBA catalogue subset processing ceiling exceeded/
   );
 });
 

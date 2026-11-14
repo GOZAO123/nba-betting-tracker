@@ -32,6 +32,11 @@ function safeAuditFailure(stage, error) {
   } else if (safeStage === "CATALOGUE_VALIDATE") {
     if (message === "Invalid catalogue data shape.")
       reason = "CATALOGUE_FORMAT_INVALID";
+    else if (message === "Global catalogue processing ceiling exceeded.")
+      reason = "CATALOGUE_GLOBAL_COUNT_LIMIT";
+    else if (message === "NBA catalogue subset processing ceiling exceeded.")
+      reason = "CATALOGUE_NBA_SUBSET_LIMIT";
+    // Historical 35.1C5 code for the old global 50k ceiling.
     else if (message === "Invalid or oversized catalogue definition count.")
       reason = "CATALOGUE_COUNT_LIMIT";
     // Preserve the historical combined reason for compatibility with old injected errors.
