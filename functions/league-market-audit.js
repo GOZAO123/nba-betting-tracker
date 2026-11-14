@@ -16,7 +16,10 @@ const FAMILIES = Object.freeze({
 const FAMILY_ORDER = Object.freeze(["PTS", "REB", "AST", "3PT", "PR", "PA", "RA", "PRA"]);
 const HORIZON_MS = 72 * 60 * 60 * 1000;
 const RECENT_MS = 15 * 60 * 1000;
-const MAX_CATALOGUE = 50000;
+// Bound the global provider scan independently of the exact NBA market subset.
+// The decoded upstream response also remains capped at 32 MiB in index.js.
+const MAX_GLOBAL_CATALOGUE = 250000;
+const MAX_NBA_CATALOGUE = 50000;
 const MAX_FIXTURES = 250;
 const MAX_MARKETS = 18000;
 const MAX_ENTRIES = 180000;
@@ -29,9 +32,9 @@ function dataArray(value, name, limit) {
     name === "fixtures" && Array.isArray(value?.fixtures) ? value.fixtures : null;
   if (name === "catalogue") {
     // Distinguish payload shape from count without logging raw provider data.
-    // Keep the original 50,000-definition ceiling and fail closed.
+    // Enforce the global scan ceiling before touching any individual entries.
     if (!arr) throw new Error("Invalid catalogue data shape.");
-    if (arr.length > limit) throw new Error("Invalid or oversized catalogue definition count.");
+    if (arr.length > limit) throw new Error("Global catalogue processing ceiling exceeded.");
   } else if (!arr || arr.length > limit) {
     throw new Error("Invalid or oversized " + name + " data.");
   }
@@ -42,8 +45,11 @@ function identifier(value) {
   return /^[1-9][0-9]{0,15}$/.test(text) ? text : null;
 }
 function officialCatalogueMap(payload) {
-  const definitions = dataArray(payload, "catalogue", MAX_CATALOGUE);
+  const definitions = dataArray(payload, "catalogue", MAX_GLOBAL_CATALOGUE);
+  // Scan global IDs (bounded above) to quarantine even cross-sport collisions.
+  // Retain only the exact eligible NBA market definitions, never raw entries.
   const mapped = new Map(), seen = new Set(), ambiguous = new Set();
+  let nbaDefinitions = 0;
   for (const def of definitions) {
     if (!object(def)) continue;
     const id = identifier(def.marketId);
@@ -67,6 +73,9 @@ function officialCatalogueMap(payload) {
       sides.set(outcomeId, name);
     }
     if (sides.size !== 2 || new Set(sides.values()).size !== 2) continue;
+    // This is the protected 50,000-entry NBA subset limit, NOT a global cap.
+    if (++nbaDefinitions > MAX_NBA_CATALOGUE)
+      throw new Error("NBA catalogue subset processing ceiling exceeded.");
     mapped.set(id, { family, outcomeSides: sides });
   }
   return { mapped, seen, ambiguous, definitions: definitions.length };
