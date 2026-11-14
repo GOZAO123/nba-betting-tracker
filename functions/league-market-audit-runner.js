@@ -30,7 +30,12 @@ function safeAuditFailure(stage, error) {
     else if (name === "AbortError" || name === "TimeoutError") reason = "UPSTREAM_TIMEOUT";
     else reason = "UPSTREAM_OTHER_FAILURE";
   } else if (safeStage === "CATALOGUE_VALIDATE") {
-    if (message === "Invalid or oversized catalogue data.")
+    if (message === "Invalid catalogue data shape.")
+      reason = "CATALOGUE_FORMAT_INVALID";
+    else if (message === "Invalid or oversized catalogue definition count.")
+      reason = "CATALOGUE_COUNT_LIMIT";
+    // Preserve the historical combined reason for compatibility with old injected errors.
+    else if (message === "Invalid or oversized catalogue data.")
       reason = "CATALOGUE_FORMAT_OR_COUNT_LIMIT";
     else if (message === "Official catalogue has no usable NBA full-game player-prop definitions.")
       reason = "NO_ELIGIBLE_CATALOGUE_MARKETS";

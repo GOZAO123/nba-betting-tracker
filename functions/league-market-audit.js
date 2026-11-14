@@ -27,7 +27,14 @@ function object(value) {
 function dataArray(value, name, limit) {
   const arr = Array.isArray(value) ? value : Array.isArray(value?.data) ? value.data :
     name === "fixtures" && Array.isArray(value?.fixtures) ? value.fixtures : null;
-  if (!arr || arr.length > limit) throw new Error("Invalid or oversized " + name + " data.");
+  if (name === "catalogue") {
+    // Distinguish payload shape from count without logging raw provider data.
+    // Keep the original 50,000-definition ceiling and fail closed.
+    if (!arr) throw new Error("Invalid catalogue data shape.");
+    if (arr.length > limit) throw new Error("Invalid or oversized catalogue definition count.");
+  } else if (!arr || arr.length > limit) {
+    throw new Error("Invalid or oversized " + name + " data.");
+  }
   return arr;
 }
 function identifier(value) {

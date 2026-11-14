@@ -182,6 +182,8 @@ test("diagnostic failure reports only fixed stages and codes, never provider tex
     ["CATALOGUE_FETCH", new SyntaxError(sensitive), "RESPONSE_JSON_INVALID"],
     ["LEAGUE_FETCH", Object.assign(Error(sensitive), { name: "TimeoutError" }), "UPSTREAM_TIMEOUT"],
     ["CATALOGUE_FETCH", Error(sensitive), "UPSTREAM_OTHER_FAILURE"],
+    ["CATALOGUE_VALIDATE", Error("Invalid catalogue data shape."), "CATALOGUE_FORMAT_INVALID"],
+    ["CATALOGUE_VALIDATE", Error("Invalid or oversized catalogue definition count."), "CATALOGUE_COUNT_LIMIT"],
     ["CATALOGUE_VALIDATE", Error("Invalid or oversized catalogue data."), "CATALOGUE_FORMAT_OR_COUNT_LIMIT"],
     ["CATALOGUE_VALIDATE", Error("Official catalogue has no usable NBA full-game player-prop definitions."), "NO_ELIGIBLE_CATALOGUE_MARKETS"],
     ["CATALOGUE_VALIDATE", Error(sensitive), "CATALOGUE_VALIDATION_FAILED"],
@@ -251,8 +253,28 @@ test("oversized catalogue fails with bounded catalogue validation stage", async 
   await assert.rejects(run(owner), /oversized catalogue/);
   assert.equal(oddsCalls, 0);
   assert.deepEqual(messages, [
-    { stage: "CATALOGUE_VALIDATE", reason: "CATALOGUE_FORMAT_OR_COUNT_LIMIT" }
+    { stage: "CATALOGUE_VALIDATE", reason: "CATALOGUE_COUNT_LIMIT" }
   ]);
+});
+
+test("malformed catalogue shape logs only its fixed reason and never requests league odds", async () => {
+  const reports = [];
+  let reserved = 0, catalogueCalls = 0, oddsCalls = 0;
+  const run = makeLeagueMarketAuditRunner({
+    ownerUid: "fake-owner", now: () => NOW,
+    reserve: async n => { reserved += n; },
+    fetchCatalogue: async () => { catalogueCalls++; return { unexpected: "private provider payload" }; },
+    fetchOdds: async () => { oddsCalls++; return ODDS; },
+    onFailure: item => reports.push(item)
+  });
+  await assert.rejects(run(owner), /Invalid catalogue data shape/);
+  assert.equal(reserved, 2);
+  assert.equal(catalogueCalls, 1);
+  assert.equal(oddsCalls, 0);
+  assert.deepEqual(reports, [
+    { stage: "CATALOGUE_VALIDATE", reason: "CATALOGUE_FORMAT_INVALID" }
+  ]);
+  assert.doesNotMatch(JSON.stringify(reports), /private provider payload/);
 });
 
 test("reservation and second-fetch failure are distinguished and no automatic retries occur", async () => {
