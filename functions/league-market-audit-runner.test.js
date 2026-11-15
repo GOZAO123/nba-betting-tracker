@@ -244,9 +244,14 @@ test("zero eligible catalogue markets are logged separately from fetch, without 
       sport11: 0, propTrue: 0, familyExact: 0,
       periodAllowed: 0, halfPointLine: 0, overUnderPair: 0,
       eligibleIds: 0, duplicateIds: 0
+    },
+    cataloguePeriod: {
+      missingOrNull: 0, exactFulltime: 0, exactResult: 0,
+      knownPartial: 0, otherString: 0, nonString: 0
     }
   }]);
   assert.ok(Object.isFrozen(messages[0].catalogueEligibility));
+  assert.ok(Object.isFrozen(messages[0].cataloguePeriod));
 });
 
 test("malformed but bounded catalogue logs per-stage counts, never provider text or prices", async () => {
@@ -275,9 +280,46 @@ test("malformed but bounded catalogue logs per-stage counts, never provider text
       sport11: 3, propTrue: 3, familyExact: 2,
       periodAllowed: 2, halfPointLine: 1, overUnderPair: 0,
       eligibleIds: 0, duplicateIds: 0
+    },
+    cataloguePeriod: {
+      missingOrNull: 0, exactFulltime: 2, exactResult: 0,
+      knownPartial: 0, otherString: 0, nonString: 0
     }
   }]);
   assert.doesNotMatch(JSON.stringify(warnings), /private-provider-market-secret|120000|fixtureId|marketId|playerName|price/);
+});
+
+test("result-period catalogues fail closed with a bounded period breakdown", async () => {
+  const reports = [];
+  let reserved = 0, catalogueCalls = 0, oddsCalls = 0;
+  const unknown = "secret-period-value";
+  const candidates = [
+    { ...CATALOGUE[0], marketId: 900001, period: "result" },
+    { ...CATALOGUE[0], marketId: 900002, period: "p1" },
+    { ...CATALOGUE[0], marketId: 900003, period: unknown }
+  ];
+  const run = makeLeagueMarketAuditRunner({
+    ownerUid: "fake-owner", now: () => NOW,
+    reserve: async n => { reserved += n; },
+    fetchCatalogue: async () => { catalogueCalls++; return candidates; },
+    fetchOdds: async () => { oddsCalls++; throw Error("must not fetch odds"); },
+    onFailure: value => reports.push(value)
+  });
+  await assert.rejects(run(owner), /no usable/);
+  assert.equal(reserved, 2);
+  assert.equal(catalogueCalls, 1);
+  assert.equal(oddsCalls, 0);
+  assert.equal(reports.length, 1);
+  assert.equal(reports[0].stage, "CATALOGUE_VALIDATE");
+  assert.equal(reports[0].reason, "NO_ELIGIBLE_CATALOGUE_MARKETS");
+  assert.equal(reports[0].catalogueEligibility.familyExact, 3);
+  assert.equal(reports[0].catalogueEligibility.periodAllowed, 0);
+  assert.deepEqual(reports[0].cataloguePeriod, {
+    missingOrNull: 0, exactFulltime: 0, exactResult: 1,
+    knownPartial: 1, otherString: 1, nonString: 0
+  });
+  assert.doesNotMatch(JSON.stringify(reports),
+    /secret-period-value|marketId|outcomeId|playerName|apiKey|price/i);
 });
 
 test("eligibility logging accepts only bounded fixed numeric keys", () => {
@@ -301,6 +343,39 @@ test("eligibility logging accepts only bounded fixed numeric keys", () => {
   assert.equal(tooLarge.catalogueEligibility, undefined);
   const elsewhere = safeAuditFailure("LEAGUE_ANALYZE", error, good);
   assert.equal(elsewhere.catalogueEligibility, undefined);
+});
+
+test("period logging requires bounded fixed keys and matching funnel counts", () => {
+  const error = Error("Official catalogue has no usable NBA full-game player-prop definitions.");
+  const eligibility = {
+    totalDefinitions: 9, validIds: 8, firstSeenIds: 7,
+    sport11: 6, propTrue: 5, familyExact: 4,
+    periodAllowed: 3, halfPointLine: 2, overUnderPair: 1,
+    eligibleIds: 0, duplicateIds: 1
+  };
+  const period = {
+    missingOrNull: 1, exactFulltime: 2, exactResult: 1,
+    knownPartial: 0, otherString: 0, nonString: 0
+  };
+  const good = safeAuditFailure("CATALOGUE_VALIDATE", error, eligibility,
+    { ...period, secretPeriod: "private raw string", apiKey: "never-log" });
+  assert.deepEqual(good.cataloguePeriod, period);
+  assert.ok(Object.isFrozen(good.cataloguePeriod));
+  assert.doesNotMatch(JSON.stringify(good), /private raw string|secretPeriod|apiKey|never-log/);
+  const badType = safeAuditFailure("CATALOGUE_VALIDATE", error, eligibility,
+    { ...period, exactResult: "1" });
+  const badSize = safeAuditFailure("CATALOGUE_VALIDATE", error, eligibility,
+    { ...period, exactResult: 250001 });
+  const wrongSum = safeAuditFailure("CATALOGUE_VALIDATE", error, eligibility,
+    { ...period, knownPartial: 1 });
+  const wrongPeriodGate = safeAuditFailure("CATALOGUE_VALIDATE", error, eligibility,
+    { ...period, missingOrNull: 0, knownPartial: 1 });
+  for (const report of [badType, badSize, wrongSum, wrongPeriodGate]) {
+    assert.deepEqual(report.catalogueEligibility, eligibility);
+    assert.equal(report.cataloguePeriod, undefined);
+  }
+  assert.equal(safeAuditFailure("LEAGUE_FETCH", error, eligibility, period).cataloguePeriod, undefined);
+  assert.equal(safeAuditFailure("CATALOGUE_VALIDATE", error, null, period).cataloguePeriod, undefined);
 });
 
 test("global scan ceiling fails closed before a second upstream request", async () => {
@@ -493,9 +568,10 @@ test("production audit wiring logs only sanitized diagnostic and preserves manua
   const end = src.indexOf("function ledgerAssertOwner(request)", start);
   assert.ok(start > 0 && end > start);
   const audit = src.slice(start, end);
-  assert.match(audit, /onFailure: \(\{ stage, reason, catalogueEligibility \}\) =>/);
+  assert.match(audit, /onFailure: \(\{ stage, reason, catalogueEligibility, cataloguePeriod \}\) =>/);
   assert.match(audit, /console\.warn\("NBA market audit safe failure",/);
-  assert.match(audit, /catalogueEligibility \? \{ stage, reason, catalogueEligibility \} : \{ stage, reason \}/);
+  assert.match(audit, /catalogueEligibility \? \{/);
+  assert.match(audit, /\.\.\.\(cataloguePeriod \? \{ cataloguePeriod \} : \{\}\)/);
   assert.match(audit, /reserve: reserveDiagnosticRequests/);
   assert.match(audit, /maxInstances: 1, concurrency: 1/);
   assert.match(audit, /path === "\/v4\/markets" \? readMarketCatalogueJson\(response\) : readLimitedJson\(response\)/);
