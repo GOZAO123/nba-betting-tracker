@@ -210,8 +210,35 @@ test("aggregate eligibility funnel identifies the first failed gate and late dup
   assert.equal(report.eligibleCatalogueMarketIds, 0);
   assert.equal(report.ambiguousCatalogueMarketIds, 1);
   assert.ok(Object.isFrozen(report.catalogueEligibility));
+  assert.deepEqual(report.cataloguePeriod, {
+    missingOrNull: 0, exactFulltime: 3, exactResult: 0,
+    knownPartial: 0, otherString: 1, nonString: 0
+  });
   assert.doesNotMatch(JSON.stringify(report.catalogueEligibility),
     /invalid-id|400007|private unsupported|marketName|handicap|outcomeId|price/i);
+});
+
+test("period buckets partition eligible NBA families without relaxing the existing gate", () => {
+  const template = definitions()[0];
+  const inputs = [undefined, null, "fulltime", "result", "p1",
+    "p3+p4+overtime", "private period sent by provider", 123, {}];
+  const rows = inputs.map((period, i) => {
+    const row = { ...template, marketId: 600001 + i };
+    if (period === undefined) delete row.period;
+    else row.period = period;
+    return row;
+  });
+  const report = auditOfficialLeagueProps(rows, [], NOW);
+  assert.equal(report.catalogueEligibility.familyExact, 9);
+  assert.equal(report.catalogueEligibility.periodAllowed, 3);
+  assert.equal(report.eligibleCatalogueMarketIds, 3);
+  assert.deepEqual(report.cataloguePeriod, {
+    missingOrNull: 2, exactFulltime: 1, exactResult: 1,
+    knownPartial: 2, otherString: 1, nonString: 2
+  });
+  assert.ok(Object.isFrozen(report.cataloguePeriod));
+  assert.doesNotMatch(JSON.stringify(report.cataloguePeriod),
+    /private period|marketId|player|price|apiKey|60000/i);
 });
 
 test("timestamps require timezone and provider main-line flags are not inferred", () => {
