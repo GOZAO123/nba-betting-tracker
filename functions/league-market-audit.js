@@ -14,6 +14,11 @@ const FAMILIES = Object.freeze({
   "Over Under Player Points + Assists + Rebounds (incl. overtime)": "PRA"
 });
 const FAMILY_ORDER = Object.freeze(["PTS", "REB", "AST", "3PT", "PR", "PA", "RA", "PRA"]);
+// Published basketball partial-game clocks; unrecognized values stay opaque.
+const KNOWN_PARTIAL_NBA_PERIODS = new Set([
+  "p1", "p2", "p3", "p4", "p1+p2", "p3+p4",
+  "p3+p4+overtime", "p4+overtime"
+]);
 const HORIZON_MS = 72 * 60 * 60 * 1000;
 const RECENT_MS = 15 * 60 * 1000;
 // Bound the global provider scan independently of the exact NBA market subset.
@@ -58,6 +63,12 @@ function officialCatalogueMap(payload) {
     familyExact: 0, periodAllowed: 0, halfPointLine: 0,
     overUnderPair: 0, eligibleIds: 0, duplicateIds: 0
   };
+  // Every first-seen exact NBA player-prop family contributes to one bucket.
+  // No raw period values, IDs or athlete data leave this bounded scan.
+  const periods = {
+    missingOrNull: 0, exactFulltime: 0, exactResult: 0,
+    knownPartial: 0, otherString: 0, nonString: 0
+  };
   for (const def of definitions) {
     if (!object(def)) continue;
     const id = identifier(def.marketId);
@@ -74,6 +85,14 @@ function officialCatalogueMap(payload) {
     const family = FAMILIES[String(def.marketName || "").trim()];
     if (!family) continue;
     counts.familyExact++;
+    const period = def.period;
+    const bucket = period == null ? "missingOrNull" :
+      period === "fulltime" ? "exactFulltime" :
+      period === "result" ? "exactResult" :
+      typeof period !== "string" ? "nonString" :
+      KNOWN_PARTIAL_NBA_PERIODS.has(period) ? "knownPartial" : "otherString";
+    periods[bucket]++;
+    // Unchanged strict acceptance condition: diagnostics grant no eligibility.
     if (def.period != null && def.period !== "fulltime") continue;
     counts.periodAllowed++;
     const line = def.handicap;
@@ -100,7 +119,7 @@ function officialCatalogueMap(payload) {
   counts.eligibleIds = mapped.size;
   counts.duplicateIds = ambiguous.size;
   return { mapped, seen, ambiguous, definitions: definitions.length,
-    catalogueEligibility: Object.freeze(counts) };
+    catalogueEligibility: Object.freeze(counts), cataloguePeriod: Object.freeze(periods) };
 }
 function parseProviderTimestamp(value) {
   if (typeof value !== "string" ||
@@ -110,7 +129,7 @@ function parseProviderTimestamp(value) {
 
 function auditOfficialLeagueProps(catalogue, leagueOdds, now = Date.now()) {
   if (!Number.isFinite(now)) throw new Error("Invalid snapshot time.");
-  const { mapped, ambiguous, definitions, catalogueEligibility } = officialCatalogueMap(catalogue);
+  const { mapped, ambiguous, definitions, catalogueEligibility, cataloguePeriod } = officialCatalogueMap(catalogue);
   const fixtures = dataArray(leagueOdds, "fixtures", MAX_FIXTURES);
   const families = FAMILY_ORDER.map(family => ({
     family, marketObjects: 0, activePriceEntries: 0, fresh15m: 0,
@@ -120,7 +139,7 @@ function auditOfficialLeagueProps(catalogue, leagueOdds, now = Date.now()) {
   const result = {
     diagnosticVersion: "35.1C-OFFLINE-ONLY", analysis: "SYNTHETIC_OR_EXTERNALLY_SUPPLIED_INPUT",
     totalCatalogueDefinitions: definitions, eligibleCatalogueMarketIds: mapped.size,
-    ambiguousCatalogueMarketIds: ambiguous.size, catalogueEligibility,
+    ambiguousCatalogueMarketIds: ambiguous.size, catalogueEligibility, cataloguePeriod,
     totalFixtures: fixtures.length, eligibleFixtures: 0, activeBookmakerFixtures: 0,
     activeMarketObjects: 0, matchedMarketObjects: 0,
     distinctUnmappedMarketIds: 0, activePriceEntries: 0,

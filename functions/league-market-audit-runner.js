@@ -19,6 +19,25 @@ const ELIGIBILITY_KEYS = Object.freeze([
   "familyExact", "periodAllowed", "halfPointLine", "overUnderPair",
   "eligibleIds", "duplicateIds"
 ]);
+const PERIOD_KEYS = Object.freeze([
+  "missingOrNull", "exactFulltime", "exactResult",
+  "knownPartial", "otherString", "nonString"
+]);
+function safePeriodCounts(value, eligibility) {
+  if (!eligibility || !value || typeof value !== "object" || Array.isArray(value)) return null;
+  const safe = {};
+  let total = 0;
+  for (const key of PERIOD_KEYS) {
+    const count = value[key];
+    if (!Number.isSafeInteger(count) || count < 0 || count > 250000) return null;
+    safe[key] = count;
+    total += count;
+  }
+  // Check both invariants against the sanitized 11-stage eligibility funnel.
+  if (total !== eligibility.familyExact ||
+      safe.missingOrNull + safe.exactFulltime !== eligibility.periodAllowed) return null;
+  return Object.freeze(safe);
+}
 function safeEligibilityCounts(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const safe = {};
@@ -29,7 +48,7 @@ function safeEligibilityCounts(value) {
   }
   return Object.freeze(safe);
 }
-function safeAuditFailure(stage, error, eligibilityCounts = null) {
+function safeAuditFailure(stage, error, eligibilityCounts = null, periodCounts = null) {
   const safeStage = SAFE_AUDIT_STAGES.includes(stage) ? stage : "UNKNOWN_STAGE";
   const message = typeof error?.message === "string" ? error.message : "";
   const name = typeof error?.name === "string" ? error.name : "";
@@ -77,7 +96,11 @@ function safeAuditFailure(stage, error, eligibilityCounts = null) {
   if (safeStage === "CATALOGUE_VALIDATE" &&
       reason === "NO_ELIGIBLE_CATALOGUE_MARKETS") {
     const counts = safeEligibilityCounts(eligibilityCounts);
-    if (counts) diagnostic.catalogueEligibility = counts;
+    if (counts) {
+      diagnostic.catalogueEligibility = counts;
+      const periods = safePeriodCounts(periodCounts, counts);
+      if (periods) diagnostic.cataloguePeriod = periods;
+    }
   }
   return Object.freeze(diagnostic);
 }
@@ -120,6 +143,7 @@ function makeLeagueMarketAuditRunner({
     inFlight = (async () => {
       let stage = "BUDGET_RESERVE";
       let eligibilityCounts = null;
+      let periodCounts = null;
       try {
         // Reserve maximum potential upstream calls in existing transactional 6/day guard.
         // Reservations are not refunded if a request fails or is skipped.
@@ -134,6 +158,7 @@ function makeLeagueMarketAuditRunner({
           // Fail closed before a second metered request if metadata is unusable.
           const meta = auditOfficialLeagueProps(definitions, [], now());
           eligibilityCounts = meta.catalogueEligibility;
+          periodCounts = meta.cataloguePeriod;
           if (meta.totalCatalogueDefinitions === 0 || meta.eligibleCatalogueMarketIds === 0)
             throw new Error("Official catalogue has no usable NBA full-game player-prop definitions.");
           catalogue = definitions;
@@ -162,7 +187,7 @@ function makeLeagueMarketAuditRunner({
       } catch (error) {
         // Emit one minimal static category; callback errors cannot replace the
         // original exception or introduce a second upstream request.
-        try { onFailure(safeAuditFailure(stage, error, eligibilityCounts)); } catch (_) { /* fail closed */ }
+        try { onFailure(safeAuditFailure(stage, error, eligibilityCounts, periodCounts)); } catch (_) { /* fail closed */ }
         throw error;
       }
     })();
