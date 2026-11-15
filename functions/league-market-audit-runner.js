@@ -38,6 +38,42 @@ function safePeriodCounts(value, eligibility) {
       safe.missingOrNull + safe.exactFulltime !== eligibility.periodAllowed) return null;
   return Object.freeze(safe);
 }
+const FIXED_FAMILIES = Object.freeze(["PTS", "REB", "AST", "3PT", "PR", "PA", "RA", "PRA"]);
+const FAMILY_KEYS = Object.freeze([
+  "definitions", ...PERIOD_KEYS,
+  "halfPointLineIndependent", "overUnderPairIndependent",
+  "lineAndPairIndependent", "resultLineAndPairIndependent"
+]);
+function safeFamilyCounts(value, eligibility, periods) {
+  if (!eligibility || !periods || !value || typeof value !== "object" || Array.isArray(value))
+    return null;
+  const result = {};
+  const periodTotals = Object.fromEntries(PERIOD_KEYS.map(key => [key, 0]));
+  let allDefinitions = 0;
+  for (const family of FIXED_FAMILIES) {
+    const input = value[family];
+    if (!input || typeof input !== "object" || Array.isArray(input)) return null;
+    const safe = {};
+    for (const key of FAMILY_KEYS) {
+      const count = input[key];
+      if (!Number.isSafeInteger(count) || count < 0 || count > 250000) return null;
+      safe[key] = count;
+    }
+    if (PERIOD_KEYS.reduce((sum, key) => sum + safe[key], 0) !== safe.definitions ||
+        safe.halfPointLineIndependent > safe.definitions ||
+        safe.overUnderPairIndependent > safe.definitions ||
+        safe.lineAndPairIndependent > Math.min(
+          safe.halfPointLineIndependent, safe.overUnderPairIndependent) ||
+        safe.resultLineAndPairIndependent > Math.min(
+          safe.exactResult, safe.lineAndPairIndependent)) return null;
+    allDefinitions += safe.definitions;
+    for (const key of PERIOD_KEYS) periodTotals[key] += safe[key];
+    result[family] = Object.freeze(safe);
+  }
+  if (allDefinitions !== eligibility.familyExact ||
+      PERIOD_KEYS.some(key => periodTotals[key] !== periods[key])) return null;
+  return Object.freeze(result);
+}
 function safeEligibilityCounts(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const safe = {};
@@ -48,7 +84,7 @@ function safeEligibilityCounts(value) {
   }
   return Object.freeze(safe);
 }
-function safeAuditFailure(stage, error, eligibilityCounts = null, periodCounts = null) {
+function safeAuditFailure(stage, error, eligibilityCounts = null, periodCounts = null, familyCounts = null) {
   const safeStage = SAFE_AUDIT_STAGES.includes(stage) ? stage : "UNKNOWN_STAGE";
   const message = typeof error?.message === "string" ? error.message : "";
   const name = typeof error?.name === "string" ? error.name : "";
@@ -99,7 +135,11 @@ function safeAuditFailure(stage, error, eligibilityCounts = null, periodCounts =
     if (counts) {
       diagnostic.catalogueEligibility = counts;
       const periods = safePeriodCounts(periodCounts, counts);
-      if (periods) diagnostic.cataloguePeriod = periods;
+      if (periods) {
+        diagnostic.cataloguePeriod = periods;
+        const families = safeFamilyCounts(familyCounts, counts, periods);
+        if (families) diagnostic.catalogueFamilies = families;
+      }
     }
   }
   return Object.freeze(diagnostic);
@@ -144,6 +184,7 @@ function makeLeagueMarketAuditRunner({
       let stage = "BUDGET_RESERVE";
       let eligibilityCounts = null;
       let periodCounts = null;
+      let familyCounts = null;
       try {
         // Reserve maximum potential upstream calls in existing transactional 6/day guard.
         // Reservations are not refunded if a request fails or is skipped.
@@ -159,6 +200,7 @@ function makeLeagueMarketAuditRunner({
           const meta = auditOfficialLeagueProps(definitions, [], now());
           eligibilityCounts = meta.catalogueEligibility;
           periodCounts = meta.cataloguePeriod;
+          familyCounts = meta.catalogueFamilies;
           if (meta.totalCatalogueDefinitions === 0 || meta.eligibleCatalogueMarketIds === 0)
             throw new Error("Official catalogue has no usable NBA full-game player-prop definitions.");
           catalogue = definitions;
@@ -187,7 +229,7 @@ function makeLeagueMarketAuditRunner({
       } catch (error) {
         // Emit one minimal static category; callback errors cannot replace the
         // original exception or introduce a second upstream request.
-        try { onFailure(safeAuditFailure(stage, error, eligibilityCounts, periodCounts)); } catch (_) { /* fail closed */ }
+        try { onFailure(safeAuditFailure(stage, error, eligibilityCounts, periodCounts, familyCounts)); } catch (_) { /* fail closed */ }
         throw error;
       }
     })();
