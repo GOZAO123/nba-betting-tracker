@@ -22,6 +22,13 @@ const ODDS = [{
   } }
 }];
 const owner = { auth: { uid: "fake-owner", token: { email_verified: true } }, data: {} };
+const FAMILIES = ["PTS", "REB", "AST", "3PT", "PR", "PA", "RA", "PRA"];
+const emptyFamilyCounts = () => Object.fromEntries(FAMILIES.map(family => [family, {
+  definitions: 0, missingOrNull: 0, exactFulltime: 0, exactResult: 0,
+  knownPartial: 0, otherString: 0, nonString: 0,
+  halfPointLineIndependent: 0, overUnderPairIndependent: 0,
+  lineAndPairIndependent: 0, resultLineAndPairIndependent: 0
+}]));
 function setup(opts = {}) {
   let ticks = NOW, requests = 0, reserved = 0, catalogues = 0, odds = 0, waits = 0;
   const events = [];
@@ -248,10 +255,12 @@ test("zero eligible catalogue markets are logged separately from fetch, without 
     cataloguePeriod: {
       missingOrNull: 0, exactFulltime: 0, exactResult: 0,
       knownPartial: 0, otherString: 0, nonString: 0
-    }
+    },
+    catalogueFamilies: emptyFamilyCounts()
   }]);
   assert.ok(Object.isFrozen(messages[0].catalogueEligibility));
   assert.ok(Object.isFrozen(messages[0].cataloguePeriod));
+  assert.ok(Object.isFrozen(messages[0].catalogueFamilies));
 });
 
 test("malformed but bounded catalogue logs per-stage counts, never provider text or prices", async () => {
@@ -284,6 +293,15 @@ test("malformed but bounded catalogue logs per-stage counts, never provider text
     cataloguePeriod: {
       missingOrNull: 0, exactFulltime: 2, exactResult: 0,
       knownPartial: 0, otherString: 0, nonString: 0
+    },
+    catalogueFamilies: {
+      ...emptyFamilyCounts(),
+      PTS: {
+        definitions: 2, missingOrNull: 0, exactFulltime: 2,
+        exactResult: 0, knownPartial: 0, otherString: 0, nonString: 0,
+        halfPointLineIndependent: 1, overUnderPairIndependent: 1,
+        lineAndPairIndependent: 0, resultLineAndPairIndependent: 0
+      }
     }
   }]);
   assert.doesNotMatch(JSON.stringify(warnings), /private-provider-market-secret|120000|fixtureId|marketId|playerName|price/);
@@ -568,10 +586,11 @@ test("production audit wiring logs only sanitized diagnostic and preserves manua
   const end = src.indexOf("function ledgerAssertOwner(request)", start);
   assert.ok(start > 0 && end > start);
   const audit = src.slice(start, end);
-  assert.match(audit, /onFailure: \(\{ stage, reason, catalogueEligibility, cataloguePeriod \}\) =>/);
+  assert.match(audit, /onFailure: \(\{ stage, reason, catalogueEligibility, cataloguePeriod, catalogueFamilies \}\) =>/);
   assert.match(audit, /console\.warn\("NBA market audit safe failure",/);
   assert.match(audit, /catalogueEligibility \? \{/);
   assert.match(audit, /\.\.\.\(cataloguePeriod \? \{ cataloguePeriod \} : \{\}\)/);
+  assert.match(audit, /\.\.\.\(catalogueFamilies \? \{ catalogueFamilies \} : \{\}\)/);
   assert.match(audit, /reserve: reserveDiagnosticRequests/);
   assert.match(audit, /maxInstances: 1, concurrency: 1/);
   assert.match(audit, /path === "\/v4\/markets" \? readMarketCatalogueJson\(response\) : readLimitedJson\(response\)/);
