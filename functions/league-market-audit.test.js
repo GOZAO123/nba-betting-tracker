@@ -241,6 +241,63 @@ test("period buckets partition eligible NBA families without relaxing the existi
     /private period|marketId|player|price|apiKey|60000/i);
 });
 
+test("eight exact families expose independent period, line and outcome readiness", () => {
+  const rows = definitions().map((def, i) => ({ ...def }));
+  rows[0].period = "result"; // PTS: complete result-period definition, still rejected
+  rows[1].period = "p1"; rows[1].outcomes = []; // REB: line only
+  rows[2].period = "fulltime"; rows[2].handicap = 20; // AST: pair only
+  rows[3].period = null; // 3PT: accepted
+  rows[4].period = "secret-provider-period"; rows[4].handicap = 20;
+  rows[4].outcomes = []; // PR: neither shape passes
+  delete rows[5].period; // PA: accepted
+  rows[6].period = "result"; rows[6].handicap = 20; // RA: pair only
+  rows[7].outcomes = []; // PRA: accepted period and line, no pair
+  const report = auditOfficialLeagueProps(rows, [], NOW);
+  assert.equal(report.catalogueEligibility.familyExact, 8);
+  assert.equal(report.catalogueEligibility.periodAllowed, 4);
+  assert.equal(report.catalogueEligibility.halfPointLine, 3);
+  assert.equal(report.catalogueEligibility.overUnderPair, 2);
+  assert.equal(report.eligibleCatalogueMarketIds, 2);
+  assert.deepEqual(report.cataloguePeriod, {
+    missingOrNull: 2, exactFulltime: 2, exactResult: 2,
+    knownPartial: 1, otherString: 1, nonString: 0
+  });
+  assert.deepEqual(Object.keys(report.catalogueFamilies),
+    ["PTS", "REB", "AST", "3PT", "PR", "PA", "RA", "PRA"]);
+  const expected = [
+    ["PTS", "exactResult", 1, 1, 1, 1],
+    ["REB", "knownPartial", 1, 0, 0, 0],
+    ["AST", "exactFulltime", 0, 1, 0, 0],
+    ["3PT", "missingOrNull", 1, 1, 1, 0],
+    ["PR", "otherString", 0, 0, 0, 0],
+    ["PA", "missingOrNull", 1, 1, 1, 0],
+    ["RA", "exactResult", 0, 1, 0, 0],
+    ["PRA", "exactFulltime", 1, 0, 0, 0]
+  ];
+  for (const [family, bucket, line, pair, both, resultBoth] of expected) {
+    const counts = report.catalogueFamilies[family];
+    assert.equal(counts.definitions, 1);
+    assert.equal(counts[bucket], 1);
+    assert.equal(counts.halfPointLineIndependent, line);
+    assert.equal(counts.overUnderPairIndependent, pair);
+    assert.equal(counts.lineAndPairIndependent, both);
+    assert.equal(counts.resultLineAndPairIndependent, resultBoth);
+    assert.ok(Object.isFrozen(counts));
+  }
+  assert.ok(Object.isFrozen(report.catalogueFamilies));
+  assert.doesNotMatch(JSON.stringify(report.catalogueFamilies),
+    /secret-provider-period|marketId|playerName|apiKey|outcomeId|price/i);
+});
+
+test("family counts remain pre-quarantine when a late cross-sport ID duplicates", () => {
+  const def = definitions()[3];
+  const report = auditOfficialLeagueProps([def, { ...def, sportId: 99 }], [], NOW);
+  assert.equal(report.catalogueEligibility.duplicateIds, 1);
+  assert.equal(report.catalogueEligibility.eligibleIds, 0);
+  assert.equal(report.catalogueFamilies["3PT"].definitions, 1);
+  assert.equal(report.catalogueFamilies["3PT"].lineAndPairIndependent, 1);
+});
+
 test("timestamps require timezone and provider main-line flags are not inferred", () => {
   const x = auditOfficialLeagueProps(definitions(), [fixture({ "110000": {
     marketActive: true, outcomes: { "120000": { players: {

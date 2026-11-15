@@ -672,11 +672,12 @@ const runNbaMarketAudit = makeLeagueMarketAuditRunner({
   reserve: reserveDiagnosticRequests,
   // Fixed stage/reason plus strictly whitelisted bounded aggregate counts.
   // Never log raw provider data, market IDs, prices, names or Error objects.
-  onFailure: ({ stage, reason, catalogueEligibility, cataloguePeriod }) =>
+  onFailure: ({ stage, reason, catalogueEligibility, cataloguePeriod, catalogueFamilies }) =>
     console.warn("NBA market audit safe failure",
       catalogueEligibility ? {
         stage, reason, catalogueEligibility,
-        ...(cataloguePeriod ? { cataloguePeriod } : {})
+        ...(cataloguePeriod ? { cataloguePeriod } : {}),
+        ...(catalogueFamilies ? { catalogueFamilies } : {})
       } : { stage, reason }),
   fetchCatalogue: () => fetchLeagueAuditJson("/v4/markets", { language: "en" }),
   fetchOdds: () => fetchLeagueAuditJson("/v4/odds-by-tournaments", {

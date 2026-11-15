@@ -49,6 +49,24 @@ function identifier(value) {
   const text = typeof value === "string" || typeof value === "number" ? String(value) : "";
   return /^[1-9][0-9]{0,15}$/.test(text) ? text : null;
 }
+// These are the exact predicates already used by the strict catalogue matcher.
+// Reuse them for independent diagnostics rather than approximating the rules.
+function validHalfPointLine(line) {
+  return typeof line === "number" && Number.isFinite(line) && line > 0 &&
+    line <= 1000 && Number.isInteger(line * 2) && !Number.isInteger(line);
+}
+function validOverUnderSides(outcomes) {
+  if (!Array.isArray(outcomes) || outcomes.length !== 2) return null;
+  const sides = new Map();
+  for (const outcome of outcomes) {
+    const outcomeId = identifier(outcome?.outcomeId);
+    const name = String(outcome?.outcomeName || "").trim();
+    if (!outcomeId || (name !== "Over" && name !== "Under") || sides.has(outcomeId)) return null;
+    sides.set(outcomeId, name);
+  }
+  if (sides.size !== 2 || new Set(sides.values()).size !== 2) return null;
+  return sides;
+}
 function officialCatalogueMap(payload) {
   const definitions = dataArray(payload, "catalogue", MAX_GLOBAL_CATALOGUE);
   // Scan global IDs (bounded above) to quarantine even cross-sport collisions.
@@ -69,6 +87,14 @@ function officialCatalogueMap(payload) {
     missingOrNull: 0, exactFulltime: 0, exactResult: 0,
     knownPartial: 0, otherString: 0, nonString: 0
   };
+  // Eight fixed markets only. Independent shape checks expose later blockers
+  // without allowing a rejected period to pass actual eligibility.
+  const familyDiagnostics = Object.fromEntries(FAMILY_ORDER.map(family => [family, {
+    definitions: 0, missingOrNull: 0, exactFulltime: 0, exactResult: 0,
+    knownPartial: 0, otherString: 0, nonString: 0,
+    halfPointLineIndependent: 0, overUnderPairIndependent: 0,
+    lineAndPairIndependent: 0, resultLineAndPairIndependent: 0
+  }]));
   for (const def of definitions) {
     if (!object(def)) continue;
     const id = identifier(def.marketId);
@@ -92,22 +118,23 @@ function officialCatalogueMap(payload) {
       typeof period !== "string" ? "nonString" :
       KNOWN_PARTIAL_NBA_PERIODS.has(period) ? "knownPartial" : "otherString";
     periods[bucket]++;
-    // Unchanged strict acceptance condition: diagnostics grant no eligibility.
+    const familyCounts = familyDiagnostics[family];
+    familyCounts.definitions++;
+    familyCounts[bucket]++;
+    const lineValid = validHalfPointLine(def.handicap);
+    const sides = validOverUnderSides(def.outcomes);
+    if (lineValid) familyCounts.halfPointLineIndependent++;
+    if (sides) familyCounts.overUnderPairIndependent++;
+    if (lineValid && sides) {
+      familyCounts.lineAndPairIndependent++;
+      if (period === "result") familyCounts.resultLineAndPairIndependent++;
+    }
+    // The same strict sequential gates remain enforced for actual mapping.
     if (def.period != null && def.period !== "fulltime") continue;
     counts.periodAllowed++;
-    const line = def.handicap;
-    if (typeof line !== "number" || !Number.isFinite(line) || line <= 0 ||
-        line > 1000 || !Number.isInteger(line * 2) || Number.isInteger(line)) continue;
+    if (!lineValid) continue;
     counts.halfPointLine++;
-    if (!Array.isArray(def.outcomes) || def.outcomes.length !== 2) continue;
-    const sides = new Map();
-    for (const outcome of def.outcomes) {
-      const outcomeId = identifier(outcome?.outcomeId);
-      const name = String(outcome?.outcomeName || "").trim();
-      if (!outcomeId || (name !== "Over" && name !== "Under") || sides.has(outcomeId)) break;
-      sides.set(outcomeId, name);
-    }
-    if (sides.size !== 2 || new Set(sides.values()).size !== 2) continue;
+    if (!sides) continue;
     counts.overUnderPair++;
     // This is the protected 50,000-entry NBA subset limit, NOT a global cap.
     if (++nbaDefinitions > MAX_NBA_CATALOGUE)
@@ -118,8 +145,10 @@ function officialCatalogueMap(payload) {
   // funnel stages. No market IDs, names, outcome IDs, prices or players are kept.
   counts.eligibleIds = mapped.size;
   counts.duplicateIds = ambiguous.size;
+  for (const family of FAMILY_ORDER) Object.freeze(familyDiagnostics[family]);
   return { mapped, seen, ambiguous, definitions: definitions.length,
-    catalogueEligibility: Object.freeze(counts), cataloguePeriod: Object.freeze(periods) };
+    catalogueEligibility: Object.freeze(counts), cataloguePeriod: Object.freeze(periods),
+    catalogueFamilies: Object.freeze(familyDiagnostics) };
 }
 function parseProviderTimestamp(value) {
   if (typeof value !== "string" ||
@@ -129,7 +158,7 @@ function parseProviderTimestamp(value) {
 
 function auditOfficialLeagueProps(catalogue, leagueOdds, now = Date.now()) {
   if (!Number.isFinite(now)) throw new Error("Invalid snapshot time.");
-  const { mapped, ambiguous, definitions, catalogueEligibility, cataloguePeriod } = officialCatalogueMap(catalogue);
+  const { mapped, ambiguous, definitions, catalogueEligibility, cataloguePeriod, catalogueFamilies } = officialCatalogueMap(catalogue);
   const fixtures = dataArray(leagueOdds, "fixtures", MAX_FIXTURES);
   const families = FAMILY_ORDER.map(family => ({
     family, marketObjects: 0, activePriceEntries: 0, fresh15m: 0,
@@ -140,6 +169,7 @@ function auditOfficialLeagueProps(catalogue, leagueOdds, now = Date.now()) {
     diagnosticVersion: "35.1C-OFFLINE-ONLY", analysis: "SYNTHETIC_OR_EXTERNALLY_SUPPLIED_INPUT",
     totalCatalogueDefinitions: definitions, eligibleCatalogueMarketIds: mapped.size,
     ambiguousCatalogueMarketIds: ambiguous.size, catalogueEligibility, cataloguePeriod,
+    catalogueFamilies,
     totalFixtures: fixtures.length, eligibleFixtures: 0, activeBookmakerFixtures: 0,
     activeMarketObjects: 0, matchedMarketObjects: 0,
     distinctUnmappedMarketIds: 0, activePriceEntries: 0,
