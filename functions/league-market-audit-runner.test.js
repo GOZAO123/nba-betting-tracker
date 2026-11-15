@@ -396,6 +396,100 @@ test("period logging requires bounded fixed keys and matching funnel counts", ()
   assert.equal(safeAuditFailure("CATALOGUE_VALIDATE", error, null, period).cataloguePeriod, undefined);
 });
 
+test("all eight family summaries are logged after one synthetic catalogue-only failure", async () => {
+  const names = [
+    "Over Under Player Points (incl. overtime)",
+    "Over Under Player Rebounds (incl. overtime)",
+    "Over Under Player Assists (incl. overtime)",
+    "Over Under Player 3 Point FG (incl. overtime)",
+    "Over Under Player Points + Rebounds (incl. overtime)",
+    "Over Under Player Points + Assists (incl. overtime)",
+    "Over Under Player Assists + Rebounds (incl. overtime)",
+    "Over Under Player Points + Assists + Rebounds (incl. overtime)"
+  ];
+  const definitions = names.map((marketName, i) => ({
+    ...CATALOGUE[0], marketId: 910000 + i,
+    marketName, period: "result", privateApiKey: "should-never-leak"
+  }));
+  const warnings = [];
+  let reservations = 0, catalogues = 0, odds = 0;
+  const run = makeLeagueMarketAuditRunner({
+    ownerUid: "fake-owner", now: () => NOW,
+    reserve: async count => { reservations += count; },
+    fetchCatalogue: async () => { catalogues++; return definitions; },
+    fetchOdds: async () => { odds++; throw Error("must-not-request-odds"); },
+    onFailure: info => warnings.push(info)
+  });
+  await assert.rejects(run(owner), /no usable/);
+  assert.equal(reservations, 2);
+  assert.equal(catalogues, 1);
+  assert.equal(odds, 0);
+  assert.equal(warnings.length, 1);
+  const diagnostic = warnings[0];
+  assert.equal(diagnostic.reason, "NO_ELIGIBLE_CATALOGUE_MARKETS");
+  assert.equal(diagnostic.catalogueEligibility.familyExact, 8);
+  assert.equal(diagnostic.catalogueEligibility.periodAllowed, 0);
+  assert.deepEqual(diagnostic.cataloguePeriod, {
+    missingOrNull: 0, exactFulltime: 0, exactResult: 8,
+    knownPartial: 0, otherString: 0, nonString: 0
+  });
+  assert.deepEqual(Object.keys(diagnostic.catalogueFamilies), FAMILIES);
+  for (const family of FAMILIES) {
+    const c = diagnostic.catalogueFamilies[family];
+    assert.equal(c.definitions, 1);
+    assert.equal(c.exactResult, 1);
+    assert.equal(c.halfPointLineIndependent, 1);
+    assert.equal(c.overUnderPairIndependent, 1);
+    assert.equal(c.lineAndPairIndependent, 1);
+    assert.equal(c.resultLineAndPairIndependent, 1);
+    assert.ok(Object.isFrozen(c));
+  }
+  assert.ok(Object.isFrozen(diagnostic.catalogueFamilies));
+  assert.doesNotMatch(JSON.stringify(warnings),
+    /should-never-leak|privateApiKey|marketId|playerName|secret|price|should-never-leak/i);
+});
+
+test("family log sanitizer rejects malformed counts and drops injected metadata", () => {
+  const error = Error("Official catalogue has no usable NBA full-game player-prop definitions.");
+  const eligibility = {
+    totalDefinitions: 4, validIds: 4, firstSeenIds: 4,
+    sport11: 4, propTrue: 4, familyExact: 4, periodAllowed: 3,
+    halfPointLine: 0, overUnderPair: 0, eligibleIds: 0, duplicateIds: 0
+  };
+  const periods = {
+    missingOrNull: 1, exactFulltime: 2, exactResult: 1,
+    knownPartial: 0, otherString: 0, nonString: 0
+  };
+  const families = emptyFamilyCounts();
+  families.PTS = { ...families.PTS, definitions: 4,
+    missingOrNull: 1, exactFulltime: 2, exactResult: 1,
+    apiKey: "private-key-in-extra-field" };
+  families.NON_CANONICAL_FAMILY = { note: "private-provider-string" };
+  const good = safeAuditFailure("CATALOGUE_VALIDATE", error, eligibility, periods, families);
+  assert.equal(good.catalogueFamilies.PTS.definitions, 4);
+  assert.equal(good.catalogueFamilies.PTS.exactResult, 1);
+  assert.deepEqual(Object.keys(good.catalogueFamilies), FAMILIES);
+  assert.ok(Object.isFrozen(good.catalogueFamilies.PTS));
+  assert.doesNotMatch(JSON.stringify(good),
+    /private-key-in-extra-field|private-provider-string|apiKey|NON_CANONICAL_FAMILY/);
+  const invalid = [
+    { ...families, PTS: { ...families.PTS, exactResult: 250001 } },
+    { ...families, PTS: { ...families.PTS, exactResult: "1" } },
+    { ...families, PTS: { ...families.PTS, missingOrNull: 0 } },
+    { ...families, PTS: { ...families.PTS, halfPointLineIndependent: 5 } },
+    { ...families, PTS: { ...families.PTS, lineAndPairIndependent: 1 } },
+    { ...families, PTS: { ...families.PTS, resultLineAndPairIndependent: 1 } },
+    { ...families, REB: null }
+  ];
+  for (const bad of invalid) {
+    const safe = safeAuditFailure("CATALOGUE_VALIDATE", error, eligibility, periods, bad);
+    assert.deepEqual(safe.cataloguePeriod, periods);
+    assert.equal(safe.catalogueFamilies, undefined);
+  }
+  assert.equal(safeAuditFailure("CATALOGUE_VALIDATE", error, eligibility, null, families).catalogueFamilies, undefined);
+  assert.equal(safeAuditFailure("LEAGUE_FETCH", error, eligibility, periods, families).catalogueFamilies, undefined);
+});
+
 test("global scan ceiling fails closed before a second upstream request", async () => {
   const messages = [];
   let reserved = 0, catalogueCalls = 0, oddsCalls = 0;
