@@ -140,7 +140,7 @@ function officialCatalogueMap(payload) {
     // This is the protected 50,000-entry NBA subset limit, NOT a global cap.
     if (++nbaDefinitions > MAX_NBA_CATALOGUE)
       throw new Error("NBA catalogue subset processing ceiling exceeded.");
-    mapped.set(id, { family, outcomeSides: sides });
+    mapped.set(id, { family, line: def.handicap, outcomeSides: sides });
   }
   // Final eligible count includes late duplicate-ID quarantine, unlike earlier
   // funnel stages. No market IDs, names, outcome IDs, prices or players are kept.
@@ -229,4 +229,4 @@ function auditOfficialLeagueProps(catalogue, leagueOdds, now = Date.now()) {
   return result;
 }
 
-module.exports = { auditOfficialLeagueProps };
+module.exports = { auditOfficialLeagueProps, officialCatalogueMap };
