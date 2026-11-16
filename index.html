@@ -4128,6 +4128,72 @@ function btSameVerifiedAthletes(a,b){
 }
 // Update 35.3B pure player robustness END
 
+// Update 35.3C pure team-balanced research BEGIN
+// Retrospective sensitivity only: equal weight to athletes, then to NBA teams.
+// A three-team descriptive sample is NOT independent prospective validation.
+function btTeamBalancedEvidence(market,entries,requested){
+ const unavailable=status=>({market:market?.market||'Unknown',status,requested,
+  teams:0,minPlayersPerTeam:0,players:0,paired:0,missing:0,invalid:0,duplicates:0,
+  current:null,candidate:null,delta:null,teamsLower:0,teamsHigher:0,teamsTied:0});
+ if(!Array.isArray(market?.games)||!Array.isArray(entries)||
+   !Number.isInteger(requested)||requested<6||requested>12||
+   entries.length!==requested)return unavailable('incomplete');
+ const people=new Map(),byTeam=new Map();
+ for(const entry of entries){
+  const id=String(entry?.id??''),team=entry?.team;
+  if(!/^\d+$/.test(id)||typeof team!=='string'||!team.trim()||people.has(id))
+   return unavailable('invalid');
+  const player={team,n:0,currentSum:0,candidateSum:0};
+  people.set(id,player);
+  if(!byTeam.has(team))byTeam.set(team,[]);
+  byTeam.get(team).push(player);
+ }
+ const minPlayersPerTeam=Math.min(...[...byTeam.values()].map(x=>x.length));
+ const seen=new Set();let paired=0,missing=0,invalid=0,duplicates=0;
+ for(const row of market.games){
+  const id=String(row?.playerId??''),p=people.get(id);
+  if(!p||p.team!==row.team||!Number.isFinite(row.time)||row.time<=0||
+    !Number.isFinite(row.probability)||row.probability<0||row.probability>1||
+    ![0,1].includes(row.actual)){invalid++;continue}
+  const key=id+'|'+row.time;
+  if(seen.has(key)){duplicates++;continue}
+  seen.add(key);
+  if(!Number.isFinite(row.minutesAwareProbability)||
+    row.minutesAwareProbability<0||row.minutesAwareProbability>1){missing++;continue}
+  paired++;p.n++;
+  p.currentSum+=(row.probability-row.actual)**2;
+  p.candidateSum+=(row.minutesAwareProbability-row.actual)**2;
+ }
+ const qualified=[...people.values()].filter(x=>x.n>=12).length;
+ const result={market:market.market,requested,teams:byTeam.size,
+  minPlayersPerTeam,players:qualified,paired,missing,invalid,duplicates,
+  current:null,candidate:null,delta:null,teamsLower:0,teamsHigher:0,teamsTied:0,
+  status:'incomplete'};
+ if(invalid||duplicates){result.status='invalid';return result}
+ if(missing||qualified!==requested||paired<Math.max(120,requested*12)){
+  result.status='incomplete';return result;
+ }
+ // First average per-player Brier within each team; then weight teams equally.
+ // This prevents a high-appearance player or team dominating the report.
+ let totalCurrent=0,totalCandidate=0;
+ for(const players of byTeam.values()){
+  const teamCurrent=players.reduce((sum,p)=>sum+p.currentSum/p.n,0)/players.length;
+  const teamCandidate=players.reduce((sum,p)=>sum+p.candidateSum/p.n,0)/players.length;
+  totalCurrent+=teamCurrent;totalCandidate+=teamCandidate;
+  const delta=Number((teamCandidate-teamCurrent).toFixed(4));
+  if(delta<0)result.teamsLower++;
+  else if(delta>0)result.teamsHigher++;
+  else result.teamsTied++;
+ }
+ result.current=totalCurrent/byTeam.size;
+ result.candidate=totalCandidate/byTeam.size;
+ result.delta=result.candidate-result.current;
+ result.status=byTeam.size<3?'need-teams':
+  minPlayersPerTeam<2?'need-players-per-team':'descriptive';
+ return result;
+}
+// Update 35.3C pure team-balanced research END
+
 function btCalibrationBins(predictions,binWidth=.2){
  // Calibration resolution is user selectable; sparse bins are flagged.
  if(![.1,.2].includes(binWidth))throw Error('Unsupported calibration bin width.');
@@ -4216,6 +4282,40 @@ function btRenderPlayerRobustness(container,report){
   'verified Betano odds; this does not prove calibrated accuracy, EV or ROI. Neither model is promoted.','warning notice'));
  container.append(details);
 }
+// Update 35.3C: team-balanced evidence from the existing manual ESPN cohort.
+function btRenderTeamBalancedResearch(container,report){
+ const details=researchCreate('details',null,'ledger-breakdown');
+ details.append(researchCreate('summary','AI research · Team-balanced evidence'));
+ details.append(researchCreate('p',
+  'One equal-weight mean Brier score per player, averaged equally across teams. '+
+  'Delta = minutes-aware candidate minus unchanged current: negative is lower historical error. '+
+  'For wider descriptive coverage require ≥3 teams with ≥2 players each, ≥12 paired forecasts '+
+  'per player, ≥120 paired total and zero missing/invalid observations.','muted notice'));
+ const table=researchCreate('table'),head=researchCreate('thead'),titles=researchCreate('tr');
+ for(const label of ['Market','Teams','Paired','Missing / invalid','Balanced Δ Brier','Teams lower/total','Evidence'])
+  titles.append(researchCreate('th',label));
+ head.append(titles);table.append(head);const body=researchCreate('tbody');
+ for(const market of report.markets){
+  const row=btTeamBalancedEvidence(market,report.entries,report.requested),tr=researchCreate('tr');
+  const coverage=row.status==='descriptive'?'Descriptive only':
+   row.status==='need-teams'?'Need ≥3 teams':
+   row.status==='need-players-per-team'?'Need ≥2 players/team':'Incomplete data';
+  for(const value of [
+   row.market,row.teams,row.paired,row.missing+' / '+(row.invalid+row.duplicates),
+   Number.isFinite(row.delta)?(row.delta>=0?'+':'')+row.delta.toFixed(4):'—',
+   Number.isFinite(row.delta)?row.teamsLower+'/'+row.teams:'—',coverage
+  ])tr.append(researchCreate('td',value));
+  body.append(tr);
+ }
+ table.append(body);const wrap=researchCreate('div',null,'boxscore');
+ wrap.append(table);details.append(wrap);
+ details.append(researchCreate('p',
+  'These are selected, correlated historical player-market games with synthetic reference lines, '+
+  'NOT independent untouched NBA seasons or verified historical Betano odds. '+
+  'More represented teams reduce one form of concentration but do not establish generalization, '+
+  'calibrated probability, positive EV or ROI. No automatic model promotion or extra API requests.','warning notice'));
+ container.append(details);
+}
 function btDrawCohort(report,season){
  btCohortResults.replaceChildren();
  const heading=researchCreate('div',null,'stat-tile');
@@ -4285,6 +4385,7 @@ function btDrawCohort(report,season){
  wrap.append(table);btCohortResults.append(wrap);
  btRenderRoleResearch(btCohortResults,report.markets);
  btRenderPlayerRobustness(btCohortResults,report);
+ btRenderTeamBalancedResearch(btCohortResults,report);
  const comparableMarkets=report.markets.filter(m=>m.players===report.requested&&
   Number.isFinite(m.minutesAware)&&m.pairedCount===m.n);
  const minutesBetter=comparableMarkets.filter(m=>btCandidateComparison({
