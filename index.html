@@ -1384,34 +1384,70 @@ function btNextForecast(train){
  const probability=btClip(.55*normal+.45*empirical);
  return {line,p:probability,empirical};
 }
+// Update 35.3A pre-game minutes/role diagnostics (pure; no requests) BEGIN
+const BT_ROLE_SHIFT_RATIO=.15; // Predeclared; never fitted on held-out outcomes.
+function btTrainingRoleSignal(train){
+ if(!Array.isArray(train)||train.length!==12||
+   train.some(x=>!Number.isFinite(x?.value)||x.value<0||
+     !Number.isFinite(x?.minutes)||x.minutes<=0||x.minutes>60))return null;
+ const mean=x=>x.reduce((v,g)=>v+g.minutes,0)/x.length;
+ const minutes12=mean(train),minutes4=mean(train.slice(-4)),change=(minutes4-minutes12)/minutes12;
+ return {minutes12,minutes4,changePct:change*100,
+  trend:change>=BT_ROLE_SHIFT_RATIO?'up':change<=-BT_ROLE_SHIFT_RATIO?'down':'stable'};
+}
+function btRoleShiftMetrics(predictions){
+ const shifted=[],stable=[];let total=0,missing=0,up=0,down=0;
+ for(const row of Array.isArray(predictions)?predictions:[]){
+  if(!Number.isFinite(row?.probability)||row.probability<0||row.probability>1||
+    ![0,1].includes(row.actual))continue;
+  total++;
+  if(!Number.isFinite(row.minutesAwareProbability)||row.minutesAwareProbability<0||
+    row.minutesAwareProbability>1||!['up','down','stable'].includes(row.minutesTrend)){
+   missing++;continue;
+  }
+  if(row.minutesTrend==='stable')stable.push(row);
+  else{shifted.push(row);if(row.minutesTrend==='up')up++;else down++}
+ }
+ const paired=rows=>({
+  n:rows.length,
+  current:rows.length?rows.reduce((sum,r)=>sum+(r.probability-r.actual)**2,0)/rows.length:null,
+  candidate:rows.length?rows.reduce((sum,r)=>sum+(r.minutesAwareProbability-r.actual)**2,0)/rows.length:null
+ });
+ return {total,missing,up,down,shift:paired(shifted),stable:paired(stable)};
+}
+// Update 35.3A pre-game minutes/role diagnostics END
 // 34.1B: strictly pre-game, fixed-form experimental minutes/role adjustment.
 // Parameters are fixed in advance, not optimized on these historical outcomes.
 function btMinutesAwareForecast(train,f){
- if(train.length!==12||!Number.isFinite(f?.p)||!Number.isFinite(f?.line)||
-   train.some(x=>!Number.isFinite(x.value)||x.value<0||!Number.isFinite(x.minutes)||x.minutes<=0||x.minutes>60))return null;
+ const role=btTrainingRoleSignal(train);
+ if(!role||!Number.isFinite(f?.p)||!Number.isFinite(f?.line))return null;
  const recent=train.slice(-4),sum=(arr,key)=>arr.reduce((s,x)=>s+x[key],0);
- const m12=sum(train,'minutes')/12,m4=sum(recent,'minutes')/4;
+ const m12=role.minutes12,m4=role.minutes4;
  const nextMinutes=Math.min(48,Math.max(1,Math.max(.85*m12,Math.min(1.15*m12,.65*m12+.35*m4))));
  const rate12=sum(train,'value')/sum(train,'minutes'),rate4=sum(recent,'value')/sum(recent,'minutes');
  const adjustedMean=nextMinutes*(.7*rate12+.3*rate4),mean=sum(train,'value')/12;
  const sd=Math.max(1,Math.sqrt(train.reduce((v,x)=>v+(x.value-mean)**2,0)/11));
  const over=mu=>1-btNormalCdf((f.line-mu)/sd);
  const p=btClip(f.p+.35*(over(adjustedMean)-over(mean)));
- return Number.isFinite(p)?{p,nextMinutes,adjustedMean}:null;
+ return Number.isFinite(p)?{p,nextMinutes,adjustedMean,...role}:null;
 }
 function btWalkForward(games,market){
- const series=games.map(g=>({date:g.date,value:g.stats[market],minutes:g.stats.MIN}))
-  .filter(x=>Number.isFinite(x.value)&&x.value>=0).sort((a,b)=>a.date-b.date);
+ const series=games.map(g=>({date:g?.date,value:g?.stats?.[market],minutes:g?.stats?.MIN}))
+  .filter(x=>Number.isFinite(x.date)&&Number.isFinite(x.value)&&x.value>=0).sort((a,b)=>a.date-b.date);
  const predictions=[];
  for(let i=12;i<series.length;i++){
-  const history=series.slice(i-12,i).map(x=>x.value);
+  // No same-timestamp target may use another game from that instant.
+  if(series[i-1].date>=series[i].date)continue;
+  const train=series.slice(i-12,i);
+  const history=train.map(x=>x.value);
   const f=btNextForecast(history);
   if(!f)continue;
-  const alternate=btMinutesAwareForecast(series.slice(i-12,i),f);
+  const alternate=btMinutesAwareForecast(train,f);
   const actual=Number(series[i].value>f.line);
   predictions.push({
    time:series[i].date,line:f.line,probability:f.p,
-   baselineProbability:f.empirical,minutesAwareProbability:alternate?.p??null,actual
+   baselineProbability:f.empirical,minutesAwareProbability:alternate?.p??null,
+   minutesTrend:alternate?.trend??null,minutesChangePct:alternate?.changePct??null,actual
   });
  }
  const n=predictions.length;
@@ -1442,6 +1478,37 @@ function btCandidateComparison(row){
  if(!row.valid||!Number.isFinite(row.minutesAware)||row.pairedCount!==row.tests)
   return {kind:'insufficient',label:'Not comparable'};
  return btScoreComparison({valid:true,model:row.minutesAware,baseline:row.model});
+}
+// Update 35.3A read-only, collapsed diagnostics using already-loaded games.
+function btRenderRoleResearch(container,markets){
+ const eligible=markets.filter(m=>Array.isArray(m?.predictions)?m.predictions.length:
+  Array.isArray(m?.games)&&m.games.length);
+ if(!eligible.length)return;
+ const details=researchCreate('details',null,'ledger-breakdown');
+ details.append(researchCreate('summary','Minutes / role-shift research · pre-game only'));
+ details.append(researchCreate('p',
+  'Fixed 15% shift: mean minutes in the previous 4 appearances versus the previous 12. '+
+  'Signals use only preceding games; each held-out reference line is synthetic, not a bookmaker quote.','muted notice'));
+ const table=researchCreate('table'),head=researchCreate('thead'),tr=researchCreate('tr');
+ for(const name of ['Market','Held-out','Shifted','Up / Down','Missing minutes','Current Brier (shift)','Candidate Brier (shift)','Evidence'])
+  tr.append(researchCreate('th',name));
+ head.append(tr);table.append(head);const body=researchCreate('tbody');
+ for(const market of eligible){
+  const data=btRoleShiftMetrics(Array.isArray(market.predictions)?market.predictions:market.games);
+  const n=data.shift.n,line=researchCreate('tr');
+  for(const value of [market.market,data.total,n,data.up+' / '+data.down,data.missing,
+   n?data.shift.current.toFixed(4):'—',n?data.shift.candidate.toFixed(4):'—',
+   n<30?'Sparse (<30)':'Descriptive only'])line.append(researchCreate('td',value));
+  body.append(line);
+ }
+ table.append(body);const wrap=researchCreate('div',null,'boxscore');
+ wrap.append(table);details.append(wrap);
+ details.append(researchCreate('p',
+  'Paired Brier uses only the SAME held-out player-market outcomes with valid prior minutes. '+
+  'Up / Down refers to historical minutes, not future playing time. Markets share correlated games; '+
+  'selected historical samples cannot establish future accuracy, calibration, betting edge or ROI. '+
+  'Production forecasts and stored research estimates are unchanged.','warning notice'));
+ container.append(details);
 }
 function btRender(games,player,team,season){
  btResults.replaceChildren();
@@ -1477,6 +1544,7 @@ function btRender(games,player,team,season){
  btResults.append(researchCreate('p',
   'EXPERIMENT: minutes-aware uses only the preceding 12 appearances for minutes and per-minute production trends. The current model and synthetic line are unchanged. Both face the SAME held-out games. No real Betano historical odds or betting recommendations. Lower Brier is better.','muted'));
  const good=results.filter(r=>r.valid);
+ if(good.length)btRenderRoleResearch(btResults,good);
  if(!good.length){
   btResults.append(researchCreate('p',
    'Insufficient verified game-log data to backtest. The app will NOT generate a probability estimate or a bet recommendation.','warning'));
@@ -3990,6 +4058,7 @@ function btPoolMarket(entries,market){
     playerId:e.id,team:e.team,time:prediction.time,
     probability:p,baselineProbability:b,
     minutesAwareProbability:Number.isFinite(prediction.minutesAwareProbability)?prediction.minutesAwareProbability:null,
+    minutesTrend:prediction.minutesTrend??null,
     actual:y
    });
   }
@@ -4130,6 +4199,7 @@ function btDrawCohort(report,season){
  }
  table.append(body);const wrap=researchCreate('div',null,'boxscore');
  wrap.append(table);btCohortResults.append(wrap);
+ btRenderRoleResearch(btCohortResults,report.markets);
  const comparableMarkets=report.markets.filter(m=>m.players===report.requested&&
   Number.isFinite(m.minutesAware)&&m.pairedCount===m.n);
  const minutesBetter=comparableMarkets.filter(m=>btCandidateComparison({

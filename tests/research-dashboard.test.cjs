@@ -1560,3 +1560,83 @@ test("35.1C2 manual league market audit is explicit, bounded and read-only",()=>
  assert.match(src,/btn\.disabled=false/);
  assert.doesNotMatch(src,/setInterval|onSchedule|ledgerCaptureProspective|ledgerBatchCaptureProspective|setDoc|runTransaction|fetch\(/);
 });
+
+// Update 35.3A: deterministic offline tests of train-only minutes trend.
+const roleStart=html.indexOf("function btNormalCdf("),roleEnd=html.indexOf("// Update 33.8.2",roleStart);
+assert.ok(roleStart>0&&roleEnd>roleStart);
+const {btTrainingRoleSignal,btMinutesAwareForecast,btWalkForward,btRoleShiftMetrics,btNormalCdf,btClip}=
+ new Function(html.slice(roleStart,roleEnd)+
+ "\nreturn {btTrainingRoleSignal,btMinutesAwareForecast,btWalkForward,btRoleShiftMetrics,btNormalCdf,btClip};")();
+const roleGames=()=>Array.from({length:38},(_,i)=>({
+ id:String(700000000+i),date:Date.UTC(2025,9,i+1),
+ stats:{PTS:i===24?0:18+i%5,MIN:i<8?20:i<16?30:34}
+}));
+test("35.3A strictly prior 12/4 minute signal; missing or unsafe observations fail closed",()=>{
+ const train=Array.from({length:12},(_,i)=>({value:18,minutes:i<8?20:30}));
+ assert.equal(btTrainingRoleSignal(train).trend,"up");
+ assert.equal(btTrainingRoleSignal(train.map(x=>({...x,minutes:50-x.minutes}))).trend,"down");
+ assert.equal(btTrainingRoleSignal(Array.from({length:12},()=>({value:20,minutes:30}))).trend,"stable");
+ assert.equal(btTrainingRoleSignal(train.slice(1)),null);
+ for(const bad of [null,0,61,NaN])
+  assert.equal(btTrainingRoleSignal(train.map((x,i)=>i===2?{...x,minutes:bad}:x)),null);
+ assert.equal(btTrainingRoleSignal(train.map((x,i)=>i===1?{...x,value:-1}:x)),null);
+});
+test("35.3A target game outcome and minutes do not leak into pre-game estimates",()=>{
+ const a=roleGames(),b=structuredClone(a);
+ b[24].stats.PTS=100;b[24].stats.MIN=59;
+ const pa=btWalkForward(a,"PTS"),pb=btWalkForward(b,"PTS"),stamp=a[24].date;
+ const left=pa.predictions.find(x=>x.time===stamp),right=pb.predictions.find(x=>x.time===stamp);
+ assert.ok(left&&right);
+ assert.equal(left.actual,0);assert.equal(right.actual,1);
+ for(const k of ["line","probability","baselineProbability","minutesAwareProbability","minutesTrend","minutesChangePct"])
+  assert.equal(left[k],right[k],"leak: "+k);
+ assert.equal(pa.tests,26);
+});
+test("35.3A retains exactly the old candidate formula, without production replacement",()=>{
+ const games=roleGames(),train=games.slice(12,24).map(g=>({value:g.stats.PTS,minutes:g.stats.MIN}));
+ const row=btWalkForward(games,"PTS").predictions.find(x=>x.time===games[24].date);
+ const f={line:row.line,p:row.probability},candidate=btMinutesAwareForecast(train,f);
+ const sum=(arr,key)=>arr.reduce((s,x)=>s+x[key],0),recent=train.slice(-4);
+ const m12=sum(train,'minutes')/12,m4=sum(recent,'minutes')/4;
+ const minutes=Math.min(48,Math.max(1,Math.max(.85*m12,Math.min(1.15*m12,.65*m12+.35*m4))));
+ const mean=minutes*(.7*sum(train,'value')/sum(train,'minutes')+.3*sum(recent,'value')/sum(recent,'minutes'));
+ const rawMean=sum(train,'value')/12;
+ const sd=Math.max(1,Math.sqrt(train.reduce((s,x)=>s+(x.value-rawMean)**2,0)/11));
+ const over=mu=>1-btNormalCdf((f.line-mu)/sd);
+ const old=btClip(f.p+.35*(over(mean)-over(rawMean)));
+ assert.equal(candidate.p,old);assert.equal(candidate.p,row.minutesAwareProbability);
+ assert.equal(candidate.trend,row.minutesTrend);
+});
+test("35.3A missing minutes exclude challenger from paired scores, not baseline outcomes",()=>{
+ const games=roleGames();games[18].stats.MIN=null;
+ const result=btWalkForward(games,"PTS"),missing=result.predictions.filter(x=>x.minutesAwareProbability===null);
+ assert.equal(missing.length,12);
+ assert.ok(missing.every(x=>x.minutesTrend===null&&Number.isFinite(x.probability)));
+ const m=btRoleShiftMetrics(result.predictions);
+ assert.equal(m.total,result.tests);assert.equal(m.missing,12);
+ assert.equal(m.shift.n+m.stable.n+m.missing,m.total);
+ assert.equal(result.minutesAware,null);assert.ok(Number.isFinite(result.model));
+});
+test("35.3A paired Brier and role shift categories never impute missing outcomes",()=>{
+ const data=btRoleShiftMetrics([
+  {probability:.6,minutesAwareProbability:.7,minutesTrend:"up",actual:1},
+  {probability:.6,minutesAwareProbability:.7,minutesTrend:"down",actual:0},
+  {probability:.2,minutesAwareProbability:.4,minutesTrend:"stable",actual:0},
+  {probability:.9,minutesAwareProbability:null,minutesTrend:null,actual:1}
+ ]);
+ assert.deepEqual([data.total,data.up,data.down,data.missing,data.shift.n,data.stable.n],[4,1,1,1,2,1]);
+ assert.ok(Math.abs(data.shift.current-.26)<1e-12);
+ assert.ok(Math.abs(data.shift.candidate-.29)<1e-12);
+ assert.equal(btRoleShiftMetrics([{probability:.9,minutesAwareProbability:.8,minutesTrend:"up",actual:null}]).total,0);
+ const view=html.slice(html.indexOf("function btRenderRoleResearch("),html.indexOf("function btRender(games,"));
+ assert.match(view,/Sparse \(<30\)/);
+ assert.doesNotMatch(view,/fetch\(|httpsCallable|getDocs|setDoc|runTransaction|setInterval/);
+ assert.match(html,/btRenderRoleResearch\(btResults,good\)/);
+ assert.match(html,/btRenderRoleResearch\(btCohortResults,report.markets\)/);
+});
+test("35.3A walk-forward skips a tied game timestamp",()=>{
+ const games=roleGames();games[24].date=games[23].date;
+ const result=btWalkForward(games,"PTS");
+ assert.equal(result.tests,25);
+ assert.ok(result.predictions.every((v,i,a)=>!i||v.time>a[i-1].time));
+});
