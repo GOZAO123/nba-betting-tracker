@@ -1698,3 +1698,96 @@ test("35.3B read-only diagnostic never invokes external data sources",()=>{
  assert.doesNotMatch(src,/fetch\(|httpsCallable|setDoc|runTransaction|getDocs|setInterval/);
  assert.match(html,/btRenderPlayerRobustness\(btCohortResults,report\)/);
 });
+
+// Update 35.3C — synthetic, zero-network team-balanced research.
+const teamBalancedStart=html.indexOf("// Update 35.3C pure team-balanced research BEGIN");
+const teamBalancedEnd=html.indexOf("// Update 35.3C pure team-balanced research END",teamBalancedStart);
+assert.ok(teamBalancedStart>0&&teamBalancedEnd>teamBalancedStart);
+const {btTeamBalancedEvidence}=new Function(html.slice(teamBalancedStart,teamBalancedEnd)+
+ "\nreturn {btTeamBalancedEvidence};")();
+function balancedFixture(countA=75,countB=24,countC=24){
+ const entries=Array.from({length:6},(_,i)=>({
+  id:String(990001+i),team:i<2?"Team A":i<4?"Team B":"Team C"
+ }));
+ const games=entries.flatMap((p,i)=>{
+  const count=i<2?countA:i<4?countB:countC;
+  const candidate=i<2?.8:i<4?.2:.5;
+  return Array.from({length:count},(_,j)=>({
+   playerId:p.id,team:p.team,time:Date.UTC(2025,0,j+1),
+   probability:.5,minutesAwareProbability:candidate,actual:1
+  }));
+ });
+ return {entries,market:{market:"PTS",games}};
+}
+test("35.3C equal-team weighting does not let a high-volume team dominate Brier",()=>{
+ const {entries,market}=balancedFixture();
+ const report=btTeamBalancedEvidence(market,entries,6);
+ assert.equal(report.status,"descriptive");
+ assert.equal(report.teams,3);assert.equal(report.minPlayersPerTeam,2);
+ assert.equal(report.paired,246);assert.equal(report.missing,0);
+ assert.deepEqual([report.teamsLower,report.teamsHigher,report.teamsTied],[1,1,1]);
+ assert.ok(Math.abs(report.delta-.06)<1e-12);
+ const pooledDelta=market.games.reduce((sum,x)=>sum+
+  (x.minutesAwareProbability-x.actual)**2-(x.probability-x.actual)**2,0)/market.games.length;
+ assert.ok(pooledDelta<0,"Appearance-weighted result misleadingly favors candidate");
+ assert.ok(report.delta>0,"Equal-team result should warn candidate is worse");
+ const reversed=btTeamBalancedEvidence({...market,games:[...market.games].reverse()},
+  [...entries].reverse(),6);
+ assert.ok(Math.abs(report.delta-reversed.delta)<1e-12);
+});
+test("35.3C existing two-team cohort remains limited diversity, never declared validated",()=>{
+ const {entries,market}=balancedFixture(24,24,24);
+ const two=entries.map((p,i)=>({...p,team:i<3?"Knicks":"Nuggets"}));
+ const recoded={...market,games:market.games.map(x=>({
+  ...x,team:two.find(p=>p.id===x.playerId).team
+ }))};
+ const e=btTeamBalancedEvidence(recoded,two,6);
+ assert.equal(e.status,"need-teams");assert.equal(e.teams,2);
+ assert.equal(e.minPlayersPerTeam,3);assert.equal(e.paired,144);
+ assert.ok(Number.isFinite(e.delta),"Descriptive-only difference should be visible");
+});
+test("35.3C candidate gaps and insufficient history never yield balanced verdict",()=>{
+ const {entries,market}=balancedFixture(24,24,24);
+ const missing={...market,games:market.games.map((g,i)=>i===5?{...g,minutesAwareProbability:null}:g)};
+ const a=btTeamBalancedEvidence(missing,entries,6);
+ assert.equal(a.status,"incomplete");assert.equal(a.missing,1);
+ assert.equal(a.delta,null);assert.equal(a.candidate,null);
+ const short={...market,games:market.games.filter(g=>
+  g.playerId!==entries[0].id||g.time<=Date.UTC(2025,0,10))};
+ const b=btTeamBalancedEvidence(short,entries,6);
+ assert.equal(b.status,"incomplete");assert.equal(b.players,5);
+ assert.equal(b.delta,null);
+});
+test("35.3C duplicate outcomes, mismatched teams and invalid probabilities fail closed",()=>{
+ const {entries,market}=balancedFixture(24,24,24);
+ const duplicate={...market,games:[...market.games,{...market.games[0]}]};
+ const a=btTeamBalancedEvidence(duplicate,entries,6);
+ assert.equal(a.status,"invalid");assert.equal(a.duplicates,1);assert.equal(a.delta,null);
+ const mismatch={...market,games:market.games.map((g,i)=>i===0?{...g,team:"Other"}:g)};
+ assert.equal(btTeamBalancedEvidence(mismatch,entries,6).status,"invalid");
+ const bad={...market,games:market.games.map((g,i)=>i===0?{...g,probability:NaN}:g)};
+ assert.equal(btTeamBalancedEvidence(bad,entries,6).status,"invalid");
+ assert.equal(btTeamBalancedEvidence(market,[...entries,entries[0]],7).status,"invalid");
+});
+test("35.3C three teams with a single player in one team cannot satisfy breadth rule",()=>{
+ const {entries,market}=balancedFixture(24,24,24);
+ const isolated=entries.map((p,i)=>({...p,team:i<3?"A":i<5?"B":"C"}));
+ const recoded={...market,games:market.games.map(x=>({
+  ...x,team:isolated.find(p=>p.id===x.playerId).team
+ }))};
+ const e=btTeamBalancedEvidence(recoded,isolated,6);
+ assert.equal(e.teams,3);
+ assert.equal(e.minPlayersPerTeam,1);
+ assert.equal(e.status,"need-players-per-team");
+});
+test("35.3C collapsed research report uses existing data and never starts requests",()=>{
+ const begin=html.indexOf("function btRenderTeamBalancedResearch(");
+ const end=html.indexOf("function btDrawCohort(",begin);
+ assert.ok(begin>0&&end>begin);
+ const render=html.slice(begin,end);
+ assert.match(render,/Team-balanced evidence/);
+ assert.match(render,/Need ≥3 teams/);
+ assert.match(render,/Descriptive only/);
+ assert.match(html,/btRenderTeamBalancedResearch\(btCohortResults,report\)/);
+ assert.doesNotMatch(render,/fetch\(|httpsCallable|setDoc|runTransaction|getDocs|setInterval|OddsPapi/);
+});
