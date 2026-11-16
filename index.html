@@ -4071,6 +4071,63 @@ function btPoolMarket(entries,market){
   minutesAware:n&&pairedCount===n?mean('minutesAwareProbability'):null,
   pairedCount,games};
 }
+// Update 35.3B pure player robustness BEGIN
+function btPlayerRobustness(market,entries,requested){
+ const none=status=>({market:market?.market||'Unknown',status,players:0,requested,
+   paired:0,missing:0,invalid:0,duplicates:0,lower:0,higher:0,
+   pooled:'insufficient',leaveOut:'unavailable'});
+ if(!Array.isArray(market?.games)||!Array.isArray(entries)||
+    !Number.isInteger(requested)||requested<2||requested>12||entries.length>requested)
+   return none('invalid');
+ const byId=new Map(),teams=new Set();
+ for(const e of entries){
+  const id=String(e?.id??''),team=e?.team;
+  if(!/^\d+$/.test(id)||typeof team!=='string'||!team.trim()||byId.has(id))return none('invalid');
+  byId.set(id,{team,n:0,a:0,b:0});teams.add(team);
+ }
+ let invalid=0,duplicates=0,missing=0,paired=0;
+ const seen=new Set();
+ for(const g of market.games){
+  const p=byId.get(String(g?.playerId??''));
+  if(!p||p.team!==g.team||!Number.isFinite(g.time)||g.time<=0||
+     !Number.isFinite(g.probability)||g.probability<0||g.probability>1||
+     ![0,1].includes(g.actual)){invalid++;continue}
+  const key=g.playerId+'|'+g.time;
+  if(seen.has(key)){duplicates++;continue}
+  seen.add(key);
+  if(!Number.isFinite(g.minutesAwareProbability)||g.minutesAwareProbability<0||
+     g.minutesAwareProbability>1){missing++;continue}
+  paired++;p.n++;
+  p.a+=(g.probability-g.actual)**2;
+  p.b+=(g.minutesAwareProbability-g.actual)**2;
+ }
+ const individuals=[...byId.values()],qualified=individuals.filter(p=>p.n>=12);
+ const first=individuals.reduce((s,p)=>s+p.a,0),second=individuals.reduce((s,p)=>s+p.b,0);
+ const verdict=(a,b)=>!Number.isFinite(a)||!Number.isFinite(b)?'insufficient':
+  Number(b.toFixed(4))<Number(a.toFixed(4))?'lower':
+  Number(b.toFixed(4))>Number(a.toFixed(4))?'higher':'tied';
+ const complete=entries.length===requested&&teams.size>=2&&
+  qualified.length===requested&&paired>=Math.max(120,requested*12)&&
+  missing===0&&invalid===0&&duplicates===0;
+ const pooled=complete?verdict(first/paired,second/paired):'insufficient';
+ const stable=complete&&pooled==='lower'&&individuals.every(p=>{
+  const n=paired-p.n;
+  return n>=24&&verdict((first-p.a)/n,(second-p.b)/n)==='lower';
+ });
+ return {market:market.market,status:duplicates?'conflict':complete?'complete':'limited',
+  players:qualified.length,requested,paired,missing,invalid,duplicates,
+  lower:qualified.filter(p=>verdict(p.a/p.n,p.b/p.n)==='lower').length,
+  higher:qualified.filter(p=>verdict(p.a/p.n,p.b/p.n)==='higher').length,
+  pooled,leaveOut:complete?(stable?'consistent':'not-consistent'):'unavailable'};
+}
+function btSameVerifiedAthletes(a,b){
+ if(!Array.isArray(a)||!Array.isArray(b)||a.length<2||a.length!==b.length)return false;
+ const valid=x=>x.every(s=>typeof s==='string'&&/^\d+$/.test(s))&&new Set(x).size===x.length;
+ const right=[...b].sort();
+ return valid(a)&&valid(b)&&[...a].sort().every((id,i)=>id===right[i]);
+}
+// Update 35.3B pure player robustness END
+
 function btCalibrationBins(predictions,binWidth=.2){
  // Calibration resolution is user selectable; sparse bins are flagged.
  if(![.1,.2].includes(binWidth))throw Error('Unsupported calibration bin width.');
@@ -4131,6 +4188,33 @@ function btCohortSummary(entries,issues=[],requested=BT_COHORT.length,requestedT
  const markets=BT_MARKETS.map(m=>btPoolMarket(entries,m));
  return {entries,issues,markets,teams:new Set(entries.map(e=>e.team)).size,
   players:entries.length,requested,requestedTeams};
+}
+// Update 35.3B: zero-request report over the already loaded cohort.
+function btRenderPlayerRobustness(container,report){
+ const details=researchCreate('details',null,'ledger-breakdown');
+ details.append(researchCreate('summary','AI research · Robustness across players'));
+ details.append(researchCreate('p',
+  'Same held-out games for both models. Complete coverage requires all requested players, at least '+
+  '12 paired forecasts each, two teams, 120 paired observations and no missing or invalid data.','muted notice'));
+ const table=researchCreate('table'),head=researchCreate('thead'),headRow=researchCreate('tr');
+ for(const label of ['Market','Players ≥12','Paired','Missing','Players lower/higher','Pooled candidate','Leave-one-player-out'])
+  headRow.append(researchCreate('th',label));
+ head.append(headRow);table.append(head);const body=researchCreate('tbody');
+ for(const market of report.markets){
+  const r=btPlayerRobustness(market,report.entries,report.requested),tr=researchCreate('tr');
+  for(const val of [r.market,r.players+'/'+r.requested,r.paired,r.missing,
+   r.lower+' / '+r.higher,
+   r.status==='complete'?(r.pooled==='lower'?'Lower error':r.pooled==='higher'?'Higher error':'Tied'):'Incomplete',
+   r.status==='complete'?(r.leaveOut==='consistent'?'Lower with every exclusion':'Not consistent'):'Insufficient'])
+   tr.append(researchCreate('td',val));
+  body.append(tr);
+ }
+ table.append(body);const wrap=researchCreate('div',null,'boxscore');wrap.append(table);details.append(wrap);
+ details.append(researchCreate('p',
+  'Leave-one-player-out removes one athlete from the SAME selected sample: it is not validation '+
+  'on unseen players. Teammates and prop markets share games. Synthetic historical lines are not '+
+  'verified Betano odds; this does not prove calibrated accuracy, EV or ROI. Neither model is promoted.','warning notice'));
+ container.append(details);
 }
 function btDrawCohort(report,season){
  btCohortResults.replaceChildren();
@@ -4200,6 +4284,7 @@ function btDrawCohort(report,season){
  table.append(body);const wrap=researchCreate('div',null,'boxscore');
  wrap.append(table);btCohortResults.append(wrap);
  btRenderRoleResearch(btCohortResults,report.markets);
+ btRenderPlayerRobustness(btCohortResults,report);
  const comparableMarkets=report.markets.filter(m=>m.players===report.requested&&
   Number.isFinite(m.minutesAware)&&m.pairedCount===m.n);
  const minutesBetter=comparableMarkets.filter(m=>btCandidateComparison({
@@ -4381,6 +4466,11 @@ function btDrawCrossSeason(scope){
    ' to see whether model improvements persist across seasons. Each run is manually confirmed.','muted'));
   return;
  }
+ if(!btSameVerifiedAthletes(older.athleteIds,newer.athleteIds)){
+  btCrossSeasonResults.append(researchCreate('p',
+   'Cross-season validation blocked: the verified ESPN athlete IDs differ between seasons.','warning'));
+  return;
+ }
  const oldTitle=(older.season-1)+'–'+String(older.season).slice(-2);
  const newTitle=(newer.season-1)+'–'+String(newer.season).slice(-2);
  const heading=researchCreate('div',null,'stat-tile');
@@ -4479,6 +4569,7 @@ btCohortButton.addEventListener('click',async()=>{
      report.markets.every(x=>x.players===report.requested&&x.n>=Math.max(120,report.requested*12))){
    btCrossSeasonRuns.set(key+':'+season,{scope:key,season,
     players:report.players,teams:report.teams,
+    athleteIds:report.entries.map(e=>String(e.id)).sort(),
     markets:report.markets.map(x=>({
      market:x.market,n:x.n,model:x.model,baseline:x.baseline,
      minutesAware:x.minutesAware,pairedCount:x.pairedCount
