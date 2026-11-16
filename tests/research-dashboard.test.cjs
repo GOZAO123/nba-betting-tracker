@@ -1640,3 +1640,61 @@ test("35.3A walk-forward skips a tied game timestamp",()=>{
  assert.equal(result.tests,25);
  assert.ok(result.predictions.every((v,i,a)=>!i||v.time>a[i-1].time));
 });
+
+// Update 35.3B synthetic player-level model generalization tests.
+const b35=html.indexOf("// Update 35.3B pure player robustness BEGIN");
+const e35=html.indexOf("// Update 35.3B pure player robustness END",b35);
+assert.ok(b35>0&&e35>b35);
+const {btPlayerRobustness,btSameVerifiedAthletes}=
+ new Function(html.slice(b35,e35)+"\nreturn {btPlayerRobustness,btSameVerifiedAthletes};")();
+const fixture35=()=>{
+ const entries=Array.from({length:6},(_,i)=>({id:String(910000+i),team:i<3?"Team A":"Team B"}));
+ const market={market:"PTS",games:entries.flatMap((p,i)=>Array.from({length:24},(_,j)=>({
+  playerId:p.id,team:p.team,time:Date.UTC(2025,0,j+1),
+  probability:.5,minutesAwareProbability:i<4?.8:.2,actual:1
+ })))};
+ return {entries,market};
+};
+test("35.3B pooled win is fragile if removing one player reverses it",()=>{
+ const {entries,market}=fixture35(),result=btPlayerRobustness(market,entries,6);
+ assert.equal(result.status,"complete");
+ assert.equal(result.paired,144);assert.equal(result.missing,0);assert.equal(result.players,6);
+ assert.equal(result.lower,4);assert.equal(result.higher,2);
+ assert.equal(result.pooled,"lower");assert.equal(result.leaveOut,"not-consistent");
+});
+test("35.3B missing candidate forecasts cannot be scored as wins",()=>{
+ const {entries,market}=fixture35();
+ market.games.filter(x=>x.playerId===entries[0].id).forEach(x=>x.minutesAwareProbability=null);
+ const result=btPlayerRobustness(market,entries,6);
+ assert.equal(result.status,"limited");assert.equal(result.missing,24);
+ assert.equal(result.paired,120);assert.equal(result.players,5);
+ assert.equal(result.pooled,"insufficient");assert.equal(result.leaveOut,"unavailable");
+});
+test("35.3B quarantine team mismatches, duplicate games and duplicate athlete IDs",()=>{
+ const {entries,market}=fixture35();
+ assert.equal(btPlayerRobustness(market,[...entries,entries[0]],7).status,"invalid");
+ const mismatch=structuredClone(market);mismatch.games[0].team="Other";
+ const bad=btPlayerRobustness(mismatch,entries,6);
+ assert.equal(bad.status,"limited");assert.equal(bad.invalid,1);
+ const dup=structuredClone(market);dup.games.push({...market.games[0]});
+ const rejected=btPlayerRobustness(dup,entries,6);
+ assert.equal(rejected.status,"conflict");assert.equal(rejected.duplicates,1);
+ assert.equal(rejected.pooled,"insufficient");
+});
+test("35.3B cross-season reports require exact same unique ESPN athlete IDs",()=>{
+ const ids=fixture35().entries.map(x=>x.id);
+ assert.equal(btSameVerifiedAthletes(ids,[...ids].reverse()),true);
+ assert.equal(btSameVerifiedAthletes(ids,[...ids.slice(0,-1),"999999"]),false);
+ assert.equal(btSameVerifiedAthletes(ids,[...ids.slice(0,-1),ids[0]]),false);
+ assert.match(html,/btSameVerifiedAthletes\(older.athleteIds,newer.athleteIds\)/);
+ assert.match(html,/athleteIds:report.entries.map/);
+});
+test("35.3B read-only diagnostic never invokes external data sources",()=>{
+ const i=html.indexOf("function btRenderPlayerRobustness(");
+ const j=html.indexOf("function btDrawCohort(",i);
+ assert.ok(i>0&&j>i);
+ const src=html.slice(i,j);
+ assert.match(src,/Leave-one-player-out/);
+ assert.doesNotMatch(src,/fetch\(|httpsCallable|setDoc|runTransaction|getDocs|setInterval/);
+ assert.match(html,/btRenderPlayerRobustness\(btCohortResults,report\)/);
+});
