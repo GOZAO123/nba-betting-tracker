@@ -129,8 +129,9 @@ function officialCatalogueMap(payload) {
       familyCounts.lineAndPairIndependent++;
       if (period === "result") familyCounts.resultLineAndPairIndependent++;
     }
-    // The same strict sequential gates remain enforced for actual mapping.
-    if (def.period != null && def.period !== "fulltime") continue;
+    // OddsPapi NBA "result" is full game including overtime; "fulltime" is
+    // regulation only. An unset or unknown period cannot prove OT eligibility.
+    if (period !== "result") continue;
     counts.periodAllowed++;
     if (!lineValid) continue;
     counts.halfPointLine++;
