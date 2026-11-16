@@ -7,7 +7,7 @@ const iso = minutes => new Date(NOW + minutes * 60000).toISOString();
 const CATALOGUE = [{
   marketId: 101, sportId: 11, playerProp: true,
   marketName: "Over Under Player Points (incl. overtime)",
-  period: "fulltime", handicap: 20.5,
+  period: "result", handicap: 20.5,
   outcomes: [{ outcomeId: 201, outcomeName: "Over" }, { outcomeId: 202, outcomeName: "Under" }]
 }];
 const ODDS = [{
@@ -291,14 +291,14 @@ test("malformed but bounded catalogue logs per-stage counts, never provider text
       eligibleIds: 0, duplicateIds: 0
     },
     cataloguePeriod: {
-      missingOrNull: 0, exactFulltime: 2, exactResult: 0,
+      missingOrNull: 0, exactFulltime: 0, exactResult: 2,
       knownPartial: 0, otherString: 0, nonString: 0
     },
     catalogueFamilies: {
       ...emptyFamilyCounts(),
       PTS: {
-        definitions: 2, missingOrNull: 0, exactFulltime: 2,
-        exactResult: 0, knownPartial: 0, otherString: 0, nonString: 0,
+        definitions: 2, missingOrNull: 0, exactFulltime: 0,
+        exactResult: 2, knownPartial: 0, otherString: 0, nonString: 0,
         halfPointLineIndependent: 1, overUnderPairIndependent: 1,
         lineAndPairIndependent: 0, resultLineAndPairIndependent: 0
       }
@@ -307,12 +307,12 @@ test("malformed but bounded catalogue logs per-stage counts, never provider text
   assert.doesNotMatch(JSON.stringify(warnings), /private-provider-market-secret|120000|fixtureId|marketId|playerName|price/);
 });
 
-test("result-period catalogues fail closed with a bounded period breakdown", async () => {
+test("regulation, partial and unknown periods fail closed before any odds request", async () => {
   const reports = [];
   let reserved = 0, catalogueCalls = 0, oddsCalls = 0;
   const unknown = "secret-period-value";
   const candidates = [
-    { ...CATALOGUE[0], marketId: 900001, period: "result" },
+    { ...CATALOGUE[0], marketId: 900001, period: "fulltime" },
     { ...CATALOGUE[0], marketId: 900002, period: "p1" },
     { ...CATALOGUE[0], marketId: 900003, period: unknown }
   ];
@@ -333,7 +333,7 @@ test("result-period catalogues fail closed with a bounded period breakdown", asy
   assert.equal(reports[0].catalogueEligibility.familyExact, 3);
   assert.equal(reports[0].catalogueEligibility.periodAllowed, 0);
   assert.deepEqual(reports[0].cataloguePeriod, {
-    missingOrNull: 0, exactFulltime: 0, exactResult: 1,
+    missingOrNull: 0, exactFulltime: 1, exactResult: 0,
     knownPartial: 1, otherString: 1, nonString: 0
   });
   assert.doesNotMatch(JSON.stringify(reports),
@@ -363,12 +363,12 @@ test("eligibility logging accepts only bounded fixed numeric keys", () => {
   assert.equal(elsewhere.catalogueEligibility, undefined);
 });
 
-test("period logging requires bounded fixed keys and matching funnel counts", () => {
+test("period logging requires bounded fixed keys and exact-result funnel agreement", () => {
   const error = Error("Official catalogue has no usable NBA full-game player-prop definitions.");
   const eligibility = {
     totalDefinitions: 9, validIds: 8, firstSeenIds: 7,
     sport11: 6, propTrue: 5, familyExact: 4,
-    periodAllowed: 3, halfPointLine: 2, overUnderPair: 1,
+    periodAllowed: 1, halfPointLine: 2, overUnderPair: 1,
     eligibleIds: 0, duplicateIds: 1
   };
   const period = {
@@ -387,13 +387,51 @@ test("period logging requires bounded fixed keys and matching funnel counts", ()
   const wrongSum = safeAuditFailure("CATALOGUE_VALIDATE", error, eligibility,
     { ...period, knownPartial: 1 });
   const wrongPeriodGate = safeAuditFailure("CATALOGUE_VALIDATE", error, eligibility,
-    { ...period, missingOrNull: 0, knownPartial: 1 });
+    { ...period, exactResult: 0, exactFulltime: 3 });
   for (const report of [badType, badSize, wrongSum, wrongPeriodGate]) {
     assert.deepEqual(report.catalogueEligibility, eligibility);
     assert.equal(report.cataloguePeriod, undefined);
   }
   assert.equal(safeAuditFailure("LEAGUE_FETCH", error, eligibility, period).cataloguePeriod, undefined);
   assert.equal(safeAuditFailure("CATALOGUE_VALIDATE", error, null, period).cataloguePeriod, undefined);
+});
+
+test("eight result-period families reach one offline league snapshot under existing two-slot reservation", async () => {
+  const names = [
+    "Over Under Player Points (incl. overtime)",
+    "Over Under Player Rebounds (incl. overtime)",
+    "Over Under Player Assists (incl. overtime)",
+    "Over Under Player 3 Point FG (incl. overtime)",
+    "Over Under Player Points + Rebounds (incl. overtime)",
+    "Over Under Player Points + Assists (incl. overtime)",
+    "Over Under Player Assists + Rebounds (incl. overtime)",
+    "Over Under Player Points + Assists + Rebounds (incl. overtime)"
+  ];
+  const definitions = names.map((marketName, i) => ({
+    ...CATALOGUE[0], marketId: 920000 + i, marketName
+  }));
+  const markets = Object.fromEntries(definitions.map(def => [
+    String(def.marketId), ODDS[0].bookmakerOdds["betano.pt"].markets["101"]
+  ]));
+  const odds = [{
+    ...ODDS[0], bookmakerOdds: { "betano.pt": {
+      ...ODDS[0].bookmakerOdds["betano.pt"], markets
+    } }
+  }];
+  const state = setup({ catalogue: definitions, odds });
+  const report = await state.run(owner);
+  assert.deepEqual(state.events, ["reserve:2", "catalogue", "wait", "odds"]);
+  assert.equal(report.eligibleCatalogueMarketIds, 8);
+  assert.equal(report.catalogueEligibility.periodAllowed, 8);
+  assert.equal(report.catalogueEligibility.halfPointLine, 8);
+  assert.equal(report.catalogueEligibility.overUnderPair, 8);
+  assert.equal(report.matchedMarketObjects, 8);
+  assert.equal(report.activePriceEntries, 8);
+  assert.equal(report.cataloguePeriod.exactResult, 8);
+  assert.deepEqual(report.families.map(x => x.family), FAMILIES);
+  assert.equal(report.requestsUsedOnThisClick, 2);
+  assert.equal(report.researchSaved, false);
+  assert.doesNotMatch(JSON.stringify(report), /Synthetic Player|privateApiKey|marketId|"price"/);
 });
 
 test("all eight family summaries are logged after one synthetic catalogue-only failure", async () => {
@@ -409,7 +447,7 @@ test("all eight family summaries are logged after one synthetic catalogue-only f
   ];
   const definitions = names.map((marketName, i) => ({
     ...CATALOGUE[0], marketId: 910000 + i,
-    marketName, period: "result", privateApiKey: "should-never-leak"
+    marketName, period: "fulltime", privateApiKey: "should-never-leak"
   }));
   const warnings = [];
   let reservations = 0, catalogues = 0, odds = 0;
@@ -430,18 +468,19 @@ test("all eight family summaries are logged after one synthetic catalogue-only f
   assert.equal(diagnostic.catalogueEligibility.familyExact, 8);
   assert.equal(diagnostic.catalogueEligibility.periodAllowed, 0);
   assert.deepEqual(diagnostic.cataloguePeriod, {
-    missingOrNull: 0, exactFulltime: 0, exactResult: 8,
+    missingOrNull: 0, exactFulltime: 8, exactResult: 0,
     knownPartial: 0, otherString: 0, nonString: 0
   });
   assert.deepEqual(Object.keys(diagnostic.catalogueFamilies), FAMILIES);
   for (const family of FAMILIES) {
     const c = diagnostic.catalogueFamilies[family];
     assert.equal(c.definitions, 1);
-    assert.equal(c.exactResult, 1);
+    assert.equal(c.exactFulltime, 1);
+    assert.equal(c.exactResult, 0);
     assert.equal(c.halfPointLineIndependent, 1);
     assert.equal(c.overUnderPairIndependent, 1);
     assert.equal(c.lineAndPairIndependent, 1);
-    assert.equal(c.resultLineAndPairIndependent, 1);
+    assert.equal(c.resultLineAndPairIndependent, 0);
     assert.ok(Object.isFrozen(c));
   }
   assert.ok(Object.isFrozen(diagnostic.catalogueFamilies));
@@ -453,7 +492,7 @@ test("family log sanitizer rejects malformed counts and drops injected metadata"
   const error = Error("Official catalogue has no usable NBA full-game player-prop definitions.");
   const eligibility = {
     totalDefinitions: 4, validIds: 4, firstSeenIds: 4,
-    sport11: 4, propTrue: 4, familyExact: 4, periodAllowed: 3,
+    sport11: 4, propTrue: 4, familyExact: 4, periodAllowed: 1,
     halfPointLine: 0, overUnderPair: 0, eligibleIds: 0, duplicateIds: 0
   };
   const periods = {

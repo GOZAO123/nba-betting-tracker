@@ -17,7 +17,7 @@ const NAMES = [
 ];
 const definitions = () => NAMES.map((marketName, i) => ({
   marketId: 110000 + i, marketName, sportId: 11, playerProp: true,
-  period: "fulltime", handicap: 20.5 + i,
+  period: "result", handicap: 20.5 + i,
   outcomes: [
     { outcomeId: 120000 + i * 2, outcomeName: "Over" },
     { outcomeId: 120001 + i * 2, outcomeName: "Under" }
@@ -80,6 +80,30 @@ test("fails closed on incorrect sport, wrong period, unsupported names, handicap
   assert.equal(x.activePriceEntries, 2);
   assert.equal(x.families.find(p => p.family === "PRA").activePriceEntries, 2);
   assert.equal(x.distinctUnmappedMarketIds, 7);
+});
+
+test("only exact result permits full-game overtime mapping, never regulation or ambiguous periods", () => {
+  const template = definitions()[0];
+  const inputs = ["result", "fulltime", null, undefined, "p1", "p4+overtime",
+    "RESULT", " result ", 11, {}];
+  const rows = inputs.map((period, i) => {
+    const item = { ...template, marketId: 800001 + i, period };
+    if (period === undefined) delete item.period;
+    return item;
+  });
+  const markets = Object.fromEntries(rows.map(row => [String(row.marketId), market(0)]));
+  const result = auditOfficialLeagueProps(rows, [fixture(markets)], NOW);
+  assert.equal(result.catalogueEligibility.familyExact, inputs.length);
+  assert.equal(result.catalogueEligibility.periodAllowed, 1);
+  assert.equal(result.catalogueEligibility.halfPointLine, 1);
+  assert.equal(result.catalogueEligibility.overUnderPair, 1);
+  assert.equal(result.eligibleCatalogueMarketIds, 1);
+  assert.equal(result.matchedMarketObjects, 1);
+  assert.equal(result.activePriceEntries, 2);
+  assert.deepEqual(result.cataloguePeriod, {
+    missingOrNull: 2, exactFulltime: 1, exactResult: 1,
+    knownPartial: 2, otherString: 2, nonString: 2
+  });
 });
 
 test("requires exact outcomes, true active flags, named player, finite decimal prices and non-zero player ID", () => {
@@ -211,14 +235,14 @@ test("aggregate eligibility funnel identifies the first failed gate and late dup
   assert.equal(report.ambiguousCatalogueMarketIds, 1);
   assert.ok(Object.isFrozen(report.catalogueEligibility));
   assert.deepEqual(report.cataloguePeriod, {
-    missingOrNull: 0, exactFulltime: 3, exactResult: 0,
+    missingOrNull: 0, exactFulltime: 0, exactResult: 3,
     knownPartial: 0, otherString: 1, nonString: 0
   });
   assert.doesNotMatch(JSON.stringify(report.catalogueEligibility),
     /invalid-id|400007|private unsupported|marketName|handicap|outcomeId|price/i);
 });
 
-test("period buckets partition eligible NBA families without relaxing the existing gate", () => {
+test("period buckets partition NBA families while only exact result passes", () => {
   const template = definitions()[0];
   const inputs = [undefined, null, "fulltime", "result", "p1",
     "p3+p4+overtime", "private period sent by provider", 123, {}];
@@ -230,8 +254,8 @@ test("period buckets partition eligible NBA families without relaxing the existi
   });
   const report = auditOfficialLeagueProps(rows, [], NOW);
   assert.equal(report.catalogueEligibility.familyExact, 9);
-  assert.equal(report.catalogueEligibility.periodAllowed, 3);
-  assert.equal(report.eligibleCatalogueMarketIds, 3);
+  assert.equal(report.catalogueEligibility.periodAllowed, 1);
+  assert.equal(report.eligibleCatalogueMarketIds, 1);
   assert.deepEqual(report.cataloguePeriod, {
     missingOrNull: 2, exactFulltime: 1, exactResult: 1,
     knownPartial: 2, otherString: 1, nonString: 2
@@ -243,23 +267,23 @@ test("period buckets partition eligible NBA families without relaxing the existi
 
 test("eight exact families expose independent period, line and outcome readiness", () => {
   const rows = definitions().map((def, i) => ({ ...def }));
-  rows[0].period = "result"; // PTS: complete result-period definition, still rejected
+  rows[0].period = "result"; // PTS: complete result-period definition, accepted
   rows[1].period = "p1"; rows[1].outcomes = []; // REB: line only
   rows[2].period = "fulltime"; rows[2].handicap = 20; // AST: pair only
-  rows[3].period = null; // 3PT: accepted
+  rows[3].period = null; // 3PT: rejected as ambiguous
   rows[4].period = "secret-provider-period"; rows[4].handicap = 20;
   rows[4].outcomes = []; // PR: neither shape passes
-  delete rows[5].period; // PA: accepted
+  delete rows[5].period; // PA: rejected as ambiguous
   rows[6].period = "result"; rows[6].handicap = 20; // RA: pair only
-  rows[7].outcomes = []; // PRA: accepted period and line, no pair
+  rows[7].outcomes = []; // PRA: result period and valid line, no pair
   const report = auditOfficialLeagueProps(rows, [], NOW);
   assert.equal(report.catalogueEligibility.familyExact, 8);
-  assert.equal(report.catalogueEligibility.periodAllowed, 4);
-  assert.equal(report.catalogueEligibility.halfPointLine, 3);
-  assert.equal(report.catalogueEligibility.overUnderPair, 2);
-  assert.equal(report.eligibleCatalogueMarketIds, 2);
+  assert.equal(report.catalogueEligibility.periodAllowed, 3);
+  assert.equal(report.catalogueEligibility.halfPointLine, 2);
+  assert.equal(report.catalogueEligibility.overUnderPair, 1);
+  assert.equal(report.eligibleCatalogueMarketIds, 1);
   assert.deepEqual(report.cataloguePeriod, {
-    missingOrNull: 2, exactFulltime: 2, exactResult: 2,
+    missingOrNull: 2, exactFulltime: 1, exactResult: 3,
     knownPartial: 1, otherString: 1, nonString: 0
   });
   assert.deepEqual(Object.keys(report.catalogueFamilies),
@@ -272,7 +296,7 @@ test("eight exact families expose independent period, line and outcome readiness
     ["PR", "otherString", 0, 0, 0, 0],
     ["PA", "missingOrNull", 1, 1, 1, 0],
     ["RA", "exactResult", 0, 1, 0, 0],
-    ["PRA", "exactFulltime", 1, 0, 0, 0]
+    ["PRA", "exactResult", 1, 0, 0, 0]
   ];
   for (const [family, bucket, line, pair, both, resultBoth] of expected) {
     const counts = report.catalogueFamilies[family];

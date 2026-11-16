@@ -222,6 +222,20 @@ test("same production ESPN extractor differentiates explicit DNP, real zero and 
   assert.throws(() => extract(wrongTeam, makeEntry()), /box score unavailable/);
 });
 
+test("production ESPN Final overtime totals settle all eight full-game player markets", () => {
+  const extract = getProductionExtractor();
+  const summary = finalBoxscore([playedPlayer(["52:30", "30", "12", "9", "4-11"])]);
+  summary.header.competitions[0].status.type.name = "STATUS_FINAL_OT";
+  const totals = { PTS: 30, REB: 12, AST: 9, "3PT": 4,
+    PR: 42, PA: 39, RA: 21, PRA: 51 };
+  for (const [market, stat] of Object.entries(totals)) {
+    assert.deepEqual(extract(summary, makeEntry({ market, line: stat - 0.5, side: "Over" })),
+      { stat, won: true }, market + " Over");
+    assert.deepEqual(extract(summary, makeEntry({ market, line: stat + 0.5, side: "Under" })),
+      { stat, won: true }, market + " Under");
+  }
+});
+
 test("scheduled job marks only explicit DNPs void and excludes score; normal players still settle", async () => {
   const entries = [
     makeEntry({ athleteId: "11", market: "REB", line: 4.5, side: "Under" }),

@@ -35,7 +35,7 @@ function safePeriodCounts(value, eligibility) {
   }
   // Check both invariants against the sanitized 11-stage eligibility funnel.
   if (total !== eligibility.familyExact ||
-      safe.missingOrNull + safe.exactFulltime !== eligibility.periodAllowed) return null;
+      safe.exactResult !== eligibility.periodAllowed) return null;
   return Object.freeze(safe);
 }
 const FIXED_FAMILIES = Object.freeze(["PTS", "REB", "AST", "3PT", "PR", "PA", "RA", "PRA"]);
