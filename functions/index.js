@@ -686,6 +686,30 @@ const runNbaMarketAudit = makeLeagueMarketAuditRunner({
   // Official catalogue endpoint publishes a 1000ms cooldown. No retries.
   waitBetweenRequests: () => new Promise(resolve => setTimeout(resolve, 1200))
 });
+
+// D14 — preparation only. This flag is deliberately compile-time FALSE.
+// Never enable via client data or an environment/remote flag. A later
+// owner-approved change must explicitly review costs, trusted source
+// verification, Firestore IAM, live function inventory and rollback first.
+const NBA_PROVIDER_EVIDENCE_ENABLED = false;
+const { makeManualAuditEvidenceDispatch } =
+  require("./manual-audit-evidence-dispatch");
+const runNbaMarketAuditRouted = makeManualAuditEvidenceDispatch({
+  enabled: NBA_PROVIDER_EVIDENCE_ENABLED,
+  legacyRun: runNbaMarketAudit,
+  ownerUid: LEDGER_OWNER,
+  reserveDiagnosticRequests,
+  getProviderApiKey: () => oddsPapiKey.value(),
+  fetchImpl: (url, options) => fetch(url, options),
+  getFirestore,
+  // Match the existing manual audit's provider cooldown (1,200 ms).
+  waitBetweenRequests: () => new Promise(resolve => setTimeout(resolve, 1200)),
+  // All backend telemetry is fixed-enum only; never log raw provider data.
+  onFailure: ({ stage, reason }) =>
+    console.warn("NBA evidence audit safe failure", { stage, reason }),
+  onEvidenceOutcome: ({ status }) =>
+    console.info("NBA evidence audit safe outcome", { status })
+});
 exports.oddsPapiNbaMarketAudit = onCall(
   {
     region: "europe-west1", secrets: [oddsPapiKey],
@@ -699,7 +723,7 @@ exports.oddsPapiNbaMarketAudit = onCall(
     if (!oddsPapiKey.value())
       throw new HttpsError("failed-precondition", "Odds provider secret unavailable. No request made.");
     try {
-      return await runNbaMarketAudit(request);
+      return await runNbaMarketAuditRouted(request);
     } catch (error) {
       if (error instanceof HttpsError) throw error;
       if (error.code === "invalid-argument")
