@@ -44,12 +44,11 @@ function setup({ odds = [fixture()], callback = null, failFetch = false } = {}) 
       oddsCalls++; if (failFetch) throw Error("upstream blocked");
       return odds;
     },
-    onProviderEvidence: callback === null ? undefined : async batch => {
+    onProviderEvidence: callback === null ? null : async batch => {
       callbacks++; collected.push(batch);
       if (callback) await callback(batch);
     }
   });
-  // undefined is intentionally rejected; normal "off" test instead omits it.
   return { run, stats: () => ({ reserved, catalogueCalls, oddsCalls, callbacks }), collected };
 }
 
