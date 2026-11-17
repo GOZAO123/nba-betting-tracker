@@ -35,11 +35,13 @@ function identitiesEqual(a,b) {
 // reviewed for production. This module itself never calls any endpoint.
 function makeOfflineManualEvidenceAudit({
   ownerUid, reserve, fetchCatalogue, fetchOdds, db,
-  waitBetweenRequests=async()=>{}, onFailure=()=>{}, now=Date.now
+  waitBetweenRequests=async()=>{}, onFailure=()=>{}, now=Date.now,
+  onEvidenceOutcome=null
 }={}) {
   if (typeof ownerUid!=="string" || !ownerUid ||
       [reserve,fetchCatalogue,fetchOdds,waitBetweenRequests,onFailure,now]
-        .some(fn=>typeof fn!=="function"))
+        .some(fn=>typeof fn!=="function") ||
+      (onEvidenceOutcome!==null && typeof onEvidenceOutcome!=="function"))
     throw new TypeError("Missing trusted manual audit dependencies.");
 
   const tick=()=>{
@@ -124,7 +126,8 @@ function makeOfflineManualEvidenceAudit({
   };
   return makeLeagueMarketAuditRunner({
     ownerUid,reserve:safeReserve,fetchCatalogue,fetchOdds:trustedFetchOdds,
-    waitBetweenRequests,onFailure,now:tick,onProviderEvidence
+    waitBetweenRequests,onFailure,now:tick,onProviderEvidence,
+    onEvidenceOutcome
   });
 }
 module.exports={makeOfflineManualEvidenceAudit};
