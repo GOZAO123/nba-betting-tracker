@@ -62,8 +62,11 @@ function makeOfflineManualEvidenceAudit({
   });
   const safeReserve=async slots=>{
     // Clear any unused/failed evidence, never reuse a previous authorization.
-    if (reserving || fetching || active || permit ||
+    if (reserving || fetching || active ||
         ![1,2].includes(slots)) throw Error("Reservation unavailable");
+    // A previous audit could fail after reservation but before league fetch.
+    // Invalidate that unused permission before a NEW backend-reserved run.
+    permit=null;
     receipt=null;
     reserving=true;
     try {
