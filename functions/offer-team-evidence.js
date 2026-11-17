@@ -26,7 +26,7 @@ const espnKeys = ["schemaVersion","source","reference","capturedAt","eventId",
 const candidateKeys = ["schemaVersion","fixtureId","startTime","eventId","participantIds",
   "espnTeamIds","providerCapturedAt","espnCapturedAt","evidence","candidateDigest"];
 const historyKeys = ["schemaVersion","fixtureId","revision","action","reviewedAt",
-  "candidateDigest","reviewMethod","pairs"];
+  "candidateDigest","reviewMethod","reviewerReference","pairs"];
 
 function fingerprintProvider(x) {
   return digest([x.source,x.reference,x.capturedAt,x.fixtureId,x.startTime,...x.participantIds]);
@@ -152,8 +152,9 @@ function checkedHistory(rows,candidate,now) {
         row.fixtureId!==candidate.fixtureId || row.revision!==previous+1 ||
         row.candidateDigest!==candidate.candidateDigest ||
         row.reviewMethod!=="MANUAL_TWO_SOURCE_ID_REVIEW" ||
+        !ref(row.reviewerReference) ||
         !Number.isFinite(time(row.reviewedAt)) ||
-        time(row.reviewedAt)<previous || time(row.reviewedAt)>now ||
+        (previous>0 && time(row.reviewedAt)<=previous) || time(row.reviewedAt)>now ||
         time(row.reviewedAt)>=time(candidate.startTime)-5*MIN) return null;
     if (row.action==="APPROVE" && state==="PENDING_REVIEW") {
       pairs=checkedPairs(row.pairs,candidate);
@@ -196,7 +197,11 @@ function makeOfflineTeamReviewGate({authorize,loadCandidate,loadHistory,
     .every(fn=>typeof fn==="function")) throw new TypeError("Missing server adapters.");
   async function submit(auth,request) {
     // Authorization before any data load; no UID or evidence returned to clients.
-    if (await authorize(auth)!==true) return {status:"DENIED"};
+    let approval;
+    try { approval=await authorize(auth); } catch (_) { return {status:"DENIED"}; }
+    if (!exact(approval,["allowed","reviewerReference"]) ||
+        approval.allowed!==true || !ref(approval.reviewerReference))
+      return {status:"DENIED"};
     if (!obj(request) || !fixtureId(request.fixtureId) ||
         !Number.isSafeInteger(request.expectedRevision) ||
         request.expectedRevision<0 || request.expectedRevision>32 ||
@@ -224,7 +229,8 @@ function makeOfflineTeamReviewGate({authorize,loadCandidate,loadHistory,
     const event={schemaVersion:1,fixtureId:candidate.fixtureId,
       revision:state.revision+1,action:request.action,
       reviewedAt:new Date(tick).toISOString(),candidateDigest:candidate.candidateDigest,
-      reviewMethod:"MANUAL_TWO_SOURCE_ID_REVIEW",pairs};
+      reviewMethod:"MANUAL_TWO_SOURCE_ID_REVIEW",
+      reviewerReference:approval.reviewerReference,pairs};
     try {
       // Backend append MUST recheck revision and candidateDigest atomically.
       if (await appendDecision({fixtureId:candidate.fixtureId,
