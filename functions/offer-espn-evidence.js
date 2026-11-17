@@ -129,7 +129,8 @@ async function inspectWithServerEspnEvidence(input, dependencies) {
   try {
     bridge = checkedReviewedBridge(await dependencies.getReviewedTeamBridge(
       Object.freeze({fixtureId:fixture.fixtureId,
-        participant1Id:checked.participants[0],participant2Id:checked.participants[1]})
+        participant1Id:checked.participants[0],participant2Id:checked.participants[1],
+        startTime:fixture.startTime})
     ), checked.participants);
   } catch (_) { return fail("REVIEWED_TEAM_BRIDGE_UNAVAILABLE"); }
   if (!bridge) return fail("REVIEWED_TEAM_BRIDGE_UNAVAILABLE");
