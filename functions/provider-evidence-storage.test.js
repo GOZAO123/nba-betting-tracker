@@ -229,3 +229,20 @@ test("35.1D6 immutable snapshot cannot grant D3 approvals or auto-select odds",a
    "line","mainLine","captureAllowed","autoLineSelected"])
    assert.equal(Object.hasOwn(row,field),false);
 });
+
+test("35.1D6 Firestore map key reordering does not falsely reject exact replay",async()=>{
+ const m=mock(),b=batch();await m.store.storeBatch(b,m.token);
+ const key=[...m.docs.keys()][0],doc=m.docs.get(key);
+ doc.records[0]=Object.fromEntries(Object.entries(doc.records[0]).reverse());
+ assert.equal((await m.store.storeBatch(b,m.token)).status,"ALREADY_STORED");
+ assert.equal(m.stats().creates,1);
+});
+
+test("35.1D6 hostile malformed objects fail closed without reading storage",async()=>{
+ const m=mock();
+ const malformed=new Proxy({},{
+   ownKeys:()=>{throw Error("malicious getter");}
+ });
+ assert.equal((await m.store.storeBatch(malformed,m.token)).status,"INVALID_BATCH");
+ assert.equal(m.stats().transactionCalls,0);
+});
