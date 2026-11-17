@@ -209,3 +209,19 @@ test("35.1D4 offline-only; never import from production index or perform network
   assert.doesNotMatch(index,/require\(["']\.\/offer-team-evidence["']\)/);
   assert.doesNotMatch(source,/https:\/\/|getFirestore\(|onCall\(|fetch\(|apiKey|setInterval\(/);
 });
+
+test("35.1D4 source references are opaque and sources must remain independent",()=>{
+  assert.equal(captureProviderFixture(fixture(),{
+    reference:"https://api.oddspapi.io/v4",capturedAt:iso(-5)}),null);
+  const p=evidence().p;
+  const e=captureEspnEvent(scoreboard(),iso(180),{
+    reference:providerMeta().reference,capturedAt:iso(-4)});
+  assert.ok(e);
+  assert.equal(makePendingTeamCandidate(p,e,NOW),null);
+});
+test("35.1D4 forged review before source observation fails closed",async()=>{
+  const j=journal();await j.approve();
+  j.getHistory()[0].reviewedAt=iso(-10);
+  assert.equal(await j.gate.resolve(j.query()),null);
+  assert.deepEqual(await j.revoke(),{status:"REVIEW_HISTORY_INVALID"});
+});
