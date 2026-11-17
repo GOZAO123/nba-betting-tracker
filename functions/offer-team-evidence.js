@@ -14,8 +14,9 @@ const exact = (o, ks) => obj(o) &&
 const time = x => typeof x === "string" &&
   /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?(?:Z|[+-]\d\d:\d\d)$/.test(x) &&
   Number.isFinite(Date.parse(x)) ? Date.parse(x) : NaN;
+// References are opaque server-generated IDs, never URLs or query strings.
 const ref = x => typeof x === "string" &&
-  /^[A-Za-z0-9._:/-]{6,160}$/.test(x) ? x : null;
+  /^[A-Z][A-Z0-9_-]{5,95}$/.test(x) ? x : null;
 const digest = value => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 const SOURCE_P = "ODDSPAPI_V4_ODDS_BY_TOURNAMENTS";
 const SOURCE_E = "ESPN_NBA_SCOREBOARD";
@@ -78,7 +79,7 @@ function validEvidencePair(p,e,now) {
   if (!exact(p,evidenceKeys) || !exact(e,espnKeys) ||
       p.schemaVersion!==1 || e.schemaVersion!==1 ||
       p.source!==SOURCE_P || e.source!==SOURCE_E ||
-      !ref(p.reference) || !ref(e.reference) ||
+      !ref(p.reference) || !ref(e.reference) || p.reference===e.reference ||
       !fixtureId(p.fixtureId) || !id(e.eventId) ||
       !Array.isArray(p.participantIds) || p.participantIds.length!==2 ||
       !id(p.participantIds[0]) || !id(p.participantIds[1]) ||
@@ -155,6 +156,8 @@ function checkedHistory(rows,candidate,now) {
         !ref(row.reviewerReference) ||
         !Number.isFinite(time(row.reviewedAt)) ||
         (previousAt>0 && time(row.reviewedAt)<=previousAt) || time(row.reviewedAt)>now ||
+        time(row.reviewedAt)<Math.max(time(candidate.providerCapturedAt),
+          time(candidate.espnCapturedAt)) ||
         time(row.reviewedAt)>=time(candidate.startTime)-5*MIN) return null;
     if (row.action==="APPROVE" && state==="PENDING_REVIEW") {
       pairs=checkedPairs(row.pairs,candidate);
