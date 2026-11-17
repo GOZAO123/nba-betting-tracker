@@ -4,6 +4,12 @@
 // No Firebase, credentials, HTTP, timers or scheduled work is performed here.
 const { auditOfficialLeagueProps } = require("./league-market-audit");
 const { extractManualProviderIdentityBatch } = require("./provider-evidence-acquisition");
+
+// Backend-only, allowlisted operational result signals for an already-authorized
+// MANUAL fetch. Never log or return provider IDs, prices or raw errors.
+const EVIDENCE_STORE_STATUSES = Object.freeze([
+  "STORED", "ALREADY_STORED", "CONFLICT", "DENIED", "INVALID_BATCH", "UNAVAILABLE"
+]);
 const CATALOGUE_TTL_MS = 12 * 60 * 60 * 1000;
 const SNAPSHOT_TTL_MS = 15 * 60 * 1000;
 
@@ -148,13 +154,16 @@ function safeAuditFailure(stage, error, eligibilityCounts = null, periodCounts =
 
 function makeLeagueMarketAuditRunner({
   ownerUid, reserve, fetchCatalogue, fetchOdds, waitBetweenRequests = async () => {},
-  now = Date.now, onFailure = () => {}, onProviderEvidence = null
+  now = Date.now, onFailure = () => {}, onProviderEvidence = null,
+  onEvidenceOutcome = null
 }) {
   if (!ownerUid || typeof reserve !== "function" ||
       typeof fetchCatalogue !== "function" || typeof fetchOdds !== "function" ||
       typeof waitBetweenRequests !== "function" || typeof now !== "function" ||
       typeof onFailure !== "function" ||
-      (onProviderEvidence !== null && typeof onProviderEvidence !== "function")) {
+      (onProviderEvidence !== null && typeof onProviderEvidence !== "function") ||
+      (onEvidenceOutcome !== null && typeof onEvidenceOutcome !== "function") ||
+      (onEvidenceOutcome !== null && onProviderEvidence === null)) {
     throw new Error("Missing league market audit dependencies.");
   }
   let catalogue = null, catalogueAt = 0;
@@ -232,10 +241,32 @@ function makeLeagueMarketAuditRunner({
         // retry a paid endpoint, or fail the existing aggregate audit on a
         // separate evidence-extraction/storage error.
         if (onProviderEvidence) {
+          let outcome = "EXTRACTION_FAILED";
           try {
             const batch = extractManualProviderIdentityBatch(odds, data.receivedAt);
-            if (batch?.acceptedFixtures > 0) await onProviderEvidence(batch);
-          } catch (_) { /* optional extraction/recording fails closed */ }
+            if (!batch || batch.acceptedFixtures === 0) {
+              // Includes incomplete provider shape, duplicate IDs and bounds:
+              // deliberately avoid publishing fixture-level rejection reasons.
+              outcome = "NO_STORABLE_EVIDENCE";
+            } else {
+              try {
+                const result = await onProviderEvidence(batch);
+                const status = result?.status;
+                outcome = EVIDENCE_STORE_STATUSES.includes(status) &&
+                  result && typeof result === "object" &&
+                  !Array.isArray(result) &&
+                  Object.keys(result).length === 1
+                  ? status : "SINK_RESULT_INVALID";
+              } catch (_) { outcome = "SINK_EXCEPTION"; }
+            }
+          } catch (_) { /* Never let identity extraction affect the audit */ }
+          if (onEvidenceOutcome) {
+            try {
+              // Only one fixed status reaches a trusted backend callback.
+              // No network, logging, persistent write or return to UI.
+              await onEvidenceOutcome(Object.freeze({status:outcome}));
+            } catch (_) { /* monitoring must not retry the paid fetch */ }
+          }
         }
         snapshot = data;
         snapshotAt = now();
