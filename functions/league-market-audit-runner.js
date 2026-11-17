@@ -3,6 +3,7 @@
 // Manual-only audit orchestration; all effects are injected and tested offline.
 // No Firebase, credentials, HTTP, timers or scheduled work is performed here.
 const { auditOfficialLeagueProps } = require("./league-market-audit");
+const { extractManualProviderIdentityBatch } = require("./provider-evidence-acquisition");
 const CATALOGUE_TTL_MS = 12 * 60 * 60 * 1000;
 const SNAPSHOT_TTL_MS = 15 * 60 * 1000;
 
@@ -147,12 +148,13 @@ function safeAuditFailure(stage, error, eligibilityCounts = null, periodCounts =
 
 function makeLeagueMarketAuditRunner({
   ownerUid, reserve, fetchCatalogue, fetchOdds, waitBetweenRequests = async () => {},
-  now = Date.now, onFailure = () => {}
+  now = Date.now, onFailure = () => {}, onProviderEvidence = null
 }) {
   if (!ownerUid || typeof reserve !== "function" ||
       typeof fetchCatalogue !== "function" || typeof fetchOdds !== "function" ||
       typeof waitBetweenRequests !== "function" || typeof now !== "function" ||
-      typeof onFailure !== "function") {
+      typeof onFailure !== "function" ||
+      (onProviderEvidence !== null && typeof onProviderEvidence !== "function")) {
     throw new Error("Missing league market audit dependencies.");
   }
   let catalogue = null, catalogueAt = 0;
@@ -223,6 +225,18 @@ function makeLeagueMarketAuditRunner({
           catalogueCached: catalogueValid,
           requestsUsedOnThisClick: used
         };
+        // Optional future backend-only evidence sink: reuse the league payload
+        // that this MANUAL invocation already fetched. The shipped production
+        // caller supplies no sink, so no evidence is persisted today.
+        // Never send raw odds/players to the sink, return IDs to the browser,
+        // retry a paid endpoint, or fail the existing aggregate audit on a
+        // separate evidence-extraction/storage error.
+        if (onProviderEvidence) {
+          try {
+            const batch = extractManualProviderIdentityBatch(odds, data.receivedAt);
+            if (batch?.acceptedFixtures > 0) await onProviderEvidence(batch);
+          } catch (_) { /* optional extraction/recording fails closed */ }
+        }
         snapshot = data;
         snapshotAt = now();
         return data;
