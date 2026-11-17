@@ -8,7 +8,7 @@ const { inspectOfflineNbaOffers } = require("./offer-matching");
 
 const DAY_MS = 86400000, MIN_MS = 60000;
 const HORIZON_MS = 72 * 60 * MIN_MS, START_TOLERANCE_MS = 5 * MIN_MS;
-const MAX_EVENTS = 40, MAX_ROSTER = 30;
+const MAX_EVENTS = 40, MAX_ROSTER = 30, MAX_MARKETS = 18000, MAX_CATALOGUE = 250000;
 const id = x => (typeof x === "string" || typeof x === "number") &&
   /^[1-9][0-9]{0,15}$/.test(String(x)) ? String(x) : null;
 const object = x => x !== null && typeof x === "object" && !Array.isArray(x);
@@ -43,7 +43,7 @@ function checkedProviderFixture(fixture, now) {
   if (!Number.isFinite(start) || start <= now + 5 * MIN_MS ||
       start > now + HORIZON_MS || !object(book) ||
       book.bookmakerIsActive !== true || book.suspended === true ||
-      !object(book.markets)) return null;
+      !object(book.markets) || Object.keys(book.markets).length > MAX_MARKETS) return null;
   return { start, participants: [id(fixture.participant1Id), id(fixture.participant2Id)] };
 }
 function checkedReviewedBridge(bridge, participants) {
@@ -121,6 +121,10 @@ async function inspectWithServerEspnEvidence(input, dependencies) {
   const now = dependencies.now, fixture = input.fixture;
   const checked = checkedProviderFixture(fixture, now);
   if (!checked || !id(input.providerPlayerId)) return fail("INVALID_PROVIDER_FIXTURE");
+  const definitions = Array.isArray(input.catalogue) ? input.catalogue :
+    Array.isArray(input.catalogue?.data) ? input.catalogue.data : null;
+  if (!definitions || definitions.length > MAX_CATALOGUE)
+    return fail("INVALID_PROVIDER_CATALOGUE");
   let bridge;
   try {
     bridge = checkedReviewedBridge(await dependencies.getReviewedTeamBridge(

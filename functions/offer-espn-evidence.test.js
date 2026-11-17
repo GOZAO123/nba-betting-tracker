@@ -97,6 +97,16 @@ test("35.1D2 invalid provider fixture and inactive bookmaker cause zero ESPN req
   assert.equal(out.status,"INVALID_PROVIDER_FIXTURE");assert.equal(h.reads.length,0);
  }
 });
+test("35.1D2 oversized markets and malformed catalogue are rejected before ESPN reads",async()=>{
+ const badCatalogue=harness({input:{catalogue:{bad:"private"}}});
+ assert.equal((await badCatalogue.run()).status,"INVALID_PROVIDER_CATALOGUE");
+ assert.equal(badCatalogue.reads.length,0);
+ const tooMany=harness();
+ tooMany.input.fixture.bookmakerOdds["betano.pt"].markets=
+  Object.fromEntries(Array.from({length:18001},(_,i)=>[String(100000+i),{}]));
+ assert.equal((await tooMany.run()).status,"INVALID_PROVIDER_FIXTURE");
+ assert.equal(tooMany.reads.length,0);
+});
 test("35.1D2 reviewed bridge must be complete, one-to-one and server-owned",async()=>{
  const wrong=[
   [{providerParticipantId:5001,espnTeamId:1001}],
@@ -224,8 +234,6 @@ test("35.1D2 validated ESPN evidence still never guesses an unflagged main line"
 test("35.1D2 Lisbon midnight maps to prior New York NBA calendar day",async()=>{
  const h=harness(),start=Date.parse("2026-11-17T00:30:00.000Z");
  h.input.fixture.startTime=new Date(start).toISOString();
- h.dependencies.now=start-4*60*MINUTE();
- function MINUTE(){return 60000;}
  const event=game({date:new Date(start).toISOString(),
   competitions:[{date:new Date(start).toISOString(),competitors:game().competitions[0].competitors}]});
  h.dependencies.fetchEspn=async path=>{
