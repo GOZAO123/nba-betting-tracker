@@ -48,9 +48,13 @@ function harness(overrides={}) {
  const reads=[];
  const d=def(),input={catalogue:[d],fixture:fixture([d]),providerPlayerId:PLAYER};
  const dependencies={
-  now:NOW, getReviewedTeamBridge:async()=>[
-   {providerParticipantId:"5001",espnTeamId:"1001"},
-   {providerParticipantId:"5002",espnTeamId:"1002"}],
+  now:NOW, getReviewedTeamBridge:async()=>({
+   espnEventId:"40101010",
+   teamBridge:[
+    {providerParticipantId:"5001",espnTeamId:"1001"},
+    {providerParticipantId:"5002",espnTeamId:"1002"}
+   ]
+  }),
   fetchEspn:async path=>{
    reads.push(path);
    if(path.startsWith("scoreboard?"))return {events:[game()]};
