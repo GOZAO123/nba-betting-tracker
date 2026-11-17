@@ -34,9 +34,17 @@ function offlineEvidenceReleasePreflight(files) {
   // Source text is only evidence about this CHECKED-OUT revision. It is not
   // proof of what functions are actually deployed, which account is billed,
   // IAM roles, or what the live provider response contains.
+  const reserveStart=production.indexOf("async function reserveDiagnosticRequests(");
+  const reserveEnd=reserveStart>=0 ?
+    production.indexOf("exports.oddsBackendStatus",reserveStart) : -1;
+  const reservationBody=reserveStart>=0 && reserveEnd>reserveStart ?
+    production.slice(reserveStart,reserveEnd) : "";
+  // A transaction elsewhere (e.g. a ledger write) must NEVER be mistaken
+  // for the transactional daily paid-request reservation itself.
   if (!has(production,/const\s+ODDSPAPI_REQUESTS_PER_UTC_DAY\s*=\s*6\s*;/) ||
-      !has(production,/async\s+function\s+reserveDiagnosticRequests\s*\(/) ||
-      !has(production,/db\.runTransaction\s*\(/) ||
+      !reservationBody ||
+      !has(reservationBody,/db\.runTransaction\s*\(/) ||
+      !has(reservationBody,/reserved\s*\+\s*amount\s*>\s*ODDSPAPI_REQUESTS_PER_UTC_DAY/) ||
       !has(production,/await\s+reserveDiagnosticRequests\s*\(/))
     add("SIX_REQUEST_BACKEND_GUARD_NOT_VERIFIED");
 
