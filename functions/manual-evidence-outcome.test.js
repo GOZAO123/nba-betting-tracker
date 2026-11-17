@@ -26,9 +26,11 @@ const fixture=(change={})=>({
         price:1.87,changedAt:iso(-2)}}}}}}}},...change
 });
 
-function offlineRunner({odds=[fixture()],result={status:"STORED"},
-  sinkThrows=false,monitorThrows=false,failedBudget=false,
-  failedCatalogue=false,failedOdds=false,withMonitor=true}={}){
+function offlineRunner(options={}){
+  const {odds=[fixture()],sinkThrows=false,monitorThrows=false,
+    failedBudget=false,failedCatalogue=false,failedOdds=false,
+    withMonitor=true}=options;
+  const result=Object.hasOwn(options,"result") ? options.result : {status:"STORED"};
   const seen=[];
   let requests=0, reserves=0, oddsCalls=0, sinkCalls=0;
   const run=makeLeagueMarketAuditRunner({
