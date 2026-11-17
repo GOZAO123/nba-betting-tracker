@@ -258,6 +258,10 @@ test("D10 D8 integration exposes one safe NO_STORABLE_EVIDENCE on missing IDs",a
 test("D10 never activates or exports production evidence monitoring or polling",()=>{
  const production=fs.readFileSync(path.join(__dirname,"index.js"),"utf8");
  const source=fs.readFileSync(path.join(__dirname,"league-market-audit-runner.js"),"utf8");
- assert.doesNotMatch(production,/onEvidenceOutcome|manual-evidence-outcome/);
+ // The D14 production router may configure fixed-enum monitoring adapters,
+ // but its hard-coded false switch keeps the live evidence sink inert.
+ assert.match(production,/const NBA_PROVIDER_EVIDENCE_ENABLED = false;/);
+ assert.match(production,/enabled:\s*NBA_PROVIDER_EVIDENCE_ENABLED/);
+ assert.doesNotMatch(production,/require\(["']\.\/manual-evidence-outcome/);
  assert.doesNotMatch(source,/onSchedule\(|setInterval\(|https:\/\/api\.oddspapi\.io/);
 });

@@ -60,7 +60,23 @@ function offlineEvidenceReleasePreflight(files) {
       !has(integration,/makeOfflineFixedOriginOddsPapiTransport\s*\(/))
     add("INTEGRATION_DEFAULT_OFF_NOT_VERIFIED");
 
-  if (has(production,/require\s*\(\s*["']\.\/manual-evidence-integration["']\s*\)/) ||
+  // D14 puts the future evidence path behind a LITERAL backend false switch.
+  // A partial/renamed/true switch is an extra blocker, not a release approval.
+  const dispatchMention=has(production,
+    /manual-audit-evidence-dispatch|makeManualAuditEvidenceDispatch|runNbaMarketAuditRouted/);
+  const hasDispatchImport=has(production,
+    /require\s*\(\s*["']\.\/manual-audit-evidence-dispatch["']\s*\)/);
+  const fullDisabledDispatch=hasDispatchImport &&
+    has(production,/makeManualAuditEvidenceDispatch\s*\(/) &&
+    has(production,/const\s+NBA_PROVIDER_EVIDENCE_ENABLED\s*=\s*false\s*;/) &&
+    has(production,/enabled:\s*NBA_PROVIDER_EVIDENCE_ENABLED/) &&
+    has(production,/legacyRun:\s*runNbaMarketAudit/) &&
+    has(production,/return await runNbaMarketAuditRouted\(request\)/);
+  if (dispatchMention && !fullDisabledDispatch)
+    add("PRODUCTION_EVIDENCE_DISABLED_GATE_NOT_VERIFIED");
+
+  if (dispatchMention ||
+      has(production,/require\s*\(\s*["']\.\/manual-evidence-integration["']\s*\)/) ||
       has(production,/makeOfflineManualEvidenceIntegration\s*\(/))
     add("PRODUCTION_INTEGRATION_REQUIRES_SEPARATE_REVIEW");
   else
