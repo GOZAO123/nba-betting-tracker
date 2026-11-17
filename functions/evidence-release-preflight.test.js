@@ -18,7 +18,7 @@ test("D12 current checkout blocked with only unresolved readiness gates",()=>{
  assert.equal(r.status,"BLOCKED");assert.equal(r.releaseReady,false);
  assert.equal(Object.isFrozen(r),true);assert.equal(Object.isFrozen(r.blockers),true);
  assert.deepEqual(new Set(r.blockers),new Set([
-  "PRODUCTION_EVIDENCE_INTEGRATION_NOT_WIRED",
+  "PRODUCTION_INTEGRATION_REQUIRES_SEPARATE_REVIEW",
   "REVIEWED_TEAM_CROSSWALK_EMPTY",
   "LIVE_PROVIDER_SCHEMA_UNVERIFIED",
   "INDEPENDENT_ESPN_TEAM_EVIDENCE_UNVERIFIED",
@@ -113,4 +113,29 @@ test("D12 safety preflight cannot import or invoke live production providers",()
  const s=fs.readFileSync(path.join(__dirname,"evidence-release-preflight.js"),"utf8");
  assert.doesNotMatch(s,/require\(["']\.\/index|onCall\(|onSchedule\(|setInterval\(|https:\/\/api\.oddspapi/);
  assert.doesNotMatch(s,/firebase-admin|firebase-functions/);
+});
+
+test("D14 preflight recognizes literal false and does not mark gate unsafe",()=>{
+ const codes=report().blockers;
+ assert.ok(codes.includes("PRODUCTION_INTEGRATION_REQUIRES_SEPARATE_REVIEW"));
+ assert.ok(!codes.includes("PRODUCTION_EVIDENCE_DISABLED_GATE_NOT_VERIFIED"));
+ assert.equal(report().releaseReady,false);
+});
+test("D14 preflight blocks switch changed from false to true",()=>{
+ const s=input();
+ s.production=s.production.replace("NBA_PROVIDER_EVIDENCE_ENABLED = false",
+   "NBA_PROVIDER_EVIDENCE_ENABLED = true");
+ const codes=report(s).blockers;
+ assert.ok(codes.includes("PRODUCTION_EVIDENCE_DISABLED_GATE_NOT_VERIFIED"));
+ assert.ok(codes.includes("OWNER_DEPLOYMENT_APPROVAL_REQUIRED"));
+});
+test("D14 preflight detects missing legacy fallback or altered callable routing",()=>{
+ for(const [from,to] of [
+  ["legacyRun: runNbaMarketAudit","legacyRun: unrelatedAudit"],
+  ["return await runNbaMarketAuditRouted(request)","return await unrelatedAudit(request)"],
+  ['require("./manual-audit-evidence-dispatch")','require("./missing-gate")']
+ ]){
+  const s=input();s.production=s.production.replace(from,to);
+  assert.ok(report(s).blockers.includes("PRODUCTION_EVIDENCE_DISABLED_GATE_NOT_VERIFIED"));
+ }
 });
