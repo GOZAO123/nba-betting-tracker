@@ -100,7 +100,21 @@ function sameStoredSnapshot(previous, next) {
       previous.acceptedFixtures!==next.acceptedFixtures ||
       previous.rejectedFixtures!==next.rejectedFixtures ||
       previous.digest!==next.digest) return false;
-  return JSON.stringify(previous.records)===JSON.stringify(next.records);
+  // Firestore may reorder map keys when reading a stored document. Compare
+  // exact allowlisted values by position, not object serialization order.
+  if (!Array.isArray(previous.records) ||
+      previous.records.length!==next.records.length) return false;
+  return previous.records.every((row,i)=>{
+    const target=next.records[i];
+    return exact(row,RECORD_KEYS) &&
+      row.schemaVersion===target.schemaVersion &&
+      row.source===target.source && row.reference===target.reference &&
+      row.capturedAt===target.capturedAt && row.fixtureId===target.fixtureId &&
+      row.startTime===target.startTime && row.digest===target.digest &&
+      Array.isArray(row.participantIds) && row.participantIds.length===2 &&
+      row.participantIds[0]===target.participantIds[0] &&
+      row.participantIds[1]===target.participantIds[1];
+  });
 }
 
 // runTransaction(callback) must be an authenticated backend-owned Firestore
@@ -118,7 +132,9 @@ function makeOfflineProviderEvidenceStore({
   async function storeBatch(batch, receipt) {
     let tick;
     try { tick=now(); } catch (_) { return Object.freeze({status:"UNAVAILABLE"}); }
-    const record=normalizeBatch(batch,tick);
+    let record;
+    try { record=normalizeBatch(batch,tick); }
+    catch (_) { return Object.freeze({status:"INVALID_BATCH"}); }
     if (!record) return Object.freeze({status:"INVALID_BATCH"});
     let trusted=false;
     try {
