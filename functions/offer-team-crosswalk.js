@@ -79,7 +79,10 @@ function makeReviewedTeamBridgeResolver(records,clock=Date.now) {
     if (!Number.isSafeInteger(now) || now<record.reviewed ||
         now>record.until || now-record.reviewed>MAX_REVIEW_AGE_MS ||
         now>=record.start-5*60000) return null;
-    return record.pairs.map(pair=>Object.freeze({...pair}));
+    return Object.freeze({
+      espnEventId: record.eventId,
+      teamBridge: Object.freeze(record.pairs.map(pair=>Object.freeze({...pair})))
+    });
   };
 }
 

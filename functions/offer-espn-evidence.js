@@ -125,13 +125,20 @@ async function inspectWithServerEspnEvidence(input, dependencies) {
     Array.isArray(input.catalogue?.data) ? input.catalogue.data : null;
   if (!definitions || definitions.length > MAX_CATALOGUE)
     return fail("INVALID_PROVIDER_CATALOGUE");
-  let bridge;
+  let bridge, reviewedEventId;
   try {
-    bridge = checkedReviewedBridge(await dependencies.getReviewedTeamBridge(
+    const reviewed = await dependencies.getReviewedTeamBridge(
       Object.freeze({fixtureId:fixture.fixtureId,
         participant1Id:checked.participants[0],participant2Id:checked.participants[1],
         startTime:fixture.startTime})
-    ), checked.participants);
+    );
+    // A plain team-array is not sufficient: pin the reviewed ESPN event ID.
+    if (object(reviewed) &&
+        Object.keys(reviewed).sort().join("|") === "espnEventId|teamBridge") {
+      reviewedEventId = id(reviewed.espnEventId);
+      bridge = reviewedEventId &&
+        checkedReviewedBridge(reviewed.teamBridge, checked.participants);
+    }
   } catch (_) { return fail("REVIEWED_TEAM_BRIDGE_UNAVAILABLE"); }
   if (!bridge) return fail("REVIEWED_TEAM_BRIDGE_UNAVAILABLE");
 
@@ -143,7 +150,8 @@ async function inspectWithServerEspnEvidence(input, dependencies) {
       nbaScoreboardDay(checked.start));
   } catch (_) { return fail("ESPN_SCOREBOARD_UNAVAILABLE"); }
   const game = findUniqueScheduledEspnGame(scoreboard, checked.start, bridge);
-  if (!game) return fail("ESPN_EVENT_NOT_UNIQUELY_VERIFIED");
+  if (!game || game.eventId !== reviewedEventId)
+    return fail("ESPN_EVENT_NOT_UNIQUELY_VERIFIED");
 
   // Strictly sequential and bounded: at most one scoreboard + two roster reads.
   // On a broken/ambiguous first roster, never request the second roster.
