@@ -29,7 +29,7 @@ test("35.1D3 exact reviewed fixture, participants, kickoff return only ID pairs"
  assert.deepEqual(pairs.teamBridge,[{providerParticipantId:"5001",espnTeamId:"1001"},
   {providerParticipantId:"5002",espnTeamId:"1002"}]);
  assert.equal(pairs.espnEventId,"40101010");
- assert.doesNotMatch(JSON.stringify(pairs),/REVIEW_001|40101010|price|bookmaker/);
+ assert.doesNotMatch(JSON.stringify(pairs),/REVIEW_001|price|bookmaker/);
 });
 test("35.1D3 reverse participant order still requires the exact two IDs",()=>{
  const pairs=make()(query({participant1Id:"5002",participant2Id:"5001"}));
