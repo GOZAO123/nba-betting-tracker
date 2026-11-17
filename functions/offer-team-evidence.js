@@ -146,15 +146,15 @@ function checkedPairs(pairs,candidate) {
 }
 function checkedHistory(rows,candidate,now) {
   if (!Array.isArray(rows) || rows.length>32) return null;
-  let previous=0,state="PENDING_REVIEW",pairs=null;
+  let previousAt=0,revision=0,state="PENDING_REVIEW",pairs=null;
   for (const row of rows) {
     if (!exact(row,historyKeys) || row.schemaVersion!==1 ||
-        row.fixtureId!==candidate.fixtureId || row.revision!==previous+1 ||
+        row.fixtureId!==candidate.fixtureId || row.revision!==revision+1 ||
         row.candidateDigest!==candidate.candidateDigest ||
         row.reviewMethod!=="MANUAL_TWO_SOURCE_ID_REVIEW" ||
         !ref(row.reviewerReference) ||
         !Number.isFinite(time(row.reviewedAt)) ||
-        (previous>0 && time(row.reviewedAt)<=previous) || time(row.reviewedAt)>now ||
+        (previousAt>0 && time(row.reviewedAt)<=previousAt) || time(row.reviewedAt)>now ||
         time(row.reviewedAt)>=time(candidate.startTime)-5*MIN) return null;
     if (row.action==="APPROVE" && state==="PENDING_REVIEW") {
       pairs=checkedPairs(row.pairs,candidate);
@@ -165,7 +165,8 @@ function checkedHistory(rows,candidate,now) {
     else if (row.action==="REVOKE" && state==="APPROVED" &&
              row.pairs===null) state="REVOKED";
     else return null;
-    previous=time(row.reviewedAt);
+    previousAt=time(row.reviewedAt);
+    revision++;
   }
   return {state,pairs,revision:rows.length,approvedEvent:rows.find(r=>r.action==="APPROVE")||null};
 }
