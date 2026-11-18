@@ -86,6 +86,8 @@ function makeOfflineManualIdentityShapeProbe({
         rejectedFixtures: shape.rejectedFixtures,
         reasonCounts: shape.reasonCounts,
         teamMappingApproved: false,
+        identityVerified: false,
+        releaseReady: false,
         bookmakerOddsVerified: false,
         researchSaved: false
       });
