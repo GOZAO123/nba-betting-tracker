@@ -696,6 +696,9 @@ const { makeManualAuditEvidenceDispatch } =
   require("./manual-audit-evidence-dispatch");
 const runNbaMarketAuditRouted = makeManualAuditEvidenceDispatch({
   enabled: NBA_PROVIDER_EVIDENCE_ENABLED,
+  // D15 future owner-approved ONE-REQUEST identity-shape diagnosis only;
+  // inert while the compile-time evidence flag above remains FALSE.
+  identityOnly: true,
   legacyRun: runNbaMarketAudit,
   ownerUid: LEDGER_OWNER,
   reserveDiagnosticRequests,
