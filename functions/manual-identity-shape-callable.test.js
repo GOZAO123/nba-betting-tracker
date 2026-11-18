@@ -207,3 +207,25 @@ test("D15.1 source guards the named callable independently of legacy audit",()=>
   "manual-identity-shape-callable.js"),"utf8");
  assert.doesNotMatch(helper,/firebase-admin|firebase-functions|https:\/\/|onSchedule\(|setInterval\(|getFirestore|runTransaction/);
 });
+
+test("D15.1 shared six-slot UTC-day ceiling blocks seventh fresh invocation",async()=>{
+ const x=create({enabled:true,budget:6});
+ for(let i=0;i<6;i++){await x.invoke(OWNER);x.advance(16);}
+ await assert.rejects(x.invoke(OWNER),errorCode("unavailable"));
+ assert.deepEqual(x.effects.reserved,[1,1,1,1,1,1,1]);
+ assert.equal(x.effects.http.length,6);
+ assert.equal(x.slots(),6);
+ assert.equal(x.effects.firestore,0);
+});
+test("D15.1 production evidence release preflight remains intentionally BLOCKED",()=>{
+ const {spawnSync}=require("node:child_process");
+ const check=spawnSync(process.execPath,
+  [path.join(__dirname,"evidence-release-preflight.js")],{encoding:"utf8"});
+ assert.equal(check.status,2,check.stderr);
+ const report=JSON.parse(check.stdout);
+ assert.equal(report.status,"BLOCKED");
+ assert.equal(report.releaseReady,false);
+ assert.ok(report.blockers.includes("OWNER_DEPLOYMENT_APPROVAL_REQUIRED"));
+ assert.ok(report.blockers.includes("OWNER_PROVIDER_REQUEST_APPROVAL_REQUIRED"));
+ assert.ok(report.blockers.includes("LIVE_PROVIDER_SCHEMA_UNVERIFIED"));
+});
