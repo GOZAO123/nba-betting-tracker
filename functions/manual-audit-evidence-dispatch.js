@@ -10,7 +10,7 @@
 const CONFIG_KEYS = Object.freeze([
   "enabled", "legacyRun", "ownerUid", "reserveDiagnosticRequests",
   "getProviderApiKey", "fetchImpl", "getFirestore", "waitBetweenRequests",
-  "onFailure", "onEvidenceOutcome", "now", "makeSignal"
+  "onFailure", "onEvidenceOutcome", "now", "makeSignal", "identityOnly"
 ]);
 const isObject=x=>x!==null && typeof x==="object" && !Array.isArray(x);
 
@@ -18,6 +18,7 @@ function makeManualAuditEvidenceDispatch(config={}) {
   if (!isObject(config) ||
       Object.keys(config).some(k=>!CONFIG_KEYS.includes(k)) ||
       (config.enabled!==undefined && typeof config.enabled!=="boolean") ||
+      (config.identityOnly!==undefined && typeof config.identityOnly!=="boolean") ||
       typeof config.legacyRun!=="function") {
     throw new TypeError("Invalid trusted evidence dispatch configuration.");
   }
