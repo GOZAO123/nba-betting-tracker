@@ -162,3 +162,96 @@ test("D15 source has no scheduler, Firebase admin, direct HTTP or Firestore",()=
     "manual-identity-shape-probe.js"),"utf8");
   assert.doesNotMatch(source,/firebase-admin|firebase-functions|onSchedule\(|setInterval\(|https:\/\/|getFirestore|setDoc\(/);
 });
+
+const { makeManualAuditEvidenceDispatch } =
+  require("./manual-audit-evidence-dispatch");
+function routedDiagnostic({denyBudget=false,throwFetch=false}={}) {
+  const counts={reserved:[],http:[],secretReads:0,dbReads:0,legacy:0};
+  const raw=[fixture()];
+  const config={
+    enabled:true,identityOnly:true,
+    legacyRun:async()=>{counts.legacy++;return {legacy:true};},
+    ownerUid:"synthetic-owner",now:()=>BASE,
+    reserveDiagnosticRequests:async n=>{
+      counts.reserved.push(n);
+      if(denyBudget)throw Error("SENSITIVE_QUOTA_ERROR");
+    },
+    getProviderApiKey:()=>{counts.secretReads++;return "SYNTHETIC_D15_KEY";},
+    fetchImpl:async (url,options)=>{
+      counts.http.push({url,options});
+      if(throwFetch)throw Error("PRIVATE_HTTP_FAILURE");
+      const bytes=new TextEncoder().encode(JSON.stringify(raw));
+      return {ok:true,redirected:false,url,
+        headers:{get:name=>name==="content-type"?"application/json":null},
+        body:new ReadableStream({start(c){c.enqueue(bytes);c.close();}})};
+    },
+    getFirestore:()=>{counts.dbReads++;throw Error("Firestore forbidden in diagnostic mode");},
+    waitBetweenRequests:async()=>{throw Error("Unneeded catalogue cooldown");},
+    onFailure:()=>{},onEvidenceOutcome:()=>{}
+  };
+  return {run:makeManualAuditEvidenceDispatch(config),counts};
+}
+test("D15 wired diagnostic makes one fixed-host league fetch with no catalogue or Firestore",async()=>{
+  const s=routedDiagnostic();
+  const r=await s.run(OWNER);
+  assert.equal(r.diagnostic,"PROVIDER_IDENTITY_SHAPE_ONLY");
+  assert.equal(r.shapeStatus,"SAMPLE_COMPATIBLE");
+  assert.deepEqual(s.counts.reserved,[1]);
+  assert.equal(s.counts.http.length,1);
+  assert.equal(s.counts.secretReads,1);
+  assert.equal(s.counts.dbReads,0);
+  assert.equal(s.counts.legacy,0);
+  const request=s.counts.http[0];
+  const u=new URL(request.url);
+  assert.equal(u.origin,"https://api.oddspapi.io");
+  assert.equal(u.pathname,"/v4/odds-by-tournaments");
+  assert.equal(u.searchParams.get("tournamentIds"),"132");
+  assert.equal(u.searchParams.get("bookmaker"),"betano.pt");
+  assert.equal(u.searchParams.get("verbosity"),"3");
+  assert.equal(request.options.redirect,"error");
+  assert.doesNotMatch(JSON.stringify(r),/SYNTHETIC_D15_KEY|5101|5102|PRIVATE/);
+});
+test("D15 enabled selection remains owner-only before secret/reservation",async()=>{
+  const s=routedDiagnostic();
+  await assert.rejects(s.run({auth:{uid:"not-owner",token:{email_verified:true}},data:{}}));
+  assert.deepEqual(s.counts.reserved,[]);
+  assert.equal(s.counts.http.length,0);
+  assert.equal(s.counts.secretReads,0);
+});
+test("D15 denied budget prevents secret read and HTTP",async()=>{
+  const s=routedDiagnostic({denyBudget:true});
+  await assert.rejects(s.run(OWNER),/budget unavailable/);
+  assert.deepEqual(s.counts.reserved,[1]);
+  assert.equal(s.counts.secretReads,0);
+  assert.equal(s.counts.http.length,0);
+});
+test("D15 transport failure consumes no second reservation and redacts secret",async()=>{
+  const s=routedDiagnostic({throwFetch:true});
+  await assert.rejects(s.run(OWNER),e=>{
+    assert.doesNotMatch(e.message,/PRIVATE_HTTP_FAILURE|SYNTHETIC_D15_KEY/);
+    return true;
+  });
+  assert.deepEqual(s.counts.reserved,[1]);
+  assert.equal(s.counts.secretReads,1);
+  assert.equal(s.counts.http.length,1);
+  assert.equal(s.counts.dbReads,0);
+});
+test("D15 production source retains literal-false default despite selector",()=>{
+  const prod=fs.readFileSync(path.join(__dirname,"index.js"),"utf8");
+  assert.match(prod,/const NBA_PROVIDER_EVIDENCE_ENABLED = false;/);
+  assert.match(prod,/identityOnly:\s*true/);
+  assert.match(prod,/enabled:\s*NBA_PROVIDER_EVIDENCE_ENABLED/);
+  assert.match(prod,/legacyRun:\s*runNbaMarketAudit/);
+  assert.doesNotMatch(prod,/setInterval\(|process\.env\.NBA_PROVIDER_EVIDENCE/);
+});
+test("D15 off-state returns the identical legacy reference even with identity selector",async()=>{
+  const legacy=async()=>({original:true});
+  const run=makeManualAuditEvidenceDispatch({enabled:false,
+    identityOnly:true,legacyRun:legacy});
+  assert.equal(run,legacy);
+  assert.deepEqual(await run(OWNER),{original:true});
+});
+test("D15 invalid client-like selector values are rejected",()=>{
+  assert.throws(()=>makeManualAuditEvidenceDispatch({enabled:false,
+    identityOnly:"true",legacyRun:async()=>{}}),/Invalid trusted/);
+});
