@@ -738,6 +738,42 @@ exports.oddsPapiNbaMarketAudit = onCall(
   }
 );
 
+
+// D15.1 — a DISTINCT manual identity-schema callable. The legacy NBA market
+// audit above remains hard-disabled for evidence routing and continues to
+// return its existing 35.1C-MANUAL eight-family response contract.
+// This second gate cannot be enabled from the browser or environment.
+const NBA_IDENTITY_SCHEMA_DIAGNOSTIC_ENABLED = false;
+const { makeManualIdentityShapeCallable } =
+  require("./manual-identity-shape-callable");
+const runNbaIdentityShapeDiagnostic = makeManualAuditEvidenceDispatch({
+  enabled: NBA_IDENTITY_SCHEMA_DIAGNOSTIC_ENABLED,
+  identityOnly: true,
+  legacyRun: async () => { throw new Error("Identity schema disabled."); },
+  ownerUid: LEDGER_OWNER,
+  reserveDiagnosticRequests,
+  getProviderApiKey: () => oddsPapiKey.value(),
+  fetchImpl: (url, options) => fetch(url, options),
+  // Existing D15 adapter contract. The identity-only branch never opens DB.
+  getFirestore,
+  waitBetweenRequests: () => new Promise(resolve => setTimeout(resolve, 1200))
+});
+const runNbaIdentitySchemaCallable = makeManualIdentityShapeCallable({
+  enabled: NBA_IDENTITY_SCHEMA_DIAGNOSTIC_ENABLED,
+  ownerUid: LEDGER_OWNER,
+  run: runNbaIdentityShapeDiagnostic,
+  secretAvailable: () => Boolean(oddsPapiKey.value()),
+  HttpsError
+});
+exports.oddsPapiNbaIdentitySchemaDiagnostic = onCall(
+  {
+    region: "europe-west1", secrets: [oddsPapiKey],
+    maxInstances: 1, concurrency: 1, timeoutSeconds: 75,
+    memory: "512MiB", enforceAppCheck: false
+  },
+  runNbaIdentitySchemaCallable
+);
+
 function ledgerAssertOwner(request) {
   if (!request.auth) throw new HttpsError("unauthenticated","Google sign-in required.");
   if (request.auth.uid !== LEDGER_OWNER || request.auth.token.email_verified !== true)

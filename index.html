@@ -532,6 +532,8 @@ main{width:100%;min-width:0}
   <div id="oddsCoverageResult" class="muted" aria-live="polite"></div>
   <div class="row"><button id="oddsMarketAuditBtn" type="button" class="mini">Audit NBA prop markets (up to 2 quota requests)</button><span id="oddsMarketAuditStatus" class="muted" role="status">Owner only · manual · 1–2 metered calls on a fresh audit · 6/UTC-day limit · no bookmaker prices or research saved.</span></div>
   <div id="oddsMarketAuditResult" class="muted" aria-live="polite"></div>
+  <div class="row"><button id="oddsIdentitySchemaBtn" type="button" class="mini" disabled>Inspect NBA identity schema (disabled)</button><span id="oddsIdentitySchemaStatus" class="muted" role="status">D15.1 disabled pending separate approvals · manual only · a fresh check may consume 1 metered OddsPapi request and 1 of 6 UTC-day reservations.</span></div>
+  <div id="oddsIdentitySchemaResult" class="muted" aria-live="polite"></div>
   <div class="row"><button id="oddsProbeBtn" type="button" class="mini">Test OddsPapi NBA connection</button><span id="oddsProbeStatus" class="muted" role="status">Test uses one API request. Available only to the configured owner.</span></div><div id="oddsProbeResult" class="muted"></div>
   <div class="row"><button id="nbaOddsTestBtn" type="button" class="mini">Test Betano PT NBA odds</button><span id="nbaOddsTestStatus" class="muted">One request; 15-minute server cache when successful.</span></div><div id="nbaOddsTestResult" class="muted"></div>
   <div class="row"><button id="detailedPropsBtn" type="button" class="mini">Test detailed NBA player props</button><span id="detailedPropsStatus" class="muted">Up to 2 OddsPapi requests; cached for 30 minutes.</span></div><div id="detailedPropsResult" class="muted"></div>
@@ -733,6 +735,65 @@ document.getElementById('oddsMarketAuditBtn')?.addEventListener('click',async()=
    status.textContent='Market audit unavailable ('+(e.code||'unknown')+
     '). Up to two monthly provider requests and UTC diagnostic reservations may have been consumed. Do not retry automatically.';
  }finally{btn.disabled=false}
+});
+
+// D15.1 — separate identity-schema diagnostic, not the legacy market audit.
+// Both UI and backend independently default to disabled. No auto invocation.
+const NBA_IDENTITY_SCHEMA_UI_ENABLED = false;
+const identitySchemaButton=document.getElementById('oddsIdentitySchemaBtn');
+if(identitySchemaButton) identitySchemaButton.disabled=!NBA_IDENTITY_SCHEMA_UI_ENABLED;
+identitySchemaButton?.addEventListener('click',async()=>{
+ const btn=identitySchemaButton,
+  status=document.getElementById('oddsIdentitySchemaStatus'),
+  out=document.getElementById('oddsIdentitySchemaResult');
+ if(!NBA_IDENTITY_SCHEMA_UI_ENABLED){
+  status.textContent='Identity-schema diagnostic disabled; no provider request made.';
+  return;
+ }
+ const uid=auth.currentUser?.uid;
+ if(!uid){status.textContent='Sign in with Google first.';return}
+ if(!confirm('Run the separate manual NBA identity-SCHEMA inspection? A fresh check can consume ONE metered OddsPapi request (even on an error), plus ONE of six UTC-day server reservations. Cached results may consume zero. No identity approval, player data, prices or research records will be saved. Do you separately authorize this manual check?'))return;
+ btn.disabled=true;out.replaceChildren();
+ status.textContent='Inspecting aggregate fixture identity fields (one provider request maximum)…';
+ try{
+  const {data}=await httpsCallable(oddsFunctions,'oddsPapiNbaIdentitySchemaDiagnostic')({});
+  if(auth.currentUser?.uid!==uid)return;
+  const statuses=['BLOCKED','PARTIAL_SAMPLE','SAMPLE_COMPATIBLE'];
+  const reasons=['FIXTURE_INVALID','DUPLICATE_FIXTURE_ID','BETANO_OFFER_UNAVAILABLE',
+   'START_TIME_INVALID_OR_OUT_OF_WINDOW','NBA_SPORT_NOT_CONFIRMED',
+   'NBA_TOURNAMENT_NOT_CONFIRMED','SCHEDULED_STATUS_NOT_CONFIRMED',
+   'HAS_ODDS_FLAG_NOT_CONFIRMED','FIXTURE_ID_INVALID','PARTICIPANT_IDS_INVALID',
+   'PARTICIPANT_IDS_DUPLICATE','OTHER_D4_REJECTION'];
+  const count=n=>Number.isSafeInteger(n)&&n>=0?n:null;
+  if(!data||data.diagnostic!=='PROVIDER_IDENTITY_SHAPE_ONLY'||
+    !statuses.includes(data.shapeStatus)||data.teamMappingApproved!==false||
+    data.identityVerified!==false||data.releaseReady!==false||
+    data.bookmakerOddsVerified!==false||data.researchSaved!==false||
+    typeof data.cached!=='boolean'||!Number.isSafeInteger(data.requestsUsedOnThisClick)||
+    data.requestsUsedOnThisClick!==(data.cached?0:1)||
+    [data.totalFixtures,data.acceptedFixtures,data.rejectedFixtures].some(n=>count(n)===null)||
+    !data.reasonCounts||typeof data.reasonCounts!=='object'||
+    Array.isArray(data.reasonCounts)||
+    Object.keys(data.reasonCounts).length!==reasons.length||
+    !reasons.every(k=>count(data.reasonCounts[k])!==null)||
+    typeof data.reason!=='string'||!/^[A-Z0-9_]{1,72}$/.test(data.reason))
+   throw Error('Unexpected identity-schema summary.');
+  const line=message=>{const p=document.createElement('p');p.textContent=message;out.append(p);};
+  line('Schema status: '+data.shapeStatus+' · reason: '+data.reason);
+  line('Fixtures sampled: '+data.totalFixtures+' · accepted: '+
+   data.acceptedFixtures+' · rejected: '+data.rejectedFixtures);
+  line('Provider requests on this click: '+data.requestsUsedOnThisClick+
+   (data.cached?' (15-minute server cache)':' (fresh inspection)'));
+  for(const reason of reasons){
+   if(data.reasonCounts[reason]>0)line(reason+': '+data.reasonCounts[reason]);
+  }
+  line('Shape compatibility is NOT an ESPN identity match, Betano price verification, market audit, approved crosswalk, or release authorization. No research saved.');
+  status.textContent='Read-only identity-schema inspection complete; no identities approved.';
+ }catch(e){
+  if(auth.currentUser?.uid===uid)
+   status.textContent='Identity-schema inspection unavailable ('+(e.code||'unknown')+
+    '). One metered provider request and UTC-day reservation may have been consumed. Do not retry automatically.';
+ }finally{btn.disabled=!NBA_IDENTITY_SCHEMA_UI_ENABLED}
 });
 
 document.getElementById('detailedPropsBtn')?.addEventListener('click',async()=>{
