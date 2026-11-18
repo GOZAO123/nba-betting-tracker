@@ -229,3 +229,33 @@ test("D15.1 production evidence release preflight remains intentionally BLOCKED"
  assert.ok(report.blockers.includes("OWNER_PROVIDER_REQUEST_APPROVAL_REQUIRED"));
  assert.ok(report.blockers.includes("LIVE_PROVIDER_SCHEMA_UNVERIFIED"));
 });
+
+// D15.2 is a compile-time identity selection for ONE named callable only.
+// These assertions are deliberately source-level: IAM existence and grants
+// require separate live review and owner permission, never an offline test.
+test("D15.2 pins a dedicated identity only for the new disabled callable",()=>{
+ const prod=fs.readFileSync(path.join(__dirname,"index.js"),"utf8");
+ const identity=prod.match(
+  /exports\.oddsPapiNbaIdentitySchemaDiagnostic\s*=\s*onCall\(\s*\{([\s\S]*?)\}\s*,\s*runNbaIdentitySchemaCallable\s*\)/
+ );
+ assert.ok(identity,"named identity callable options must remain explicit");
+ assert.match(identity[1],
+  /serviceAccount:\s*"nba-identity-schema@nba-betting-tracker-3979d\.iam\.gserviceaccount\.com"/);
+ assert.match(identity[1],/region:\s*"europe-west1"/);
+ assert.match(identity[1],/secrets:\s*\[oddsPapiKey\]/);
+ assert.match(identity[1],/maxInstances:\s*1/);
+ assert.match(identity[1],/concurrency:\s*1/);
+ assert.match(identity[1],/timeoutSeconds:\s*75/);
+ assert.match(identity[1],/memory:\s*"512MiB"/);
+ assert.match(prod,/const NBA_IDENTITY_SCHEMA_DIAGNOSTIC_ENABLED = false;/);
+ assert.match(prod,/const NBA_PROVIDER_EVIDENCE_ENABLED = false;/);
+ assert.equal((prod.match(/\bserviceAccount\s*:/g)||[]).length,1,
+  "never override another deployed function's runtime identity");
+ const legacy=prod.match(
+  /exports\.oddsPapiNbaMarketAudit\s*=\s*onCall\(\s*\{([\s\S]*?)\}\s*,\s*async request\s*=>/
+ );
+ assert.ok(legacy,"legacy callable must remain registered");
+ assert.doesNotMatch(legacy[1],/serviceAccount/);
+ assert.match(legacy[1],/timeoutSeconds:\s*120/);
+ assert.match(legacy[1],/memory:\s*"512MiB"/);
+});

@@ -768,6 +768,10 @@ const runNbaIdentitySchemaCallable = makeManualIdentityShapeCallable({
 exports.oddsPapiNbaIdentitySchemaDiagnostic = onCall(
   {
     region: "europe-west1", secrets: [oddsPapiKey],
+    // D15.2: dedicated user-managed runtime identity; must exist and have
+    // explicitly reviewed permissions BEFORE any targeted deployment.
+    // Never apply this account to the existing audit or ledger functions.
+    serviceAccount: "nba-identity-schema@nba-betting-tracker-3979d.iam.gserviceaccount.com",
     maxInstances: 1, concurrency: 1, timeoutSeconds: 75,
     memory: "512MiB", enforceAppCheck: false
   },
