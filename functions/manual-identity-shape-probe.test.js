@@ -75,6 +75,8 @@ test("D15 makes exactly one reserved league request, no catalogue or extra looku
   assert.equal(result.acceptedFixtures,1);
   assert.equal(result.rejectedFixtures,0);
   assert.equal(result.teamMappingApproved,false);
+  assert.equal(result.identityVerified,false);
+  assert.equal(result.releaseReady,false);
   assert.equal(result.bookmakerOddsVerified,false);
   assert.equal(result.researchSaved,false);
   assert.doesNotMatch(JSON.stringify(result),/synthetic-d15|5101|5102|SECRET_PLAYER_NAME|1\.87/);
