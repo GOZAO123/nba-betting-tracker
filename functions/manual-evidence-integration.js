@@ -12,13 +12,14 @@ const { makeOfflineManualEvidenceAudit } =
 const ALLOWED_KEYS = Object.freeze([
   "enabled", "ownerUid", "reserveDiagnosticRequests", "getProviderApiKey",
   "fetchImpl", "getFirestore", "makeSignal", "waitBetweenRequests",
-  "now", "onFailure", "onEvidenceOutcome"
+  "now", "onFailure", "onEvidenceOutcome", "identityOnly"
 ]);
 
 function makeOfflineManualEvidenceIntegration(config={}) {
   if (!config || typeof config !== "object" || Array.isArray(config) ||
       Object.keys(config).some(key=>!ALLOWED_KEYS.includes(key)) ||
-      (config.enabled !== undefined && typeof config.enabled !== "boolean"))
+      (config.enabled !== undefined && typeof config.enabled !== "boolean") ||
+      (config.identityOnly !== undefined && typeof config.identityOnly !== "boolean"))
     throw new TypeError("Invalid backend integration configuration.");
 
   // Safe by DEFAULT and inert even when constructed with live backend adapters.
@@ -68,6 +69,18 @@ function makeOfflineManualEvidenceIntegration(config={}) {
     getApiKey:getProviderApiKey,fetchImpl,
     ...(makeSignal===undefined ? {} : {makeSignal})
   });
+  // D15: separately reviewed diagnostic mode. This branch is selected only
+  // by trusted BACKEND configuration; it bypasses the catalogue gate and
+  // consumes at most one explicitly reserved league request. It never opens
+  // Firestore, stores evidence, or approves any team/player identity.
+  if (config.identityOnly === true) {
+    const { makeOfflineManualIdentityShapeProbe } =
+      require("./manual-identity-shape-probe");
+    return Object.freeze(makeOfflineManualIdentityShapeProbe({
+      ownerUid, reserve:reserveDiagnosticRequests,
+      fetchOdds:transport.fetchOdds, now
+    }));
+  }
   const run = makeOfflineManualEvidenceAudit({
     ownerUid, reserve:reserveDiagnosticRequests,
     fetchCatalogue:transport.fetchCatalogue,fetchOdds:transport.fetchOdds,
