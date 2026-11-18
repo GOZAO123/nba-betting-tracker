@@ -259,3 +259,99 @@ test("D15.2 pins a dedicated identity only for the new disabled callable",()=>{
  assert.match(legacy[1],/timeoutSeconds:\s*120/);
  assert.match(legacy[1],/memory:\s*"512MiB"/);
 });
+
+
+// D15.3 — offline IAM design gates only. These tests exercise the ACTUAL
+// quota function in a synthetic VM; they do not grant or emulate live IAM.
+function d153QuotaSource() {
+ const source=fs.readFileSync(path.join(__dirname,"index.js"),"utf8");
+ const found=source.match(/^async function reserveDiagnosticRequests\(amount\) \{[\s\S]*?^\}/m);
+ assert.ok(found,"existing shared Firestore quota must remain present");
+ return found[0];
+}
+function d153SyntheticQuota(db) {
+ const vm=require("node:vm");
+ const FixedDate=class extends Date {
+  constructor(...args){super(...(args.length?args:["2026-11-18T10:00:00.000Z"]));}
+ };
+ return vm.runInNewContext(`(${d153QuotaSource()})`,{
+  Date:FixedDate, getFirestore:()=>db, HttpsError:FakeHttpsError,
+  ODDSPAPI_REQUESTS_PER_UTC_DAY:6
+ });
+}
+
+test("D15.3 only the existing shared budget document is touched in a transaction",()=>{
+ const quota=d153QuotaSource();
+ assert.match(quota,/db\.doc\("_internal\/oddsPapiDailyDiagnosticBudget"\)/);
+ assert.equal((quota.match(/db\.doc\(/g)||[]).length,1);
+ assert.match(quota,/db\.runTransaction\(async \(transaction\) =>/);
+ assert.match(quota,/await transaction\.get\(ref\)/);
+ assert.match(quota,/transaction\.set\(ref,/);
+ assert.match(quota,/reserved \+ amount > ODDSPAPI_REQUESTS_PER_UTC_DAY/);
+ assert.doesNotMatch(quota,/transaction\.delete\(|\.collection\(|\.listDocuments\(/);
+
+ // Treat the IAM permissions as a CANDIDATE manifest, not an active grant.
+ const doc=fs.readFileSync(path.join(__dirname,"..","docs",
+  "update-35-1d15-3-firestore-quota-iam-review.md"),"utf8");
+ const candidate=doc.match(
+  /<!-- CANDIDATE_PERMISSIONS_BEGIN -->\s*```text\n([\s\S]*?)\n```\s*<!-- CANDIDATE_PERMISSIONS_END -->/
+ );
+ assert.ok(candidate,"candidate IAM contract must be explicitly labeled");
+ assert.deepEqual(candidate[1].split(/\r?\n/).filter(Boolean),[
+  "datastore.databases.get","datastore.entities.get",
+  "datastore.entities.create","datastore.entities.update"
+ ]);
+ assert.match(doc,/NO IAM GRANTS, NO FIREBASE DEPLOYMENT/);
+ assert.match(doc,/not\s+document-level least privilege/i);
+});
+
+test("D15.3 production quota function fails closed when Firestore IAM denies transaction",async()=>{
+ let transactionAttempts=0;
+ const quota=d153SyntheticQuota({
+  doc:()=>({id:"synthetic-budget-only"}),
+  runTransaction:async()=>{
+   transactionAttempts++;
+   throw Error("SYNTHETIC_PERMISSION_DENIED_PRIVATE");
+  }
+ });
+ await assert.rejects(quota(1),err=>{
+  assert.equal(err.code,"unavailable");
+  assert.match(err.message,/No API request was made/);
+  assert.doesNotMatch(err.message,/SYNTHETIC_PERMISSION_DENIED_PRIVATE/);
+  return true;
+ });
+ assert.equal(transactionAttempts,1);
+});
+
+test("D15.3 production quota function denies seventh synthetic UTC-day reservation",async()=>{
+ const pathExpected="_internal/oddsPapiDailyDiagnosticBudget";
+ let stored=null, commits=0;
+ const db={
+  doc:reference=>{assert.equal(reference,pathExpected);return reference;},
+  runTransaction:async fn=>{
+   let pending=null;
+   const result=await fn({
+    get:async reference=>{
+     assert.equal(reference,pathExpected);
+     return {exists:stored!==null,data:()=>stored===null?null:{...stored}};
+    },
+    set:(reference,value)=>{
+     assert.equal(reference,pathExpected);
+     pending={...value};
+    }
+   });
+   if(pending!==null){stored=pending;commits++;}
+   return result;
+  }
+ };
+ const quota=d153SyntheticQuota(db);
+ for(let i=1;i<=6;i++){
+  const receipt=await quota(1);
+  assert.equal(receipt.utcDay,"2026-11-18");
+  assert.equal(receipt.remaining,6-i);
+ }
+ await assert.rejects(quota(1),errorCode("resource-exhausted"));
+ assert.equal(commits,6);
+ assert.equal(stored.reserved,6);
+ assert.equal(stored.limit,6);
+});
