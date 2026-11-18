@@ -1791,3 +1791,29 @@ test("35.3C collapsed research report uses existing data and never starts reques
  assert.match(html,/btRenderTeamBalancedResearch\(btCohortResults,report\)/);
  assert.doesNotMatch(render,/fetch\(|httpsCallable|setDoc|runTransaction|getDocs|setInterval|OddsPapi/);
 });
+
+test("D15.1 identity control is independent, disabled by default, and manual only",()=>{
+ assert.match(html,/id="oddsIdentitySchemaBtn"[^>]*disabled/);
+ assert.match(html,/const NBA_IDENTITY_SCHEMA_UI_ENABLED = false;/);
+ assert.match(html,/identitySchemaButton\.disabled=!NBA_IDENTITY_SCHEMA_UI_ENABLED/);
+ assert.match(html,/identitySchemaButton\?\.addEventListener\('click',async\(\)=>\{/);
+ assert.match(html,/httpsCallable\(oddsFunctions,'oddsPapiNbaIdentitySchemaDiagnostic'\)\(\{\}\)/);
+ assert.match(html,/ONE metered OddsPapi request/);
+ assert.match(html,/Do not retry automatically/);
+ const identity=html.slice(html.indexOf("// D15.1 — separate identity-schema"),
+   html.indexOf("document.getElementById('detailedPropsBtn')",html.indexOf("// D15.1 — separate identity-schema")));
+ assert.match(identity,/if\(!NBA_IDENTITY_SCHEMA_UI_ENABLED\)/);
+ assert.match(identity,/if\(!confirm\(/);
+ assert.match(identity,/PROVIDER_IDENTITY_SHAPE_ONLY/);
+ assert.match(identity,/data\.researchSaved!==false/);
+ assert.match(identity,/SAMPLE_COMPATIBLE/);
+ assert.doesNotMatch(identity,/setInterval\(|setTimeout\(|onAuthStateChanged\(|runTransaction\(|getFirestore\(/);
+});
+test("D15.1 does not change original eight-family manual market audit contract",()=>{
+ const legacy=html.slice(html.indexOf("// Update 35.1C2 — explicit owner-only"),
+   html.indexOf("// D15.1 — separate identity-schema"));
+ assert.match(legacy,/httpsCallable\(oddsFunctions,'oddsPapiNbaMarketAudit'\)\(\{\}\)/);
+ assert.match(legacy,/data\.diagnosticVersion!=='35\.1C-MANUAL'/);
+ assert.match(legacy,/data\.families\.length!==expected\.length/);
+ assert.match(legacy,/'PTS','REB','AST','3PT','PR','PA','RA','PRA'/);
+});
