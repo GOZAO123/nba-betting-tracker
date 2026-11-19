@@ -81,13 +81,34 @@ ensure a local checkout is on the intended GitHub `main` and includes
 this future, separately approved/merged checker. Verify there are no
 uncommitted changes before updating local source.
 
-From Windows PowerShell in the **repository root**, the suggested
-read-only pipeline is:
+From Windows PowerShell in the **repository root**, first confirm
+UTF-8 for the current PowerShell session. Then use the read-only pipeline:
 
 ```powershell
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+$OutputEncoding = [Console]::OutputEncoding
 firebase.cmd functions:list --project nba-betting-tracker-3979d |
   node .\functions\offline-production-inventory-cli.js
 ```
+
+**D15.12A colour-output correction:** The owner independently verified
+the 15/15 live inventory on 19 November 2026, but the original parser
+returned 0/15 because `firebase.cmd functions:list` emits ANSI SGR
+colours (e.g. `ESC[90m`) around otherwise valid UTF-8 box-drawing
+characters. Re-running the same pipeline after stripping **only** ANSI
+SGR formatting in PowerShell produced `inventoryMatches:true`,
+`observedCount:15`, `missing:[]`, `mismatched:[]`,
+`unexpectedCount:0`, while `status:BLOCKED` remained correct.
+
+This small code correction strips bounded ANSI **SGR colour attributes**
+inside the offline parser, with additional regression tests for the
+colour-coded stream and deliberate rejection of unrelated ANSI
+terminal controls. It does **not** convert malformed byte encoding;
+if the text still contains mojibake such as `Γöé`, configure
+`[Console]::OutputEncoding` and `$OutputEncoding` above. No need to
+strip formatting in a separate PowerShell `ForEach-Object` after
+the corrected checker is locally updated from an owner-approved merge.
+This is a review-tool fix only; it is not a deployment authorization.
 
 This calls only **Firebase's administrative list endpoint**; it is NOT
 an OddsPapi provider endpoint and does not deploy Functions or make

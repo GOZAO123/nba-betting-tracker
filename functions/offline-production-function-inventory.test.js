@@ -203,6 +203,79 @@ test("D15.12 CLI never accepts user-supplied file paths as arguments",()=>{
  assert.equal(JSON.parse(result.stdout).status,"BLOCKED");
  assert.doesNotMatch(result.stdout,/private_key|ODDSPAPI_API_KEY/);
 });
+const firebaseSgr=text=>text.split("\n").map(line=>
+  line?"\x1b[90m"+line+"\x1b[0m":""
+).join("\n");
+test("D15.12A accepts actual Firebase CLI colour-wrapped borders, rows and header",()=>{
+ const report=assess(firebaseSgr(table()),SOURCE);
+ blocked(report);
+ assert.equal(report.inventoryMatches,true);
+ assert.equal(report.observedCount,15);
+ assert.deepEqual(report.missing,[]);
+ assert.deepEqual(report.mismatched,[]);
+ assert.equal(report.unexpectedCount,0);
+ assert.equal(report.releaseReady,false);
+ has(report,"OWNER_APPROVAL_FOR_CLOUD_CHANGES_NOT_GRANTED");
+});
+test("D15.12A accepts bounded ANSI SGR attributes around individual separators",()=>{
+ const colourSeparated=table().replaceAll(
+   "│","\x1b[1;36m│\x1b[0m"
+ );
+ const report=assess(colourSeparated,SOURCE);
+ blocked(report);
+ assert.equal(report.inventoryMatches,true);
+ assert.equal(report.observedCount,15);
+ assert.equal(report.cloudChangesAuthorized,false);
+});
+test("D15.12A refuses non-SGR, malformed and oversized terminal escapes",()=>{
+ const variants=[
+  "\x1b[2J"+table(),
+  "\x1b]0;PRIVATE_TITLE\x07"+table(),
+  "\x1b[90"+table(),
+  "\x1b[123456789012345678901234567890123m"+table()
+ ];
+ for(const text of variants){
+   const report=assess(text,SOURCE);
+   blocked(report);
+   assert.equal(report.inventoryMatches,false);
+   has(report,"FUNCTION_LIST_UNKNOWN_LINES");
+ }
+});
+test("D15.12A still refuses genuinely misdecoded Unicode table input",()=>{
+ const report=assess(table().replaceAll("│","Γöé"),SOURCE);
+ blocked(report);
+ assert.equal(report.inventoryMatches,false);
+ assert.equal(report.observedCount,0);
+});
+test("D15.12A stdin CLI accepts colour-wrapped user inventory and remains BLOCKED",()=>{
+ const cli=path.join(__dirname,"offline-production-inventory-cli.js");
+ const child=spawnSync(process.execPath,[cli],{
+   input:firebaseSgr(table()),encoding:"utf8",timeout:5000
+ });
+ assert.equal(child.status,0,child.stderr);
+ assert.equal(child.stderr,"");
+ const report=JSON.parse(child.stdout);
+ assert.equal(report.inventoryMatches,true);
+ assert.equal(report.observedCount,15);
+ assert.equal(report.status,"BLOCKED");
+ assert.equal(report.paidProviderAllowed,false);
+ assert.equal(report.cloudChangesAuthorized,false);
+});
+test("D15.12A colourized unknown function names are not echoed by the CLI",()=>{
+ const unknown="SYNTHETIC_UNKNOWN_PRIVATE_UID_TOKEN";
+ const entries=rows();
+ entries.push([unknown,"v2","callable","europe-west1","256","nodejs22"]);
+ const cli=path.join(__dirname,"offline-production-inventory-cli.js");
+ const child=spawnSync(process.execPath,[cli],{
+   input:firebaseSgr(table(entries)),encoding:"utf8",timeout:5000
+ });
+ assert.equal(child.status,2);
+ assert.doesNotMatch(child.stdout,new RegExp(unknown));
+ const report=JSON.parse(child.stdout);
+ assert.equal(report.inventoryMatches,false);
+ assert.equal(report.unexpectedCount,1);
+ assert.equal(report.status,"BLOCKED");
+});
 test("D15.12 module is inert and never touched by Firebase entrypoint",()=>{
  const code=fs.readFileSync(path.join(__dirname,
   "offline-production-function-inventory.js"),"utf8");

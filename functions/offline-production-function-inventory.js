@@ -58,7 +58,13 @@ function assessOfflineFunctionList(table,source){
     !source.includes("const ODDSPAPI_REQUESTS_PER_UTC_DAY = 6;"))
    add("PRODUCTION_QUOTA_OR_DIAGNOSTIC_GATES_DRIFT");
 
- const lines=table.split(/\r?\n/);
+ // Firebase CLI emits ANSI SGR colours (e.g. ESC[90m) even when piped.
+ // Remove ONLY bounded Select Graphic Rendition codes, not cursor movement,
+ // erased-screen controls or arbitrary escape sequences. Unrecognised output
+ // still fails the strict Unicode table structure checks below.
+ const lines=table.split(/\r?\n/).map(
+   line=>line.replace(/\x1b\[[0-9;]{0,32}m/g,"")
+ );
  if(lines.length>65)add("FUNCTION_LIST_INPUT_TOO_MANY_LINES");
  let headerCount=0,rows=[],unsupported=0;
  for(const line of lines){
