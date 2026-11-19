@@ -35,16 +35,28 @@ const must=Object.freeze([
   ["STAGED_BROKER_NOT_INERT",s=>
     !has(s,/require\(["']\.\/offline-identity-quota-(?:broker|ingress|caller|google-auth|google-verify|firestore-reserve|http-handler)["']\)/)]
 ]);
-const validEvidence=e=>e===undefined||
-  (RECORD(e)&&Object.keys(e).every(k=>[
-    "ownerRiskAcknowledgment","costReviewCompleted",
-    "allPaidCallersMigrationReviewed","freezeAndRollbackReviewed",
-    "newRuntimeDataAccessReviewed","privateServiceIamReviewed",
-    "existingEditorRiskReviewed"
-  ].includes(k)&&typeof e[k]==="boolean"));
+const validEvidence=e=>{
+  try{
+    return e===undefined||
+      (RECORD(e)&&Object.keys(e).every(k=>[
+        "ownerRiskAcknowledgment","costReviewCompleted",
+        "allPaidCallersMigrationReviewed","freezeAndRollbackReviewed",
+        "newRuntimeDataAccessReviewed","privateServiceIamReviewed",
+        "existingEditorRiskReviewed"
+      ].includes(k)&&typeof e[k]==="boolean"));
+  }catch(_){return false;}
+};
 
-function assessOfflineQuotaTopology({topology=OPTIONS.UNDECIDED,
-  productionSource,evidence}={}){
+function assessOfflineQuotaTopology(input={}){
+  let topology,productionSource,evidence;
+  try{
+    if(!RECORD(input))throw Error("Invalid input");
+    ({topology=OPTIONS.UNDECIDED,productionSource,evidence}=input);
+  }catch(_){
+    return Object.freeze({status:"BLOCKED",releaseReady:false,
+      providerRequestAllowed:false,topology:"INVALID",
+      blockers:Object.freeze(["INVALID_OFFLINE_ARCHITECTURE_REVIEW"])});
+  }
   const blockers=[];
   const add=x=>{if(!blockers.includes(x))blockers.push(x);};
   if(!Object.values(OPTIONS).includes(topology)||!validEvidence(evidence)){
