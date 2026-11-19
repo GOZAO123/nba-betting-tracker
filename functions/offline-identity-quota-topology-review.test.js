@@ -144,6 +144,23 @@ test("D15.9 synthetic approval booleans cannot grant metered OddsPapi authority"
   has(r,"REAL_GOOGLE_ID_TOKEN_AND_PRIVATE_INVOKER_UNVERIFIED");
  }
 });
+test("D15.9 malformed proxies and getters fail closed without side effects",()=>{
+ const throwing={get ownerRiskAcknowledgment(){
+   throw Error("PRIVATE_OWNER_AUTH_TOKEN");
+ }};
+ const inputs=[
+   null,[],0,"review",
+   {topology:OPTIONS.UNDECIDED,productionSource:actual(),evidence:throwing},
+   {get topology(){throw Error("PRIVATE_CONFIG");}},
+   new Proxy({}, {getPrototypeOf(){throw Error("PRIVATE_PROXY");}})
+ ];
+ for(const input of inputs){
+   let r;
+   assert.doesNotThrow(()=>{r=assess(input);});
+   blocked(r);
+   has(r,"INVALID_OFFLINE_ARCHITECTURE_REVIEW");
+ }
+});
 test("D15.9 code remains disconnected from deployed Functions",()=>{
  const source=fs.readFileSync(path.join(__dirname,
   "offline-identity-quota-topology-review.js"),"utf8");
