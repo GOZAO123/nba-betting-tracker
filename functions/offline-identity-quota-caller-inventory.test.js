@@ -63,9 +63,8 @@ test("D15.11 market audit must keep both legacy and routed reservation wiring",(
   "const runNbaMarketAuditRouted = makeManualAuditEvidenceDispatch({\n  enabled:",
   "const runNbaMarketAuditRouted = makeManualAuditEvidenceDispatch({\n  reserveDiagnosticRequests: null,\n  enabled:");
  const r=assess(src);blocked(r);
- // This malformed addition does not remove the original property and cannot
- // be detected as a live release guarantee by static source inventory.
- has(r,"LIVE_DEPLOYED_FUNCTION_REVISIONS_NOT_INVENTORIED");
+ has(r,"MARKET_AUDIT_RESERVATION_UNVERIFIED");
+ assert.equal(r.sourceInventoryVerified,false);
 });
 test("D15.11 changing market audit legacy reservation path blocks inspection",()=>{
  const marker="const runNbaMarketAudit = makeLeagueMarketAuditRunner({\n  ownerUid: LEDGER_OWNER,\n  reserve: reserveDiagnosticRequests,";
@@ -79,7 +78,8 @@ test("D15.11 switching identity diagnostic to a separate budget fails review",()
  const marker="const runNbaIdentityShapeDiagnostic = makeManualAuditEvidenceDispatch({";
  const src=production().replace(marker,marker+"\n  reserveDiagnosticRequests: undefined,");
  const r=assess(src);blocked(r);
- has(r,"LIVE_DEPLOYED_FUNCTION_REVISIONS_NOT_INVENTORIED");
+ has(r,"IDENTITY_DIAGNOSTIC_RESERVATION_UNVERIFIED");
+ assert.equal(r.sourceInventoryVerified,false);
  // Independently, an explicit removal of the original reservation must fail.
  const old="  ownerUid: LEDGER_OWNER,\n  reserveDiagnosticRequests,";
  const scoped=production().indexOf(marker);
