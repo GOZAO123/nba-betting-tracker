@@ -172,10 +172,14 @@ test("D15.12 local CLI reads stdin and returns sanitized, BLOCKED JSON only",()=
  assert.equal(result.status,0,result.stderr);
  assert.equal(result.stderr,"");
  const report=JSON.parse(result.stdout);
- blocked({...report,
-  // JSON roundtrip does not preserve JS object freezing: test content only.
-  blockers:Object.freeze(report.blockers)
- });
+ assert.equal(report.status,"BLOCKED");
+ assert.equal(report.releaseReady,false);
+ assert.equal(report.paidProviderAllowed,false);
+ assert.equal(report.cloudChangesAuthorized,false);
+ assert.equal(report.inventoryMatches,true);
+ assert.equal(report.expectedCount,15);
+ assert.equal(report.observedCount,15);
+ assert.ok(report.blockers.includes("OWNER_APPROVAL_FOR_CLOUD_CHANGES_NOT_GRANTED"));
 });
 test("D15.12 CLI rejects unknown names without printing them",()=>{
  const privateMarker="PRIVATE_TEST_BEARER_TOKEN";
