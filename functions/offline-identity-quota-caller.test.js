@@ -195,16 +195,10 @@ test("D15.6 malformed, oversized or misleading success JSON is denied",async()=>
   assert.equal(x.effects.sent.length,1);
  }
 });
-test("D15.6 real timed-out/aborted transport is not retried",async()=>{
- const x=fixture({
-  makeSignal:()=>AbortSignal.abort(),
-  fetchResponse:async(_,options)=>{
-    assert.equal(options.signal.aborted,true);
-    throw Error("SYNTHETIC_PRIVATE_ABORTED");
-  }
- });
+test("D15.6 pre-aborted deadline blocks token acquisition and transport",async()=>{
+ const x=fixture({makeSignal:()=>AbortSignal.abort()});
  await expectUnavailable(x.caller(1));
- assert.equal(x.effects.sent.length,1);
+ assert.deepEqual(x.effects,{clients:[],headerCalls:[],sent:[]});
 });
 test("D15.6 synthetic broker roundtrip still blocks a seventh reservation",async()=>{
  let reserved=0,verificationCount=0;

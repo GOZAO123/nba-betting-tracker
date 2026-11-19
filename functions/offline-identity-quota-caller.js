@@ -44,7 +44,39 @@ function bearerToken(headers){
     return match&&match[1].length<=8192?match[1]:null;
   }catch(_){return null;}
 }
-async function parseBoundedAck(response,audience){
+// Single operation deadline starts BEFORE Google token discovery. Authentication
+// APIs need not support AbortSignal: when the deadline fires we stop awaiting
+// their results and MUST NOT begin HTTP even if a token resolves later.
+function withinDeadline(signal,action){
+  if(signal.aborted)return Promise.reject(failure());
+  return new Promise((resolve,reject)=>{
+    let settled=false;
+    const cleanup=()=>{
+      signal.removeEventListener("abort",onAbort);
+      settled=true;
+    };
+    const onAbort=()=>{
+      if(settled)return;
+      cleanup();
+      reject(failure());
+    };
+    signal.addEventListener("abort",onAbort,{once:true});
+    if(signal.aborted){onAbort();return;}
+    Promise.resolve().then(()=>{
+      if(signal.aborted)throw failure();
+      return action();
+    }).then(value=>{
+      if(settled)return;
+      cleanup();
+      resolve(value);
+    },error=>{
+      if(settled)return;
+      cleanup();
+      reject(error);
+    });
+  });
+}
+async function parseBoundedAck(response,audience,signal){
   if(!response||response.ok!==true||response.status!==200||
      response.redirected!==false||!response.headers||
      typeof response.headers.get!=="function"||
@@ -57,6 +89,11 @@ async function parseBoundedAck(response,audience){
      (!/^\d+$/.test(String(declared))||Number(declared)>RESPONSE_MAX_BYTES))
     throw failure();
   const reader=response.body.getReader();
+  // Abort the body stream as well as fetch. A timed-out broker reply can
+  // NEVER authorize a paid provider request, even if the socket hangs.
+  const abortBody=()=>{try{void reader.cancel().catch(()=>{});}catch(_){}};
+  signal.addEventListener("abort",abortBody,{once:true});
+  if(signal.aborted)abortBody();
   let chunks=[],total=0,done=false;
   try{
     while(true){
@@ -75,6 +112,7 @@ async function parseBoundedAck(response,audience){
     return result;
   }catch(_){throw failure();}
   finally{
+    signal.removeEventListener("abort",abortBody);
     if(!done){try{await reader.cancel();}catch(_){}}
     try{reader.releaseLock();}catch(_){}
   }
@@ -89,17 +127,23 @@ function makeOfflineIdentityQuotaCaller({audience,getIdTokenClient,fetchImpl,
     // amount. User/browser data cannot set amount, URL or broker audience.
     if(amount!==1)throw invalid();
     try{
-      const authClient=await getIdTokenClient(audience);
+      // Deadline is shared by credential discovery, token refresh, HTTP and
+      // response streaming. It is NOT recreated after obtaining the token.
+      const signal=makeSignal();
+      if(!signal||typeof signal.aborted!=="boolean"||
+         typeof signal.addEventListener!=="function"||
+         typeof signal.removeEventListener!=="function")throw failure();
+      const authClient=await withinDeadline(signal,
+        ()=>getIdTokenClient(audience));
       if(!authClient||typeof authClient.getRequestHeaders!=="function")
         throw failure();
       // Deliberately don't use authClient.request/fetch: a library might
       // transparently retry on 401/403. Only one explicit fetch follows.
-      const headers=await authClient.getRequestHeaders(audience);
+      const headers=await withinDeadline(signal,
+        ()=>authClient.getRequestHeaders(audience));
       const token=bearerToken(headers);
       if(!token)throw failure();
-      const signal=makeSignal();
-      if(!signal||typeof signal.aborted!=="boolean")throw failure();
-      const response=await fetchImpl(audience,{
+      const response=await withinDeadline(signal,()=>fetchImpl(audience,{
         method:"POST",redirect:"error",cache:"no-store",signal,
         headers:Object.freeze({
           Authorization:"Bearer "+token,
@@ -107,8 +151,9 @@ function makeOfflineIdentityQuotaCaller({audience,getIdTokenClient,fetchImpl,
           Accept:"application/json"
         }),
         body:REQUEST_BODY
-      });
-      return await parseBoundedAck(response,audience);
+      }));
+      return await withinDeadline(signal,
+        ()=>parseBoundedAck(response,audience,signal));
     }catch(_){
       // Timeout after Firestore commit may have spent a slot. Never retry,
       // refund, log secrets or allow a provider call on an ambiguous reply.
