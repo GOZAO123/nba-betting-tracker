@@ -19,13 +19,20 @@ const RECORD=x=>x!==null&&typeof x==="object"&&!Array.isArray(x)&&
   (Object.getPrototypeOf(x)===Object.prototype||
    Object.getPrototypeOf(x)===null);
 const has=(text,re)=>typeof text==="string"&&re.test(text);
+function reservationSource(source){
+  if(typeof source!=="string")return "";
+  const begin=source.indexOf("async function reserveDiagnosticRequests(");
+  const end=begin>=0?source.indexOf("exports.oddsBackendStatus",begin):-1;
+  return begin>=0&&end>begin?source.slice(begin,end):"";
+}
 const must=Object.freeze([
-  ["SIX_SLOT_SHARED_TRANSACTION_NOT_VERIFIED",s=>
-    has(s,/const ODDSPAPI_REQUESTS_PER_UTC_DAY = 6;/)&&
-    has(s,/async function reserveDiagnosticRequests\(amount\)/)&&
-    has(s,/db\.doc\("_internal\/oddsPapiDailyDiagnosticBudget"\)/)&&
-    has(s,/db\.runTransaction\(/)&&
-    has(s,/reserved \+ amount > ODDSPAPI_REQUESTS_PER_UTC_DAY/)],
+  ["SIX_SLOT_SHARED_TRANSACTION_NOT_VERIFIED",s=>{
+    const reservation=reservationSource(s);
+    return has(s,/const ODDSPAPI_REQUESTS_PER_UTC_DAY = 6;/)&&
+      has(reservation,/db\.doc\("_internal\/oddsPapiDailyDiagnosticBudget"\)/)&&
+      has(reservation,/db\.runTransaction\(/)&&
+      has(reservation,/reserved \+ amount > ODDSPAPI_REQUESTS_PER_UTC_DAY/);
+  }],
   ["IDENTITY_DIAGNOSTIC_NOT_HARD_DISABLED",s=>
     has(s,/const NBA_IDENTITY_SCHEMA_DIAGNOSTIC_ENABLED = false;/)],
   ["PROVIDER_EVIDENCE_NOT_HARD_DISABLED",s=>
