@@ -16,6 +16,15 @@ const DELEGATED=Object.freeze([
   "oddsPapiNbaIdentitySchemaDiagnostic"
 ]);
 const EXPECTED=Object.freeze([...DIRECT.map(x=>x.name),...DELEGATED]);
+// Only these known *external* attestations may remain when the checked-out
+// source itself passes review. Future unknown blockers must NOT be ignored.
+const EXTERNAL_BLOCKERS=Object.freeze([
+  "LIVE_DEPLOYED_FUNCTION_REVISIONS_NOT_INVENTORIED",
+  "ACCOUNT_PREFLIGHT_DEPLOYED_SOURCE_NOT_ATTESTED",
+  "NEW_METADATA_QUOTA_NOT_LIVE_VERIFIED",
+  "EVERY_PAID_CALLER_DUAL_RESERVATION_NOT_VERIFIED",
+  "OWNER_CLOUD_AND_PROVIDER_APPROVAL_REQUIRED"
+]);
 const safe=(s,re)=>typeof s==="string"&&re.test(s);
 const reservationFieldCount=s=>
   typeof s==="string"?
@@ -101,8 +110,7 @@ function assessOfflinePaidCallerInventory(source){
   return Object.freeze({
     status:"BLOCKED",cutoverReady:false,providerRequestAllowed:false,
     sourceInventoryVerified:blockers.every(x=>
-      !/UNVERIFIED_|INVENTORY_DRIFT/.test(x)&&
-      x!=="PRODUCTION_SOURCE_UNAVAILABLE"),
+      EXTERNAL_BLOCKERS.includes(x)),
     sourceCallers:Object.freeze([...names]),
     blockers:Object.freeze(blockers)
   });
