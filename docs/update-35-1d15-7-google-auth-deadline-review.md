@@ -14,7 +14,7 @@ the backend and UI. The original market audit and 15 deployed functions
 were owner-verified previously; none is changed by this branch. The D12
 general evidence release preflight remains intentionally **BLOCKED**.
 
-## D15.7 changes, exactly five files
+## D15.7 changes, exactly six files
 
 1. New `functions/offline-identity-quota-google-auth.js`:
    `makeOfflineGoogleIdTokenClientFactory({loadGoogleAuth})`.
@@ -42,6 +42,7 @@ general evidence release preflight remains intentionally **BLOCKED**.
    signals, single-signal success and production isolation.
 5. `functions/package.json`: add only the new files to syntax lint
    and test scripts; no dependency, runtime entrypoint or lockfile change.
+6. This document: record the trust boundaries and future release gates.
 
 ## Real Google Cloud requirements and limitations
 
