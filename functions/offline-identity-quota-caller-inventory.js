@@ -17,6 +17,9 @@ const DELEGATED=Object.freeze([
 ]);
 const EXPECTED=Object.freeze([...DIRECT.map(x=>x.name),...DELEGATED]);
 const safe=(s,re)=>typeof s==="string"&&re.test(s);
+const reservationFieldCount=s=>
+  typeof s==="string"?
+    [...s.matchAll(/^\s*reserveDiagnosticRequests\s*(?:,|:)/gm)].length:0;
 const between=(s,start,end)=>{
   const a=s.indexOf(start);
   const b=a<0?-1:s.indexOf(end,a+start.length);
@@ -65,7 +68,8 @@ function assessOfflinePaidCallerInventory(source){
     "const runNbaMarketAuditRouted = makeManualAuditEvidenceDispatch({",
     "exports.oddsPapiNbaMarketAudit = onCall(");
   if(!safe(audit,/reserve:\s*reserveDiagnosticRequests\s*,/)||
-     !safe(auditRouted,/reserveDiagnosticRequests\s*,/)||
+     reservationFieldCount(auditRouted)!==1||
+     !safe(auditRouted,/^\s*reserveDiagnosticRequests\s*,/m)||
      !safe(exportBlock(source||"",DELEGATED[1]),
        /return await runNbaMarketAuditRouted\(request\)/))
     add("MARKET_AUDIT_RESERVATION_UNVERIFIED");
@@ -76,7 +80,8 @@ function assessOfflinePaidCallerInventory(source){
     "const runNbaIdentitySchemaCallable = makeManualIdentityShapeCallable({",
     "exports.oddsPapiNbaIdentitySchemaDiagnostic = onCall(");
   if(!safe(identity,/enabled:\s*NBA_IDENTITY_SCHEMA_DIAGNOSTIC_ENABLED\s*,/)||
-     !safe(identity,/reserveDiagnosticRequests\s*,/)||
+     reservationFieldCount(identity)!==1||
+     !safe(identity,/^\s*reserveDiagnosticRequests\s*,/m)||
      !safe(identityCallable,/enabled:\s*NBA_IDENTITY_SCHEMA_DIAGNOSTIC_ENABLED\s*,/)||
      !safe(exportBlock(source||"",DELEGATED[2]),
        /runNbaIdentitySchemaCallable/))
