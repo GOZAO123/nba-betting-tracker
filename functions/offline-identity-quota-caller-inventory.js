@@ -34,6 +34,8 @@ function assessOfflinePaidCallerInventory(source){
   const add=x=>{if(!blockers.includes(x))blockers.push(x);};
   if(typeof source!=="string"||source.length<1000)
     add("PRODUCTION_SOURCE_UNAVAILABLE");
+  // A malformed file input can never reach the string-only scanners.
+  if(typeof source!=="string")source="";
   const names=typeof source==="string"?
     [...source.matchAll(/exports\.(oddsPapi[A-Za-z0-9]+)\s*=\s*onCall\(/g)]
       .map(x=>x[1]):[];
