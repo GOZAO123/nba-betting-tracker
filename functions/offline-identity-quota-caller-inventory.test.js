@@ -129,5 +129,7 @@ test("D15.11 source inventory module is inert and cannot enable deployed code",(
    "offline-identity-quota-caller-inventory.js"),"utf8");
  assert.doesNotMatch(production(),/offline-identity-quota-caller-inventory/);
  assert.doesNotMatch(src,/require\(["'](?:firebase-|@google-cloud|google-auth-library)/);
- assert.doesNotMatch(src,/\.listen\(|\bfetch\(|onRequest\(|onCall\(|setInterval\(/);
+ // "onCall(" is an inert string search marker in this scanner; do not
+ // mistake that literal for a registered Firebase export.
+ assert.doesNotMatch(src,/\.listen\(|\bfetch\(|onRequest\(|setInterval\(/);
 });
