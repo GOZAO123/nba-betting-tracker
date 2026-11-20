@@ -1,0 +1,35 @@
+name: D15.36 offline reviewed OddsPapi-to-ESPN player identity
+
+on:
+  pull_request:
+    paths:
+      - "functions/offer-player-crosswalk.js"
+      - "functions/offer-player-crosswalk.test.js"
+      - ".github/workflows/offline-player-crosswalk.yml"
+  push:
+    branches: [main]
+    paths:
+      - "functions/offer-player-crosswalk.js"
+      - "functions/offer-player-crosswalk.test.js"
+      - ".github/workflows/offline-player-crosswalk.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  reviewed-player-identity:
+    name: Node 22 offline provider to ESPN athlete review
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Syntax checks without external requests
+        run: |
+          node --check functions/offer-player-crosswalk.js
+          node --check functions/offer-player-crosswalk.test.js
+      - name: Reviewed identity, fixture and bookmaker non-approval regression
+        run: |
+          node --test functions/offer-player-crosswalk.test.js functions/offer-team-crosswalk.test.js functions/offer-matching.test.js
