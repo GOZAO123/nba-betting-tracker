@@ -2,11 +2,16 @@
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { initializeApp } = require("firebase-admin/app");
 const { getFirestore } = require("firebase-admin/firestore");
-const { defineSecret } = require("firebase-functions/params");
+const { defineSecret, defineString } = require("firebase-functions/params");
 
 initializeApp();
 
 const oddsPapiKey = defineSecret("ODDSPAPI_API_KEY");
+
+// D15.17 offline-only proposal: a required deploy-time parameter, with NO default
+// runtime identity. Never supply its value without separately approved IAM,
+// rollback, cost and targeted-deployment gates. Other Functions are unaffected.
+const oddsBackendStatusServiceAccount = defineString("ODDS_BACKEND_STATUS_SERVICE_ACCOUNT");
 
 // Safety Update 32.9 — persistent budget shared by all manual OddsPapi probes.
 // In-memory caches alone are not a spend guard: cloud instance restarts clear them.
@@ -53,7 +58,10 @@ async function reserveDiagnosticRequests(amount) {
 
 
 exports.oddsBackendStatus = onCall(
-  { region: "europe-west1", maxInstances: 2, enforceAppCheck: false },
+  {
+    region: "europe-west1", maxInstances: 2, enforceAppCheck: false,
+    serviceAccount: oddsBackendStatusServiceAccount
+  },
   async (request) => {
     if (!request.auth) {
       throw new HttpsError("unauthenticated", "Sign in to check the odds backend.");
