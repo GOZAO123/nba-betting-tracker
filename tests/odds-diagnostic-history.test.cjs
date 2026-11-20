@@ -216,6 +216,7 @@ test("35.1D15.35 clear history control never touches quotas or provider transpor
  assert.match(local,/if\(!account\?\.uid\)return/);
  assert.match(local,/auth\.currentUser\?\.uid!==account\.uid/);
  assert.match(local,/textContent=/);
+ assert.match(local,/try\{if\(oddsHistoryKey\)summaries=oddsHistoryRead\(localStorage,oddsHistoryKey\)\}/);
  assert.doesNotMatch(local,/\.innerHTML\s*=/);
 });
 
@@ -229,6 +230,7 @@ test("35.1D15.35 preview is saved only after the existing manual authenticated p
  const saveIndex=handler.indexOf("oddsHistorySave(localStorage,oddsHistoryKey,summary)");
  assert.ok(confirmIndex>=0&&callableIndex>confirmIndex&&saveIndex>callableIndex);
  assert.match(handler,/auth\.currentUser\?\.uid===oddsHistoryUser/);
+ assert.match(handler,/try\{saved=oddsHistorySave\(localStorage,oddsHistoryKey,summary\)\}catch\(_\)\{\}/);
  assert.match(handler,/oddsHistorySummaryFromPreview\(data,Date\.now\(\),/);
  assert.doesNotMatch(handler,/setInterval|onSchedule|setTimeout/);
 });
