@@ -1,0 +1,44 @@
+name: Offline Firebase full-codebase wire discovery
+
+on:
+  pull_request:
+    paths:
+      - "functions/status-wire-discovery.test.js"
+      - ".github/workflows/offline-status-full-discovery.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  discover:
+    name: Real SDK wire format and real CLI v1alpha1 parser (offline)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install pinned public SDK/CLI packages, no lifecycle scripts
+        run: npm install --prefix functions --no-save --package-lock=false --ignore-scripts --no-audit --no-fund firebase-tools@15.28.2 firebase-functions@6.4.0 firebase-admin@13.4.0
+      - name: Run isolated SDK and CLI discovery regression tests
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ""
+          GOOGLE_CLOUD_PROJECT: ""
+          GOOGLE_CLOUD_QUOTA_PROJECT: ""
+          GCLOUD_PROJECT: ""
+          CLOUDSDK_CORE_PROJECT: ""
+          FIREBASE_CONFIG: ""
+          FIREBASE_TOKEN: ""
+          ODDS_BACKEND_STATUS_SERVICE_ACCOUNT: ""
+        run: node --test functions/status-sdk-manifest-probe.test.js functions/status-cli-parameter-probe.test.js functions/status-wire-discovery.test.js
+      - name: Ensure no generated Firebase environment or tracked changes
+        shell: bash
+        run: |
+          git diff --exit-code
+          test ! -e functions/.env
+          if compgen -G "functions/.env.*" > /dev/null; then
+            echo "Unexpected Firebase environment file"
+            exit 1
+          fi
