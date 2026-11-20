@@ -193,7 +193,13 @@ test("D15.33 CLI prints only static codes, deliberately exits 2, never provider 
   assert.equal(child.status,2);
   assert.equal(child.stderr,"");
   const result=JSON.parse(child.stdout);
-  blocked(result);
+  assert.equal(result.status,"BLOCKED");
+  for(const name of ["releaseReady","paidProviderAllowed","cloudChangesAuthorized"])
+    assert.equal(result[name],false);
+  assert.ok(Array.isArray(result.blockers));
+  assert.ok(result.blockers.includes("OWNER_LIVE_PROVIDER_REQUEST_APPROVAL_REQUIRED"));
+  assert.ok(result.blockers.every(x=>/^[A-Z0-9_]{3,90}$/.test(x)));
+  // JSON serialization does not preserve Object.freeze on the original value.
   assert.doesNotMatch(child.stdout,/apiKey|PRIVATE_PROVIDER|Synthetic|93001|1\.88|firebaseConfig/i);
 });
 
