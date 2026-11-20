@@ -63,7 +63,7 @@ test("D15.23 canonical 14-source plus separately deployed 15th live summary is n
   assert.equal(report.unexpectedCount, 0);
   assert.deepEqual(report.missing, []);
   assert.deepEqual(report.mismatched, []);
-  has(report, "REDUCTED_SUMMARY_ORIGIN_NOT_INDEPENDENTLY_AUTHENTICATED");
+  has(report, "REDACTED_SUMMARY_ORIGIN_NOT_INDEPENDENTLY_AUTHENTICATED");
   has(report, "ROLLBACK_SOURCE_AND_CONFIG_NOT_ATTESTED");
   has(report, "OWNER_CLOUD_CHANGE_APPROVAL_NOT_GRANTED");
 });
@@ -89,7 +89,7 @@ test("D15.23 missing or duplicated scheduled settlement is rejected", () => {
   for (const id of ["ledgerAutoSettleProspective", "oddsBackendStatus"]) {
     const data = baseline();
     const index = data.functions.findIndex(row => row.id === id);
-    data.functions[index] = { ...data.functions[0] };
+    data.functions[index] = { ...entry("oddsPapiTournamentProbe") };
     const report = assess(data);
     blocked(report);
     assert.equal(report.summaryMatches, false);
