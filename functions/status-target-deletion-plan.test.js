@@ -192,7 +192,7 @@ function assertCanonicalInventories(fixture) {
   }
 }
 
-async function requireTargetOnlyPlan(fixture, only = EXACT_ONLY) {
+async function requireTargetOnlyPlan(fixture, only) {
   // Project-specific fail-closed policy ON TOP of the Firebase CLI semantics.
   // Other CLI-valid selectors are not approved by this policy.
   assert.equal(only, EXACT_ONLY,
@@ -231,7 +231,7 @@ test("D15.22 uses pinned real Firebase CLI on Node 22 and the repository's sourc
 
 test("D15.22 exact codebase-targeted 14/15 plan only updates status", async () => {
   const fixture = fixtures();
-  const result = await requireTargetOnlyPlan(fixture);
+  const result = await requireTargetOnlyPlan(fixture, EXACT_ONLY);
   assert.equal(result.status, "BLOCKED");
   assert.equal(result.releaseReady, false);
   assert.equal(result.paidProviderAllowed, false);
@@ -294,14 +294,14 @@ test("D15.22 mismatch of status region would imply create/delete, and is blocked
   const plan = await rawPlan(fixture, EXACT_ONLY);
   assert.deepEqual(operations(plan).create, [TARGET]);
   assert.deepEqual(operations(plan).delete, [TARGET]);
-  await assert.rejects(requireTargetOnlyPlan(fixtures({ statusRegion: "us-central1" })));
+  await assert.rejects(requireTargetOnlyPlan(fixtures({ statusRegion: "us-central1" }), EXACT_ONLY));
 });
 
 test("D15.22 missing source-matched status candidate would create and is blocked", async () => {
   const fixture = fixtures({ removeStatus: true });
   const plan = await rawPlan(fixture, EXACT_ONLY);
   assert.deepEqual(operations(plan).create, [TARGET]);
-  await assert.rejects(requireTargetOnlyPlan(fixtures({ removeStatus: true })));
+  await assert.rejects(requireTargetOnlyPlan(fixtures({ removeStatus: true }), EXACT_ONLY));
 });
 
 test("D15.22 cross-codebase collision and runtime drift fail closed", async () => {
@@ -310,18 +310,18 @@ test("D15.22 cross-codebase collision and runtime drift fail closed", async () =
     { statusRuntime: "nodejs20" },
     { statusPlatform: "gcfv1" },
   ]) {
-    await assert.rejects(requireTargetOnlyPlan(fixtures(options)));
+    await assert.rejects(requireTargetOnlyPlan(fixtures(options), EXACT_ONLY));
   }
 });
 
 test("D15.22 incompatible callable/scheduled identity fails closed", async () => {
-  await assert.rejects(requireTargetOnlyPlan(fixtures({ statusTrigger: "scheduled" })));
+  await assert.rejects(requireTargetOnlyPlan(fixtures({ statusTrigger: "scheduled" }), EXACT_ONLY));
   await assert.rejects(rawPlan(fixtures({ statusTrigger: "scheduled" }), EXACT_ONLY));
 });
 
 test("D15.22 unexpected extra or missing preflight cannot pass inventory guard", async () => {
-  await assert.rejects(requireTargetOnlyPlan(fixtures({ extra: true })));
-  await assert.rejects(requireTargetOnlyPlan(fixtures({ removePreflight: true })));
+  await assert.rejects(requireTargetOnlyPlan(fixtures({ extra: true }), EXACT_ONLY));
+  await assert.rejects(requireTargetOnlyPlan(fixtures({ removePreflight: true }), EXACT_ONLY));
   const extraPlan = await rawPlan(fixtures({ extra: true }), EXACT_ONLY);
   assert.deepEqual(operations(extraPlan).delete, [],
     "A correctly scoped target ignores an unknown synthetic 16th Function");
@@ -331,7 +331,7 @@ test("D15.22 Firebase-managed label affects blanket-delete candidates, not appro
   const unmanaged = fixtures({ unmanagedPreflight: true });
   const unfiltered = await rawPlan(unmanaged, undefined);
   assert.equal(operations(unfiltered).delete.includes(PREFLIGHT), false);
-  const targeted = await requireTargetOnlyPlan(fixtures({ unmanagedPreflight: true }));
+  const targeted = await requireTargetOnlyPlan(fixtures({ unmanagedPreflight: true }), EXACT_ONLY);
   assert.equal(targeted.cloudChangesAuthorized, false);
 });
 
