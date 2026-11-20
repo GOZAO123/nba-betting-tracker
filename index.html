@@ -539,9 +539,18 @@ main{width:100%;min-width:0}
   <div class="row"><button id="detailedPropsBtn" type="button" class="mini">Test detailed NBA player props</button><span id="detailedPropsStatus" class="muted">Up to 2 OddsPapi requests; cached for 30 minutes.</span></div><div id="detailedPropsResult" class="muted"></div>
   <div class="row"><button id="marketCatalogBtn" type="button" class="mini">Identify NBA prop markets</button><span id="marketCatalogStatus" class="muted">One manual OddsPapi request. Resolves market IDs and betting lines from the official catalogue.</span></div><div id="marketCatalogResult" class="muted"></div>
   <div class="row"><button id="verifiedPropsBtn" type="button" class="mini">Preview OddsPapi Betano-market props</button><span id="verifiedPropsStatus" class="muted">Manual test · up to 2 OddsPapi requests · full game including overtime · no betting predictions.</span></div><div id="verifiedPropsResult" class="muted"></div>
+
   <div class="row" style="margin-top:12px"><input id="espnIdentityName" type="text" placeholder="OddsPapi player name, e.g. Doncic, Luka" aria-label="OddsPapi player name" style="min-width:260px"><select id="espnIdentityTeam" aria-label="ESPN team for identity check"><option value="">Choose NBA team</option></select><button id="espnIdentityBtn" type="button" class="mini">Check ESPN roster match</button></div>
   <p id="espnIdentityStatus" class="muted" role="status">Name matching only. Checks one selected team's official ESPN roster manually; no OddsPapi requests or automatic player linking.</p>
   <button id="espnSendToAnalyzer" type="button" class="primary mini" hidden>Use provider quote preview in Props Analyzer →</button>
+  <details id="oddsDiagnosticHistory" class="panel" style="margin-top:10px" aria-label="Saved OddsPapi diagnostic summaries">
+   <summary><strong>Saved diagnostic summaries (this browser only)</strong></summary>
+   <div class="row" style="justify-content:flex-end">
+    <button id="oddsDiagnosticHistoryClear" class="mini" type="button">Clear local history</button>
+   </div>
+   <p id="oddsDiagnosticHistoryStatus" class="muted" role="status">Sign in to view saved summary history. No odds requests are made.</p>
+   <div id="oddsDiagnosticHistoryEntries" class="muted"></div>
+  </details>
  </div></details>
 </section><div id="gamesTab" hidden><section class="panel" aria-label="NBA games dashboard"><div class="dashboard-head"><div><h2 style="margin:0">🏀 Today's NBA Games</h2><p class="muted" style="margin:5px 0 0">NBA schedule date (US Eastern Time) · Times shown on your device</p></div><button id="refreshGames" class="mini" type="button">↻ Refresh</button></div><div class="game-filters" role="group" aria-label="Filter NBA games"><button type="button" class="game-filter" data-game-filter="all" aria-pressed="true">All <span data-game-count="all">0</span></button><button type="button" class="game-filter" data-game-filter="pre" aria-pressed="false">Upcoming <span data-game-count="pre">0</span></button><button type="button" class="game-filter" data-game-filter="in" aria-pressed="false">Live <span data-game-count="in">0</span></button><button type="button" class="game-filter" data-game-filter="post" aria-pressed="false">Final <span data-game-count="post">0</span></button></div><div class="game-search"><input id="gameTeamSearch" type="search" placeholder="Search NBA teams…" aria-label="Search NBA games by team" autocomplete="off"><button id="clearGameSearch" type="button" class="mini" hidden>Clear</button></div><div id="gamesMessage" class="muted" role="status">Loading games…</div><div id="gamesList"></div><p id="gamesFilterEmpty" class="muted" hidden>No games match this filter.</p><p class="muted notice">Game data is provided by a free public ESPN endpoint and may be delayed or temporarily unavailable. Tap a completed game to view individual player box-score statistics. Tap a game to see available game details and player box scores.</p></section></div><section id="analyzerTab" class="panel" hidden><header class="prop-hero"><span class="prop-eyebrow">PLAYER RESEARCH · ESPN DATA</span><h2>📊 Props Analyzer</h2><p class="muted">Explore recent performance, historical hit rates and consistency.</p></header><div class="prop-info-banner"><strong>Historical analysis only</strong><span>Completed NBA games · Hit rates are not predicted probabilities or betting recommendations.</span></div><h3 class="prop-form-title">Build your analysis</h3><div class="prop-controls"><label class="prop-field"><span>Team</span><select id="propTeam" aria-label="Player team"><option value="">Choose team</option></select></label><label class="prop-field"><span>Player</span><select id="propPlayer" aria-label="Player"><option value="">Choose player</option></select></label><label class="prop-field"><span>Market</span><select id="propMarket" aria-label="Prop market"><option value="PTS">Points</option><option value="REB">Rebounds</option><option value="AST">Assists</option><option value="3PT">3-pointers made</option><option value="PRA">Points + Rebounds + Assists (PRA)</option><option value="PR">Points + Rebounds (PR)</option><option value="PA">Points + Assists (PA)</option><option value="RA">Rebounds + Assists (RA)</option></select></label><label class="prop-field"><span>Recent games</span><select id="propWindow" aria-label="Number of games"><option value="5">Last 5</option><option value="10" selected>Last 10</option><option value="20">Last 20</option></select></label><label class="prop-field"><span>Betting line</span><input id="propLine" type="number" step="0.5" min="0" placeholder="Betting line (e.g. 24.5)" aria-label="Betting line"></label></div><div id="propLinkedQuote" class="prop-verified-identity" role="status" hidden></div><div class="prop-actions"><button class="primary" id="analyzeProp" type="button">Analyze player →</button></div><p id="propMessage" class="muted prop-status" role="status">Select a team and player to begin.</p><div id="propResults" class="prop-results"></div></section><div id="checklistTab"><header class="checklist-hero"><span class="checklist-eyebrow">DAILY WORKSPACE · CLOUD SYNC</span><h2>✅ Player Checklist</h2><p class="muted">Organise your NBA player research and track today’s checks.</p></header><div class="panel checklist-summary"><div class="stats"><strong><span id="marked">0</span> checked today</strong><span id="count" class="muted"></span><span id="date" class="muted"></span></div><div id="status" class="muted">Connecting…</div></div><section class="panel" id="setup" hidden><h2>Import your saved roster</h2><p class="notice">Your cloud checklist is empty. Import your exported JSON backup to preserve your team assignments and checked players. This will replace the empty cloud list.</p><button class="primary" id="importFirst">Import backup JSON</button></section><div class="panel checklist-filters"><h3>Find players</h3><div class="controls"><input id="search" type="text" placeholder="Search players or teams" aria-label="Search players"><select id="team" aria-label="Filter by team"><option value="">All teams</option></select><select id="filter" aria-label="Filter status"><option value="all">All players</option><option value="open">Not checked</option><option value="done">Checked</option></select></div><div class="row" style="margin-top:12px"><button id="export">Export backup</button><button id="import">Import backup</button><button id="reset">Reset today's checks</button></div></div><details class="panel fold checklist-add" id="addPanel"><summary>＋ Add player ▾</summary><div class="row"><input id="newName" type="text" placeholder="Player name"><select id="newTeam" aria-label="Team"></select><button class="primary" id="add">Add</button></div></details><div class="checklist-list-head"><h3>Team rosters</h3><span class="muted">Tap a team to expand</span></div><div id="list"></div><p class="muted notice">Changes save to your private Firebase account. Keep a separate exported backup. Your original roster is never automatically modified.</p></div></div><input id="file" type="file" accept=".json,application/json"></main><script>
 /* Layout preference is local to this device. Wide by default: desktop-width page
@@ -4752,6 +4761,179 @@ btCohortButton.addEventListener('click',async()=>{
  }
 });
 
+
+// Update 35.1D15.35 pure diagnostic summary BEGIN
+// Local diagnostic HISTORY ONLY. Never persist samples, prices, player names,
+// player IDs, provider credentials, bets, or an Analyzer-ready quote.
+const ODDS_HISTORY_LOCAL_PREFIX='nba-oddspapi-diagnostic-summary-v1-';
+const ODDS_HISTORY_MAX_RECORDS=10;
+const ODDS_HISTORY_MAX_AGE_MS=30*24*60*60*1000;
+const ODDS_HISTORY_MARKETS=Object.freeze(['PTS','REB','AST','3PT','PR','PA','RA','PRA']);
+const ODDS_HISTORY_FIELDS=Object.freeze([
+ 'schemaVersion','status','observedAt','fixture','fixtureStart',
+ 'catalogueDefinitions','verifiedMarketDefinitions','matchingMarketIds',
+ 'activeSelections','unavailableSelections','marketCounts','servedFromCache',
+ 'requestsReported'
+]);
+function oddsHistoryCount(value,max=1000000){
+ return Number.isSafeInteger(value)&&value>=0&&value<=max;
+}
+function oddsHistorySummaryValid(entry,now=Date.now()){
+ if(!entry||typeof entry!=='object'||Array.isArray(entry)||
+    Object.keys(entry).sort().join('|')!==[...ODDS_HISTORY_FIELDS].sort().join('|')||
+    entry.schemaVersion!==1||entry.status!=='PROVIDER_PREVIEW_UNVERIFIED'||
+    !Number.isSafeInteger(now)||!Number.isSafeInteger(entry.observedAt)||
+    entry.observedAt>now+60000||entry.observedAt<now-ODDS_HISTORY_MAX_AGE_MS||
+    typeof entry.fixture!=='string'||entry.fixture.length>90||
+    !/^[A-Za-z .&'-]+ vs [A-Za-z .&'-]+$/.test(entry.fixture)||
+    typeof entry.fixtureStart!=='string'||!Number.isFinite(Date.parse(entry.fixtureStart))||
+    new Date(entry.fixtureStart).toISOString()!==entry.fixtureStart||
+    !oddsHistoryCount(entry.catalogueDefinitions)||
+    !oddsHistoryCount(entry.verifiedMarketDefinitions)||
+    !oddsHistoryCount(entry.matchingMarketIds)||
+    !oddsHistoryCount(entry.activeSelections)||
+    !oddsHistoryCount(entry.unavailableSelections)||
+    typeof entry.servedFromCache!=='boolean'||
+    !oddsHistoryCount(entry.requestsReported,2)||
+    !Array.isArray(entry.marketCounts)||entry.marketCounts.length>8)
+  return false;
+ const names=new Set();let total=0;
+ for(const row of entry.marketCounts){
+  if(!row||typeof row!=='object'||Array.isArray(row)||
+     Object.keys(row).sort().join('|')!=='activeSelections|family'||
+     !ODDS_HISTORY_MARKETS.includes(row.family)||names.has(row.family)||
+     !oddsHistoryCount(row.activeSelections))return false;
+  names.add(row.family);total+=row.activeSelections;
+ }
+ return total<=entry.activeSelections;
+}
+function oddsHistorySummaryFromPreview(data,observedAt,knownTeams){
+ if(!data||typeof data!=='object'||Array.isArray(data)||
+    !Array.isArray(knownTeams)||knownTeams.length!==30||
+    !Number.isSafeInteger(observedAt)||observedAt<0||
+    data.bookmakerPresent!==true||data.bookmakerSuspended===true||
+    typeof data.fixture!=='string')return null;
+ const parts=/^([A-Za-z .&'-]+) vs ([A-Za-z .&'-]+)$/.exec(data.fixture);
+ if(!parts||parts[1]===parts[2]||
+    !knownTeams.includes(parts[1])||!knownTeams.includes(parts[2]))return null;
+ const start=Date.parse(data.startTime);
+ if(!Number.isFinite(start)||start<=observedAt||
+    start>observedAt+72*60*60*1000)return null;
+ const counters=[
+  data.catalogueDefinitions,data.verifiedFullGameMarketIds,data.marketCount,
+  data.activeSelections,data.unavailableSelections
+ ];
+ if(!counters.every(x=>oddsHistoryCount(x)))return null;
+ if(!Array.isArray(data.marketCounts)||data.marketCounts.length>8)return null;
+ const marketCounts=[];
+ for(const row of data.marketCounts){
+  if(!row||!ODDS_HISTORY_MARKETS.includes(row.family)||
+     !oddsHistoryCount(row.activeSelections))return null;
+  marketCounts.push({family:row.family,activeSelections:row.activeSelections});
+ }
+ const summary={
+  schemaVersion:1,status:'PROVIDER_PREVIEW_UNVERIFIED',
+  observedAt,fixture:parts[1]+' vs '+parts[2],
+  fixtureStart:new Date(start).toISOString(),
+  catalogueDefinitions:data.catalogueDefinitions,
+  verifiedMarketDefinitions:data.verifiedFullGameMarketIds,
+  matchingMarketIds:data.marketCount,
+  activeSelections:data.activeSelections,
+  unavailableSelections:data.unavailableSelections,
+  marketCounts,
+  servedFromCache:data.cached===true,
+  requestsReported:oddsHistoryCount(data.requestsUsed,2)?data.requestsUsed:0
+ };
+ return oddsHistorySummaryValid(summary,observedAt)?summary:null;
+}
+function oddsHistoryRead(storage,key,now=Date.now()){
+ try{
+  if(!storage||typeof key!=='string'||
+     !/^nba-oddspapi-diagnostic-summary-v1-[a-f0-9]{64}$/.test(key))
+   return [];
+  const raw=storage.getItem(key);
+  if(typeof raw!=='string'||raw.length>16000)return [];
+  const data=JSON.parse(raw);
+  if(!Array.isArray(data)||data.length>100)return [];
+  return data.filter(x=>oddsHistorySummaryValid(x,now))
+   .sort((a,b)=>b.observedAt-a.observedAt).slice(0,ODDS_HISTORY_MAX_RECORDS);
+ }catch(_){return [];}
+}
+function oddsHistorySave(storage,key,summary,now=Date.now()){
+ try{
+  if(!oddsHistorySummaryValid(summary,now)||
+     !/^nba-oddspapi-diagnostic-summary-v1-[a-f0-9]{64}$/.test(key))
+   return false;
+  const items=[summary,...oddsHistoryRead(storage,key,now).filter(x=>
+   x.observedAt!==summary.observedAt)]
+   .sort((a,b)=>b.observedAt-a.observedAt).slice(0,ODDS_HISTORY_MAX_RECORDS);
+  storage.setItem(key,JSON.stringify(items));
+  return true;
+ }catch(_){return false;}
+}
+// Update 35.1D15.35 pure diagnostic summary END
+
+
+const oddsHistoryStatus=document.getElementById('oddsDiagnosticHistoryStatus');
+const oddsHistoryEntries=document.getElementById('oddsDiagnosticHistoryEntries');
+const oddsHistoryClear=document.getElementById('oddsDiagnosticHistoryClear');
+let oddsHistoryKey=null,oddsHistoryUser=null,oddsHistoryGeneration=0;
+function oddsHistoryRender(){
+ oddsHistoryEntries.replaceChildren();
+ let summaries=[];
+ try{if(oddsHistoryKey)summaries=oddsHistoryRead(localStorage,oddsHistoryKey)}catch(_){}
+
+ oddsHistoryClear.disabled=!oddsHistoryKey||summaries.length===0;
+ if(!oddsHistoryKey){
+  oddsHistoryStatus.textContent='Sign in to view local summaries. No OddsPapi requests are made.';
+  return;
+ }
+ oddsHistoryStatus.textContent=summaries.length
+  ?summaries.length+' saved diagnostic '+(summaries.length===1?'summary':'summaries')+
+   ' · local to this browser/account · last 30 days · no raw prices, picks or player IDs.'
+  :'No locally saved previews yet. Existing screenshots are not automatically imported.';
+ for(const item of summaries){
+  const p=document.createElement('p');
+  const when=new Intl.DateTimeFormat('en-GB',{
+   timeZone:'Europe/Lisbon',year:'numeric',month:'2-digit',day:'2-digit',
+   hour:'2-digit',minute:'2-digit',hour12:false
+  }).format(new Date(item.observedAt));
+  p.textContent='Viewed '+when+' Lisbon · '+item.fixture+
+   ' · '+item.matchingMarketIds+' matching market IDs · '+
+   item.activeSelections+' active selections · '+
+   item.marketCounts.map(x=>x.family+' '+x.activeSelections).join(', ')+
+   ' · '+item.requestsReported+' upstream requests reported'+
+   (item.servedFromCache?' (server cached)':'')+
+   ' · HISTORICAL ODDS PAPI SUMMARY ONLY. No prices, verified main line, ESPN identity, or bet capture saved.';
+  oddsHistoryEntries.append(p);
+ }
+}
+async function oddsHistorySetAuthUser(account){
+ const generation=++oddsHistoryGeneration;
+ oddsHistoryKey=null;oddsHistoryUser=null;oddsHistoryRender();
+ if(!account?.uid)return;
+ try{
+  // Stable per-account local key, without storing or displaying the raw UID.
+  const bytes=new TextEncoder().encode(account.uid);
+  const digest=await crypto.subtle.digest('SHA-256',bytes);
+  if(generation!==oddsHistoryGeneration||auth.currentUser?.uid!==account.uid)return;
+  oddsHistoryUser=account.uid;
+  oddsHistoryKey=ODDS_HISTORY_LOCAL_PREFIX+
+   Array.from(new Uint8Array(digest),b=>b.toString(16).padStart(2,'0')).join('');
+  oddsHistoryRender();
+ }catch(_){
+  if(generation===oddsHistoryGeneration){
+   oddsHistoryStatus.textContent='Local summary storage unavailable; live preview still works.';
+  }
+ }
+}
+oddsHistoryClear.addEventListener('click',()=>{
+ if(!oddsHistoryKey||auth.currentUser?.uid!==oddsHistoryUser)return;
+ if(!confirm('Clear historical OddsPapi summary metadata on this browser? This does not reset Firebase or provider request limits.'))return;
+ try{localStorage.removeItem(oddsHistoryKey)}catch(_){}
+ oddsHistoryRender();
+});
+
 document.getElementById('verifiedPropsBtn')?.addEventListener('click',async()=>{
  const btn=document.getElementById('verifiedPropsBtn'),status=document.getElementById('verifiedPropsStatus'),out=document.getElementById('verifiedPropsResult');
  if(!auth.currentUser){status.textContent='Sign in first.';return}
@@ -4778,6 +4960,18 @@ document.getElementById('verifiedPropsBtn')?.addEventListener('click',async()=>{
   }
   line('Matching market IDs in this game: '+(data.marketCount??0)+' · Active selections: '+(data.activeSelections??0)+' · Excluded/unavailable: '+(data.unavailableSelections??0));
   if(data.marketCounts?.length)line(data.marketCounts.map(x=>x.family+': '+x.activeSelections+' active').join(' · '));
+  // Save counts/fixture only after a successful, explicitly manual preview.
+  // No samples, price, player ID, ESPN match or betting action is persisted.
+  if(oddsHistoryKey&&auth.currentUser?.uid===oddsHistoryUser){
+   const summary=oddsHistorySummaryFromPreview(data,Date.now(),
+    Object.keys(ESPN_NBA_TEAM_IDS));
+   if(summary){
+    let saved=false;
+    try{saved=oddsHistorySave(localStorage,oddsHistoryKey,summary)}catch(_){}
+    oddsHistoryRender();
+    if(!saved)oddsHistoryStatus.textContent='Could not save local diagnostic summary; preview is still temporary.';
+   }
+  }
   if(!(data.samples||[]).length){line('No active provider-reported full-game player-prop prices were returned.','warning');return}
   setResearchPreview(data);
   const wrap=document.createElement('div');wrap.className='boxscore';const table=document.createElement('table');
@@ -5039,6 +5233,8 @@ onAuthStateChanged(auth,u=>{
  authSession++;writeQueue=Promise.resolve();pendingWrites=0;latestCloud=null;lastCommitted=null;syncError=null;
  if(unsubscribe){unsubscribe();unsubscribe=null}
  user=u;ready=false;$('login').hidden=!!u;$('app').style.display=u?'block':'none';$('signout').hidden=!u;
+ // Restores aggregate local history only; never invokes provider, ESPN or Firestore.
+ void oddsHistorySetAuthUser(u);
  scheduleDailyCheck();
  if(!u)return;
  msg('Loading cloud checklist…');
