@@ -1,0 +1,34 @@
+name: D15.33 offline quote collection release preflight
+
+on:
+  pull_request:
+    paths:
+      - "functions/offline-quote-collection-preflight.js"
+      - "functions/offline-quote-collection-preflight.test.js"
+      - ".github/workflows/offline-quote-collection-preflight.yml"
+  push:
+    branches: [main]
+    paths:
+      - "functions/offline-quote-collection-preflight.js"
+      - "functions/offline-quote-collection-preflight.test.js"
+      - ".github/workflows/offline-quote-collection-preflight.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  offline-quote-preflight:
+    name: Node 22 read-only quote collection readiness gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Syntax validation
+        run: |
+          node --check functions/offline-quote-collection-preflight.js
+          node --check functions/offline-quote-collection-preflight.test.js
+      - name: Offline fail-closed release preflight tests
+        run: node --test functions/offline-quote-collection-preflight.test.js
