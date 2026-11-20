@@ -1,0 +1,42 @@
+name: Offline status SDK manifest probe
+
+on:
+  pull_request:
+    paths:
+      - "functions/status-sdk-manifest-probe.test.js"
+      - ".github/workflows/offline-status-sdk-manifest.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  manifest:
+    name: Pinned Firebase SDK, synthetic manifest only
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install exact public npm versions (no lifecycle scripts)
+        run: npm install --prefix functions --no-save --package-lock=false --ignore-scripts --no-audit --no-fund firebase-functions@6.4.0 firebase-admin@13.4.0
+      - name: Run disconnected real SDK metadata test (no cloud credentials)
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ""
+          GOOGLE_CLOUD_PROJECT: ""
+          GCLOUD_PROJECT: ""
+          FIREBASE_CONFIG: ""
+          FIREBASE_TOKEN: ""
+          ODDS_BACKEND_STATUS_SERVICE_ACCOUNT: ""
+        run: node --test functions/status-sdk-manifest-probe.test.js
+      - name: Verify no tracked changes or Firebase env artifact
+        shell: bash
+        run: |
+          git diff --exit-code
+          test ! -e functions/.env
+          if compgen -G "functions/.env.*" > /dev/null; then
+            echo "Unexpected Firebase environment file was generated"
+            exit 1
+          fi
