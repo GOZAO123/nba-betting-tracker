@@ -1,0 +1,34 @@
+name: D15.30 offline create-only quote evidence store
+
+on:
+  pull_request:
+    paths:
+      - "functions/offline-quote-evidence-store.js"
+      - "functions/offline-quote-evidence-store.test.js"
+      - ".github/workflows/offline-quote-evidence-store.yml"
+  push:
+    branches: [main]
+    paths:
+      - "functions/offline-quote-evidence-store.js"
+      - "functions/offline-quote-evidence-store.test.js"
+      - ".github/workflows/offline-quote-evidence-store.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  quote-storage:
+    name: Node 22 synthetic quote and anti-replay storage checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Syntax check
+        run: |
+          node --check functions/offline-quote-evidence-store.js
+          node --check functions/offline-quote-evidence-store.test.js
+      - name: Disconnected create-only quote storage tests
+        run: node --test functions/offline-quote-evidence-store.test.js
