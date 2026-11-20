@@ -149,24 +149,27 @@ function makeOfflinePlayerReceiptLink({
     throw new TypeError("Missing private evidence review dependencies.");
   return Object.freeze(async function review(selection,token) {
     try {
-      if(!exact(selection,SELECTOR)||!fixture(selection.fixtureId)||
-         !id(selection.marketId)||!id(selection.providerPlayerId)||
-         !ref(selection.sourceReference)||!object(token))return null;
+      if(!exact(selection,SELECTOR)||!object(token))return null;
+      // Pin one immutable value before the first await: never authorize one
+      // selector and later read different records after caller mutation.
+      const metadata=Object.freeze({...selection});
+      if(!exact(metadata,SELECTOR)||!fixture(metadata.fixtureId)||
+         !id(metadata.marketId)||!id(metadata.providerPlayerId)||
+         !ref(metadata.sourceReference))return null;
       const tick=now();
       if(!Number.isSafeInteger(tick)||tick<0)return null;
-      const metadata=Object.freeze({...selection});
       if(await isTrustedInternalReview(token,metadata)!==true)return null;
-      const quotePath=QUOTE_PATH+sha([selection.sourceReference,
-        selection.fixtureId,selection.providerPlayerId,selection.marketId]);
+      const quotePath=QUOTE_PATH+sha([metadata.sourceReference,
+        metadata.fixtureId,metadata.providerPlayerId,metadata.marketId]);
       const quoteDoc=await readPrivateEvidence(quotePath);
       const q=originalQuote(quoteDoc,quotePath,tick);
-      if(!q||q.fixtureId!==selection.fixtureId||
-         q.sourceReference!==selection.sourceReference||
-         q.providerPlayerId!==selection.providerPlayerId||
-         q.marketId!==selection.marketId)return null;
-      const batch=await readPrivateEvidence(TEAM_PATH+selection.sourceReference);
-      const fixtureRow=originalFixture(batch,selection.sourceReference,
-        selection.fixtureId,tick);
+      if(!q||q.fixtureId!==metadata.fixtureId||
+         q.sourceReference!==metadata.sourceReference||
+         q.providerPlayerId!==metadata.providerPlayerId||
+         q.marketId!==metadata.marketId)return null;
+      const batch=await readPrivateEvidence(TEAM_PATH+metadata.sourceReference);
+      const fixtureRow=originalFixture(batch,metadata.sourceReference,
+        metadata.fixtureId,tick);
       if(!fixtureRow||fixtureRow.capturedAt!==q.capturedAt||
          fixtureRow.startTime!==q.startTime||
          fixtureRow.participantIds[0]!==q.providerParticipantIds[0]||
