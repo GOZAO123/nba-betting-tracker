@@ -85,8 +85,14 @@ Accepted root `method`: `owner-readonly-console-summary` or
 `owner-readonly-cli-summary`. This field is self-reported and is
 **not a cryptographically verified provenance statement**.
 
-- `codebase`: only `default` matches current target-planning expectations.
-  Unknown/unlabeled/other codebases **block**. Do not invent the label.
+- `codebase`: preserve the **raw observed classification**. Explicit `default`
+  or observed `unlabeled` are accepted for the Firebase **default** codebase:
+  pinned `firebase-tools@15.28.2` omits the label when writing the default
+  codebase and interprets its absence as `default` when reading.
+  **Unknown, empty, omitted, non-default or unobserved labels still block.**
+  Never fill `unlabeled` merely because a label was not inspected.
+  [CLI reading](https://github.com/firebase/firebase-tools/blob/v15.28.2/src/gcp/cloudfunctions.ts#L593)
+  and [writing](https://github.com/firebase/firebase-tools/blob/v15.28.2/src/gcp/cloudfunctions.ts#L724-L731).
 - `firebaseManaged`: source-backed 14 Functions require a verified
   `yes`. Separately deployed `oddsPapiAccountPreflight` may be
   `yes` or `no` **only if observed**, and either case leaves the
@@ -154,9 +160,16 @@ use `unknown` where applicable and accept BLOCKED.
   private environments or exact revision/config rollback.
 - Node syntax/tests and read-only CI are not evidence of production
   deployment success. No deployment or production dry run has occurred.
-- In particular, live preflight Firebase-managed ownership is unknown:
-  D15.22 showed a **synthetic** blanket deletion candidate conditional
-  on Firebase management; this is NOT a finding about the live label.
+- **D15.24 read-only owner observation (20 November 2026):** both
+  `oddsPapiAccountPreflight` and `oddsBackendStatus` reported
+  `firebaseManaged:yes`, `codebase:unlabeled`,
+  `runtimeIdentity:default-compute`, active Node 22 in `europe-west1`,
+  and exactly one Cloud Run revision traffic entry with 100% allocation.
+  No raw principal or revision was retained. This is **two of 15** Functions
+  and is not a complete revision inventory or source provenance attestation.
+  D15.22's blanket deletion finding is still **synthetic**, and the
+  separately deployed preflight remains at risk from an inappropriate
+  unfiltered deployment. Neither live Function was changed.
 - Current costs, billing and provider expense remain unverified by this
   offline stage. No OddsPapi requests were made.
 
@@ -173,6 +186,35 @@ reset, hard-disabled diagnostics and maximum **six upstream OddsPapi
 diagnostic requests per UTC day**. Do not remove default Compute Editor,
 adjust Cloud Run ingress/public Invoker or change any IAM without
 separate explicit approval.
+
+## D15.24 narrow correction — observed default-codebase label
+
+The owner independently ran read-only, redacted `gcloud functions describe`
+and `gcloud run services describe` commands on 20 November 2026 for only
+`oddsBackendStatus` and `oddsPapiAccountPreflight`. Both returned
+`codebase:"unlabeled"`, `firebaseManaged:"yes"`, default Compute
+identity classification, active Node 22/`europe-west1`, and
+`revisionTraffic:"single-100"`. Actual service names, emails, secrets
+and revision IDs were not included in the shared evidence.
+
+The earlier D15.23 validator erroneously required the raw label to be the
+literal `default`. Pinned Firebase CLI code explicitly treats a missing
+`firebase-functions-codebase` label as the default and does not write
+that label for default deployments. The corrected validator preserves
+`unlabeled` as the observed raw classification and accepts it for
+shape checks **only**. Missing `codebase` key, `null`, `unknown`, empty
+string and non-default labels continue to fail closed; no release gate
+can become true. The synthetic D15.22 planner already models the CLI's
+normalized `default` codebase, so this correction does not alter
+D15.22, Firebase CLI deploy behavior, or any live Function.
+
+The other 13 deployed Functions' current raw codebase labels and Cloud Run
+traffic have **not** been inspected in this D15.24 session. Do not build
+a 15/15 report using hypothetical values. Effective IAM, source fingerprint,
+rollback archives, billing and approval remain separate blockers.
+
+D15.24 revised intake CI and backend regression: **PENDING** at the time
+this section was first added.
 
 ## CI evidence
 
