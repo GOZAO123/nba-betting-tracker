@@ -1,0 +1,32 @@
+name: D15.34 offline preview verification copy
+
+on:
+  pull_request:
+    paths:
+      - "index.html"
+      - "functions/odds-preview-verification-copy.test.js"
+      - ".github/workflows/offline-odds-preview-copy.yml"
+  push:
+    branches: [main]
+    paths:
+      - "index.html"
+      - "functions/odds-preview-verification-copy.test.js"
+      - ".github/workflows/offline-odds-preview-copy.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  odds-preview-copy:
+    name: Node 22 trust-accurate OddsPapi preview copy
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Offline test syntax
+        run: node --check functions/odds-preview-verification-copy.test.js
+      - name: Static copy and preview-behavior regression
+        run: node --test functions/odds-preview-verification-copy.test.js
