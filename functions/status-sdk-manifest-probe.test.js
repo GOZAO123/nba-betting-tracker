@@ -149,7 +149,7 @@ test("D15.19 actual SDK callable preserves signed-in status behavior", async () 
   );
   const result = await functionUnderTest.run({ auth: { uid: "synthetic-only" } });
   assert.deepEqual(
-    result,
+    JSON.parse(JSON.stringify(result)),
     {
       ready: true,
       provider: "OddsPapi",
