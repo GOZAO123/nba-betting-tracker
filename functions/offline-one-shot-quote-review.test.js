@@ -42,7 +42,7 @@ const request = () => ({
 });
 function setup(config={}) {
   let count=0;
-  const original=config.source??source();
+  const original=Object.hasOwn(config,"source") ? config.source : source();
   const loader=config.takeBackendOwnedSource??(async()=>{count++;return original;});
   const review=makeOfflineOneShotQuoteReview({
     ownerUid:OWNER,now:config.now??(()=>NOW),
