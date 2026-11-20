@@ -1,0 +1,30 @@
+name: D15.26 offline one-player evidence rehearsal
+
+on:
+  pull_request:
+    paths:
+      - "functions/one-player-readiness.test.js"
+      - ".github/workflows/offline-one-player-readiness.yml"
+  push:
+    branches: [main]
+    paths:
+      - "functions/one-player-readiness.test.js"
+      - ".github/workflows/offline-one-player-readiness.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  one-player-offline:
+    name: Synthetic one-event and one-player verification (Node 22)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Syntax check (no dependencies, credentials or provider calls)
+        run: node --check functions/one-player-readiness.test.js
+      - name: Disconnected synthetic ESPN and OddsPapi evidence assertions
+        run: node --test functions/one-player-readiness.test.js
