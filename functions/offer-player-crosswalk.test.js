@@ -251,6 +251,15 @@ test("D15.36 duplicate same player/fixture/source rows invalidate whole manifest
   assert.equal(resolve([reviewedRow(),reviewedRow({reviewStatus:"REVOKED"})]),null);
 });
 
+test("D15.36 separate source cannot silently reapprove a revoked provider identity",()=>{
+  const row=reviewedRow(),revoked=reviewedRow({
+    reviewStatus:"REVOKED",
+    provider:{...row.provider,sourceReference:"ODDSPAPI_MANUAL_"+"F".repeat(32)}
+  });
+  assert.equal(resolve([row,revoked]),null);
+  assert.equal(resolve([revoked,row]),null);
+});
+
 test("D15.36 reused provider ID to a different ESPN athlete is rejected",()=>{
   const conflicting=reviewedRow({
     provider:{...reviewedRow().provider,sourceReference:"ODDSPAPI_MANUAL_"+"B".repeat(32)},
