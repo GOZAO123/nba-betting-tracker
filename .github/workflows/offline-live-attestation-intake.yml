@@ -1,0 +1,50 @@
+name: Offline redacted production attestation intake
+
+on:
+  pull_request:
+    paths:
+      - "functions/offline-live-attestation-review.js"
+      - "functions/offline-live-attestation-cli.js"
+      - "functions/offline-live-attestation-review.test.js"
+      - ".github/workflows/offline-live-attestation-intake.yml"
+      - "docs/update-35-1d15-23-redacted-live-attestation-intake.md"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  review:
+    name: Node 22 no-dependencies, disconnected intake validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Syntax validation — no Firebase or cloud tools
+        run: |
+          node --check functions/offline-live-attestation-review.js
+          node --check functions/offline-live-attestation-cli.js
+          node --check functions/offline-live-attestation-review.test.js
+      - name: Test redacted intake and unsafe evidence refusal
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ""
+          GOOGLE_CLOUD_PROJECT: ""
+          GOOGLE_CLOUD_QUOTA_PROJECT: ""
+          GCLOUD_PROJECT: ""
+          CLOUDSDK_CORE_PROJECT: ""
+          FIREBASE_CONFIG: ""
+          FIREBASE_TOKEN: ""
+          ODDS_BACKEND_STATUS_SERVICE_ACCOUNT: ""
+        run: node --test functions/offline-live-attestation-review.test.js
+      - name: No on-disk Firebase evidence artifacts or tracked edits
+        shell: bash
+        run: |
+          git diff --exit-code
+          test ! -e functions/.env
+          if compgen -G "functions/.env.*" > /dev/null; then
+            echo "Unexpected Firebase env artifact"
+            exit 1
+          fi
