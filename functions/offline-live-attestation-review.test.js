@@ -39,13 +39,17 @@ function baseline() {
 function assess(data, source = SOURCE, now = NOW) {
   return assessRedactedAttestation(JSON.stringify(data), source, now);
 }
-function blocked(result) {
+function blocked(result, inProcess = true) {
   assert.equal(result.status, "BLOCKED");
   assert.equal(result.releaseReady, false);
   assert.equal(result.paidProviderAllowed, false);
   assert.equal(result.cloudChangesAuthorized, false);
-  assert.ok(Object.isFrozen(result));
-  assert.ok(Object.isFrozen(result.blockers));
+  // JSON.parse of CLI stdout necessarily creates new, non-frozen objects.
+  // Object.freeze is a property of the in-process report, not wire JSON.
+  if (inProcess) {
+    assert.ok(Object.isFrozen(result));
+    assert.ok(Object.isFrozen(result.blockers));
+  }
 }
 function has(result, code) {
   assert.ok(result.blockers.includes(code), JSON.stringify(result.blockers));
@@ -295,7 +299,7 @@ test("D15.23 stdin checker reads synthetic redacted input but always reports rel
   assert.equal(child.status, 0, child.stderr);
   assert.equal(child.stderr, "");
   const report = JSON.parse(child.stdout);
-  blocked(report);
+  blocked(report, false);
   assert.equal(report.summaryMatches, true);
   assert.equal(report.expectedCount, 15);
   assert.equal(report.cloudChangesAuthorized, false);
@@ -312,7 +316,7 @@ test("D15.23 stdin checker never reflects raw credential-shaped input or unexpec
   });
   assert.equal(child.status, 2, child.stderr);
   assert.doesNotMatch(child.stdout, new RegExp(secret));
-  blocked(JSON.parse(child.stdout));
+  blocked(JSON.parse(child.stdout), false);
 });
 
 test("D15.23 stdin checker disallows path arguments and excessive input bytes", () => {
@@ -323,7 +327,7 @@ test("D15.23 stdin checker disallows path arguments and excessive input bytes", 
     });
     assert.equal(child.status, 2, child.stderr);
     const report = JSON.parse(child.stdout);
-    blocked(report);
+    blocked(report, false);
     assert.equal(report.summaryMatches, false);
     assert.equal(report.cloudChangesAuthorized, false);
   }
