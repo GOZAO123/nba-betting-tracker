@@ -130,7 +130,11 @@ function assessRedactedAttestation(text, source, nowMs = Date.now()) {
       row.runtime === "nodejs22" &&
       row.trigger === expectedTrigger &&
       row.state === "ACTIVE" &&
-      row.codebase === "default" &&
+      // Record the actually observed raw codebase label classification.
+      // firebase-tools@15.28.2 maps a missing codebase label to "default"
+      // (gcp/cloudfunctions.ts), but does not emit that label on a
+      // default-codebase deploy. Do not treat "unknown" as unlabeled.
+      (row.codebase === "default" || row.codebase === "unlabeled") &&
       (row.firebaseManaged === "yes" ||
        (row.id === PREFLIGHT && row.firebaseManaged === "no")) &&
       row.runtimeIdentity === expectedIdentity &&
