@@ -118,15 +118,19 @@ function makeReviewedPlayerBridgeResolver(records,clock=Date.now) {
   let rows;
   try{
     rows=new Map();
-    const providerToEspn=new Map(),espnToProvider=new Map();
+    const providerToEspn=new Map(),espnToProvider=new Map(),byPlayerStatus=new Map();
     for(const raw of records) {
       const r=checkedRow(raw);
       if(!r)return deny;
       const key=[r.fixtureId,r.providerRef,r.playerId].join("|");
       if(rows.has(key))return deny; // even APPROVED and REVOKED conflict
-      if((providerToEspn.has(r.playerId)&&providerToEspn.get(r.playerId)!==r.athleteId)||
+      // A later source cannot silently revive a player with a conflicting
+      // approval/revocation. Quarantine the entire manifest pending review.
+      if((byPlayerStatus.has(r.playerId)&&byPlayerStatus.get(r.playerId)!==r.status)||
+         (providerToEspn.has(r.playerId)&&providerToEspn.get(r.playerId)!==r.athleteId)||
          (espnToProvider.has(r.athleteId)&&espnToProvider.get(r.athleteId)!==r.playerId))
         return deny;
+      byPlayerStatus.set(r.playerId,r.status);
       providerToEspn.set(r.playerId,r.athleteId);
       espnToProvider.set(r.athleteId,r.playerId);
       rows.set(key,r);
