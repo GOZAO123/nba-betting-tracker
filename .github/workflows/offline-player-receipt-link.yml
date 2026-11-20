@@ -1,0 +1,35 @@
+name: D15.37 offline original player quote receipt linkage
+
+on:
+  pull_request:
+    paths:
+      - "functions/offline-player-receipt-link.js"
+      - "functions/offline-player-receipt-link.test.js"
+      - ".github/workflows/offline-player-receipt-link.yml"
+  push:
+    branches: [main]
+    paths:
+      - "functions/offline-player-receipt-link.js"
+      - "functions/offline-player-receipt-link.test.js"
+      - ".github/workflows/offline-player-receipt-link.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  receipt-link:
+    name: Node 22 offline quote to fixture custody link
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Syntax checks without cloud or provider calls
+        run: |
+          node --check functions/offline-player-receipt-link.js
+          node --check functions/offline-player-receipt-link.test.js
+      - name: Receipt linkage and existing quote identity regressions
+        run: |
+          node --test functions/offline-player-receipt-link.test.js functions/provider-player-quote-snapshot.test.js functions/provider-evidence-storage.test.js functions/offline-quote-evidence-store.test.js functions/offer-player-crosswalk.test.js
