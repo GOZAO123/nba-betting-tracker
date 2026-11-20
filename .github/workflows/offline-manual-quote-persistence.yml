@@ -1,0 +1,34 @@
+name: D15.32 offline manual D8 to quote store integration
+
+on:
+  pull_request:
+    paths:
+      - "functions/offline-manual-quote-persistence.js"
+      - "functions/offline-manual-quote-persistence.test.js"
+      - ".github/workflows/offline-manual-quote-persistence.yml"
+  push:
+    branches: [main]
+    paths:
+      - "functions/offline-manual-quote-persistence.js"
+      - "functions/offline-manual-quote-persistence.test.js"
+      - ".github/workflows/offline-manual-quote-persistence.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  manual-quote-persistence:
+    name: Node 22 original D8 receipt to quote store tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Offline integration source and test syntax
+        run: |
+          node --check functions/offline-manual-quote-persistence.js
+          node --check functions/offline-manual-quote-persistence.test.js
+      - name: Synthetic D8 source-to-quote storage regression
+        run: node --test functions/offline-manual-quote-persistence.test.js functions/manual-evidence-receipt-quote.test.js
