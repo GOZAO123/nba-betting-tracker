@@ -333,6 +333,45 @@ test("D15.23 stdin checker disallows path arguments and excessive input bytes", 
   }
 });
 
+test("D15.24 observed preflight and status unlabeled default codebases pass shape checks only", () => {
+  const data = baseline();
+  for (const id of ["oddsBackendStatus", PREFLIGHT]) {
+    const row = data.functions.find(row => row.id === id);
+    row.codebase = "unlabeled"; // explicit raw-label observation, not missing data
+    row.firebaseManaged = "yes";
+    row.runtimeIdentity = "default-compute";
+    row.revisionTraffic = "single-100";
+  }
+  const report = assess(data);
+  blocked(report);
+  assert.equal(report.summaryMatches, true);
+  assert.deepEqual(report.mismatched, []);
+  has(report, "REDACTED_SUMMARY_ORIGIN_NOT_INDEPENDENTLY_AUTHENTICATED");
+  has(report, "OWNER_CLOUD_CHANGE_APPROVAL_NOT_GRANTED");
+});
+
+test("D15.24 unlabelled codebase must not be confused with unknown, empty, or incorrect codebase", () => {
+  for (const id of ["oddsBackendStatus", PREFLIGHT]) {
+    for (const codebase of ["unknown", "other", "custom", "", null, false]) {
+      const data = baseline();
+      data.functions.find(row => row.id === id).codebase = codebase;
+      const report = assess(data);
+      blocked(report);
+      assert.equal(report.summaryMatches, false);
+      assert.ok(report.mismatched.includes(id));
+    }
+  }
+});
+
+test("D15.24 missing raw label classification remains a rejected schema, not unlabeled", () => {
+  const data = baseline();
+  delete data.functions.find(row => row.id === PREFLIGHT).codebase;
+  const report = assess(data);
+  blocked(report);
+  assert.equal(report.summaryMatches, false);
+  has(report, "FUNCTION_METADATA_FIELDS_INVALID");
+});
+
 test("D15.23 review and CLI remain local-only with no Google/Firebase imports or transports", () => {
   const moduleText = fs.readFileSync(path.join(__dirname, "offline-live-attestation-review.js"), "utf8");
   const cliText = fs.readFileSync(CLI, "utf8");
