@@ -103,14 +103,14 @@ function offlineQuoteCollectionPreflight(files) {
     if (!has(quoteStore,/isTrustedQuoteReceipt\s*\(/) ||
         !has(quoteStore,/await\s+tx\.read\s*\(/) ||
         !has(quoteStore,/await\s+tx\.create\s*\(/) ||
-        !has(quoteStore,/"REPLAY_BLOCKED"/) ||
+        !has(quoteStore,/return\s+"REPLAY_BLOCKED"\s*;/) ||
         !has(quoteStore,/isTrustedQuoteReceipt\s*,\s*runTransaction/) ||
         has(quoteStore,/\b(?:tx|db)\.(?:update|delete|set)\s*\(/))
       add(SOURCE_GUARDS[5]);
 
     if (!has(quoteAdmin,/_internal\/quoteEvidence\/providerObservations\//) ||
         !has(quoteAdmin,/checkedDocumentReference\s*\(/) ||
-        !has(quoteAdmin,/validCreateDocument\s*\(/) ||
+        !has(quoteAdmin,/!\s*validCreateDocument\s*\(\s*path\s*,\s*record\s*\)/) ||
         !has(quoteAdmin,/wasAbsent/) ||
         !has(quoteAdmin,/readPath\s*!==\s*path/) ||
         !has(quoteAdmin,/adminTx\.create\s*\(/))
