@@ -233,7 +233,7 @@ test("D15.1 production evidence release preflight remains intentionally BLOCKED"
 // D15.2 is a compile-time identity selection for ONE named callable only.
 // These assertions are deliberately source-level: IAM existence and grants
 // require separate live review and owner permission, never an offline test.
-test("D15.2 pins a dedicated identity only for the new disabled callable",()=>{
+test("D15.2/D15.17 isolate dedicated identities to two named callables",()=>{
  const prod=fs.readFileSync(path.join(__dirname,"index.js"),"utf8");
  const identity=prod.match(
   /exports\.oddsPapiNbaIdentitySchemaDiagnostic\s*=\s*onCall\(\s*\{([\s\S]*?)\}\s*,\s*runNbaIdentitySchemaCallable\s*\)/
@@ -249,8 +249,14 @@ test("D15.2 pins a dedicated identity only for the new disabled callable",()=>{
  assert.match(identity[1],/memory:\s*"512MiB"/);
  assert.match(prod,/const NBA_IDENTITY_SCHEMA_DIAGNOSTIC_ENABLED = false;/);
  assert.match(prod,/const NBA_PROVIDER_EVIDENCE_ENABLED = false;/);
- assert.equal((prod.match(/\bserviceAccount\s*:/g)||[]).length,1,
-  "never override another deployed function's runtime identity");
+ assert.equal((prod.match(/\bserviceAccount\s*:/g)||[]).length,2,
+  "only the disabled diagnostic and status pilot may explicitly select runtime identities");
+ const status=prod.match(
+  /exports\.oddsBackendStatus\s*=\s*onCall\(\s*\{([\s\S]*?)\}\s*,\s*async \(request\)\s*=>/
+ );
+ assert.ok(status,"status pilot options must remain explicit");
+ assert.match(status[1],/serviceAccount:\s*oddsBackendStatusServiceAccount\b/);
+ assert.doesNotMatch(status[1],/secrets\s*:/);
  const legacy=prod.match(
   /exports\.oddsPapiNbaMarketAudit\s*=\s*onCall\(\s*\{([\s\S]*?)\}\s*,\s*async request\s*=>/
  );
