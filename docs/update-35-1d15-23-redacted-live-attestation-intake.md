@@ -178,7 +178,9 @@ separate explicit approval.
 
 - D15.22 parent: [30/30 pinned CLI discovery/planner tests](https://github.com/GOZAO123/nba-betting-tracker/actions/runs/44707392027),
   [592/592 backend regression](https://github.com/GOZAO123/nba-betting-tracker/actions/runs/44707392005).
-- D15.23 new Node 22 redacted intake tests: **PENDING GITHUB ACTIONS**.
-- D15.23 backend regression: **PENDING GITHUB ACTIONS**.
+- D15.23 Node 22 redacted intake tests: [workflow #44709297462](https://github.com/GOZAO123/nba-betting-tracker/actions/runs/44709297462) **SUCCESS — 22/22 passed**, syntax checks passed, no npm installation, no Firebase environment artifacts or tracked edits.
+- D15.23 backend regression: [workflow #44709297362](https://github.com/GOZAO123/nba-betting-tracker/actions/runs/44709297362) **SUCCESS — 592/592 passed**, syntax lint passed.
+
+First D15.23 intake workflow [#44709183690](https://github.com/GOZAO123/nba-betting-tracker/actions/runs/44709183690) failed three tests (19/22) because its test helper expected `Object.freeze` to survive `JSON.stringify`/`JSON.parse` across a spawned CLI process. Commit `38a12a4c82ba73cb5b6798b566aff34e3affd5cc` corrected **the tests only**, checking immutability on in-process objects and all release gates on CLI JSON. Both follow-up CI runs passed. This was not a production/cloud failure.
 
 **Release verdict: BLOCKED.**
