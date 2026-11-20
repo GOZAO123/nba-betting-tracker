@@ -282,6 +282,29 @@ test("D15.37 storage error, throwing getters, invalid clock fail without secrets
   await denied(c.run());
 });
 
+test("D15.37 asynchronous selector mutation cannot redirect authorized reads",async()=>{
+  const h=setup();
+  const mutable=selector();
+  const gate=makeOfflinePlayerReceiptLink({
+    readPrivateEvidence:async p=>h.docs.get(p)??null,
+    isTrustedInternalReview:async(token,metadata)=>{
+      assert.equal(Object.isFrozen(metadata),true);
+      assert.equal(metadata.sourceReference,REF);
+      mutable.sourceReference="ODDSPAPI_MANUAL_"+"C".repeat(32);
+      mutable.fixtureId="another-fixture";
+      mutable.providerPlayerId="99999";
+      return token===TOKEN;
+    },
+    now:()=>NOW
+  });
+  const result=await gate(mutable,TOKEN);
+  assert.ok(result);
+  assert.equal(result.sourceReference,REF);
+  assert.equal(result.fixtureId,FIX);
+  assert.equal(result.providerPlayerId,PLAYER);
+  assert.equal(result.captureAllowed,false);
+});
+
 test("D15.37 constructor is inert and requires all isolated adapters",async()=>{
   for(const args of [{},{readPrivateEvidence:async()=>null},
     {isTrustedInternalReview:async()=>true},
