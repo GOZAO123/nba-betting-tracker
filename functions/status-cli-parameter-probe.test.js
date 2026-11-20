@@ -43,9 +43,14 @@ const SYNTHETIC_PROJECT = "offline-fixture-only";
 const INDEX = fs.readFileSync(path.join(__dirname, "index.js"), "utf8");
 
 function packageVersion(name) {
-  return JSON.parse(
-    fs.readFileSync(require.resolve(name + "/package.json"), "utf8")
-  ).version;
+  // firebase-functions intentionally does not export "./package.json".
+  // Read only local installed package metadata, never a package URL.
+  const pkgPath = name === "firebase-functions"
+    ? path.resolve(path.dirname(require.resolve("firebase-functions/params")),
+      "../../package.json")
+    : path.resolve(path.dirname(require.resolve("firebase-tools")),
+      "../package.json");
+  return JSON.parse(fs.readFileSync(pkgPath, "utf8")).version;
 }
 
 function extractStatus() {
