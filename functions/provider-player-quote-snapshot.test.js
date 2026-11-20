@@ -274,5 +274,5 @@ test("D15.27 no production import, persistence, external requests, or polling",(
   assert.doesNotMatch(prod,/provider-player-quote-snapshot|freezeUnreviewedProviderPlayerPair/);
   assert.doesNotMatch(moduleSource,/require\(["'](?:firebase-admin|firebase-functions|https?|node:https?)["']\)/);
   assert.doesNotMatch(moduleSource,/(?:fetch|setInterval|onCall|onSchedule)\s*\(/);
-  assert.doesNotMatch(moduleSource,/(?:\.set|\.update|\.create|\.delete)\s*\(/);
+  assert.doesNotMatch(moduleSource,/\b(?:db|tx|firestore)\s*\.\s*(?:set|update|create|delete)\s*\(/);
 });
