@@ -1,0 +1,34 @@
+name: D15.27 offline provider quote snapshot
+
+on:
+  pull_request:
+    paths:
+      - "functions/provider-player-quote-snapshot.js"
+      - "functions/provider-player-quote-snapshot.test.js"
+      - ".github/workflows/offline-provider-player-quote-snapshot.yml"
+  push:
+    branches: [main]
+    paths:
+      - "functions/provider-player-quote-snapshot.js"
+      - "functions/provider-player-quote-snapshot.test.js"
+      - ".github/workflows/offline-provider-player-quote-snapshot.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  synthetic-quote-snapshot:
+    name: Node 22 synthetic player quote provenance
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Offline module and test syntax checks
+        run: |
+          node --check functions/provider-player-quote-snapshot.js
+          node --check functions/provider-player-quote-snapshot.test.js
+      - name: Synthetic source and immutable quote tests
+        run: node --test functions/provider-player-quote-snapshot.test.js
