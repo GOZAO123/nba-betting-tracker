@@ -146,7 +146,7 @@ test("D15.37 missing quote or fixture record fails closed",async()=>{
 test("D15.37 token is backend-only and client values cannot authorize",async()=>{
   const h=setup();
   for(const token of [null,undefined,"owner",{},[],true,REF])
-    await denied(h.run(selector(),token));
+    await denied(h.review(selector(),token));
   assert.deepEqual(h.calls,[]);
 });
 
