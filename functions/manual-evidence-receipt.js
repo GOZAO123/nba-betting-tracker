@@ -6,6 +6,8 @@
 const { makeLeagueMarketAuditRunner } = require("./league-market-audit-runner");
 const { extractManualProviderIdentityBatch } = require("./provider-evidence-acquisition");
 const { makeOfflineFirestoreProviderEvidenceStore } = require("./provider-evidence-firestore");
+const { freezeUnreviewedProviderPlayerPair } =
+  require("./provider-player-quote-snapshot");
 
 const SOURCE = "ODDSPAPI_V4_ODDS_BY_TOURNAMENTS";
 const MAX_RESERVATION_AGE = 5 * 60 * 1000;
@@ -36,7 +38,7 @@ function identitiesEqual(a,b) {
 function makeOfflineManualEvidenceAudit({
   ownerUid, reserve, fetchCatalogue, fetchOdds, db,
   waitBetweenRequests=async()=>{}, onFailure=()=>{}, now=Date.now,
-  onEvidenceOutcome=null
+  onEvidenceOutcome=null, trustedQuoteSelection=null, onTrustedQuote=null
 }={}) {
   if (typeof ownerUid!=="string" || !ownerUid ||
       [reserve,fetchCatalogue,fetchOdds,waitBetweenRequests,onFailure,now]
@@ -44,12 +46,37 @@ function makeOfflineManualEvidenceAudit({
       (onEvidenceOutcome!==null && typeof onEvidenceOutcome!=="function"))
     throw new TypeError("Missing trusted manual audit dependencies.");
 
+  // Opt-in offline-only: the selection and private quote callback must both be
+  // constructed on the trusted backend. Never accept request.data selectors.
+  const quoteEnabled=trustedQuoteSelection!==null || onTrustedQuote!==null;
+  const selectorValid=trustedQuoteSelection && obj(trustedQuoteSelection) &&
+    Object.keys(trustedQuoteSelection).sort().join("|") ===
+      "fixtureId|marketId|providerPlayerId" &&
+    typeof trustedQuoteSelection.fixtureId==="string" &&
+    /^[A-Za-z0-9._:-]{1,120}$/.test(trustedQuoteSelection.fixtureId) &&
+    [trustedQuoteSelection.marketId,trustedQuoteSelection.providerPlayerId]
+      .every(x=>(typeof x==="string" || typeof x==="number") &&
+        /^[1-9][0-9]{0,15}$/.test(String(x)));
+  if (quoteEnabled && (!selectorValid || typeof onTrustedQuote!=="function"))
+    throw new TypeError("Invalid trusted quote review dependencies.");
+  const selection=quoteEnabled ? Object.freeze({
+    fixtureId:trustedQuoteSelection.fixtureId,
+    marketId:String(trustedQuoteSelection.marketId),
+    providerPlayerId:String(trustedQuoteSelection.providerPlayerId)
+  }) : null;
+
   const tick=()=>{
     const x=now();
     if (!Number.isSafeInteger(x) || x<0) throw Error("Invalid backend time");
     return x;
   };
   let permit=null, receipt=null, active=null, reserving=false, fetching=false;
+  let trustedCatalogue=null; // reuse existing runner's manual catalogue call
+  const trustedFetchCatalogue=async()=>{
+    const definitions=await fetchCatalogue();
+    if (quoteEnabled) trustedCatalogue=definitions;
+    return definitions;
+  };
   const store=makeOfflineFirestoreProviderEvidenceStore({
     db, now:tick,
     isTrustedManualReceipt:async(token,metadata)=>{
@@ -92,7 +119,8 @@ function makeOfflineManualEvidenceAudit({
         const snapshot=extractManualProviderIdentityBatch(odds,
           new Date(at).toISOString());
         if (snapshot?.acceptedFixtures>0)
-          source={fetchedAt:at,identity:identityOf(snapshot)};
+          source={fetchedAt:at,identity:identityOf(snapshot),
+            ...(quoteEnabled ? {odds,catalogue:trustedCatalogue} : {})};
       } catch (_) { /* evidence extraction must not break original audit */ }
       receipt=source;
       return odds; // return unmodified provider data to existing audit
@@ -114,18 +142,40 @@ function makeOfflineManualEvidenceAudit({
         identitiesEqual(source.identity,identityOf(batch));
     } catch (_) { valid=false; }
     if (!valid) return Object.freeze({status:"INVALID_EVIDENCE"});
+    // Freeze only one backend-selected original quote, while still holding the
+    // exact authorized league payload and validated one-use fixture receipt.
+    // A candidate is unreviewed; it cannot select odds or write research.
+    let quote=null;
+    if (quoteEnabled && source.catalogue) {
+      try {
+        quote=freezeUnreviewedProviderPlayerPair({
+          catalogue:source.catalogue,leagueOdds:source.odds,
+          snapshotReference:batch.snapshotReference,capturedAt:batch.capturedAt,
+          now:tick(),fixtureId:selection.fixtureId,
+          marketId:selection.marketId,providerPlayerId:selection.providerPlayerId
+        });
+      } catch (_) { /* never fail ordinary fixture evidence */ }
+    }
     // Unforgeable in-memory object identity, not a client or server ID string.
     const token=Object.freeze({});
     active={token,reference,capturedAt:batch.capturedAt,
       fetchedAt:source.fetchedAt};
     try {
-      return await store.storeBatch(batch,token);
+      const outcome=await store.storeBatch(batch,token);
+      // No quote callback on failed, conflicted, denied or repeated evidence.
+      // Never let the private sink affect the ordinary audit or cause a retry.
+      if (quote && outcome?.status==="STORED") {
+        try { await onTrustedQuote(quote); }
+        catch (_) { /* quote sink errors are deliberately isolated */ }
+      }
+      return outcome;
     } catch (_) {
       return Object.freeze({status:"UNAVAILABLE"});
     } finally {active=null;}
   };
   return makeLeagueMarketAuditRunner({
-    ownerUid,reserve:safeReserve,fetchCatalogue,fetchOdds:trustedFetchOdds,
+    ownerUid,reserve:safeReserve,fetchCatalogue:trustedFetchCatalogue,
+    fetchOdds:trustedFetchOdds,
     waitBetweenRequests,onFailure,now:tick,onProviderEvidence,
     onEvidenceOutcome
   });
