@@ -1,0 +1,35 @@
+name: D15.29 offline D8 receipt-bound quote callback
+
+on:
+  pull_request:
+    paths:
+      - "functions/manual-evidence-receipt.js"
+      - "functions/manual-evidence-receipt-quote.test.js"
+      - ".github/workflows/offline-d8-quote-receipt.yml"
+  push:
+    branches: [main]
+    paths:
+      - "functions/manual-evidence-receipt.js"
+      - "functions/manual-evidence-receipt-quote.test.js"
+      - ".github/workflows/offline-d8-quote-receipt.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  d8-quote:
+    name: Node 22 manual receipt and quote source regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Syntax check (no provider calls)
+        run: |
+          node --check functions/manual-evidence-receipt.js
+          node --check functions/manual-evidence-receipt-quote.test.js
+      - name: Original D8 receipt plus new quote hook regression
+        run: |
+          node --test functions/manual-evidence-receipt.test.js functions/manual-evidence-receipt-quote.test.js
