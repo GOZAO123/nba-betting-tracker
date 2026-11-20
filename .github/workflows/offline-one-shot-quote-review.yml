@@ -1,0 +1,34 @@
+name: D15.28 offline source-bound quote review
+
+on:
+  pull_request:
+    paths:
+      - "functions/offline-one-shot-quote-review.js"
+      - "functions/offline-one-shot-quote-review.test.js"
+      - ".github/workflows/offline-one-shot-quote-review.yml"
+  push:
+    branches: [main]
+    paths:
+      - "functions/offline-one-shot-quote-review.js"
+      - "functions/offline-one-shot-quote-review.test.js"
+      - ".github/workflows/offline-one-shot-quote-review.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  offline-source-bound-quotes:
+    name: Node 22 one-shot quote source validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Source adapter and test syntax checks
+        run: |
+          node --check functions/offline-one-shot-quote-review.js
+          node --check functions/offline-one-shot-quote-review.test.js
+      - name: Synthetic source receipt review and replay tests
+        run: node --test functions/offline-one-shot-quote-review.test.js
