@@ -4887,7 +4887,7 @@ function oddsHistoryRender(){
   return;
  }
  oddsHistoryStatus.textContent=summaries.length
-  ?summaries.length+' saved diagnostic summary'+(summaries.length===1?'':'ies')+
+  ?summaries.length+' saved diagnostic '+(summaries.length===1?'summary':'summaries')+
    ' · local to this browser/account · last 30 days · no raw prices, picks or player IDs.'
   :'No locally saved previews yet. Existing screenshots are not automatically imported.';
  for(const item of summaries){
