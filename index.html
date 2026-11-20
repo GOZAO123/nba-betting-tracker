@@ -4880,7 +4880,9 @@ const oddsHistoryClear=document.getElementById('oddsDiagnosticHistoryClear');
 let oddsHistoryKey=null,oddsHistoryUser=null,oddsHistoryGeneration=0;
 function oddsHistoryRender(){
  oddsHistoryEntries.replaceChildren();
- const summaries=oddsHistoryKey?oddsHistoryRead(localStorage,oddsHistoryKey):[];
+ let summaries=[];
+ try{if(oddsHistoryKey)summaries=oddsHistoryRead(localStorage,oddsHistoryKey)}catch(_){}
+
  oddsHistoryClear.disabled=!oddsHistoryKey||summaries.length===0;
  if(!oddsHistoryKey){
   oddsHistoryStatus.textContent='Sign in to view local summaries. No OddsPapi requests are made.';
@@ -4964,7 +4966,8 @@ document.getElementById('verifiedPropsBtn')?.addEventListener('click',async()=>{
    const summary=oddsHistorySummaryFromPreview(data,Date.now(),
     Object.keys(ESPN_NBA_TEAM_IDS));
    if(summary){
-    const saved=oddsHistorySave(localStorage,oddsHistoryKey,summary);
+    let saved=false;
+    try{saved=oddsHistorySave(localStorage,oddsHistoryKey,summary)}catch(_){}
     oddsHistoryRender();
     if(!saved)oddsHistoryStatus.textContent='Could not save local diagnostic summary; preview is still temporary.';
    }
