@@ -213,8 +213,12 @@ traffic have **not** been inspected in this D15.24 session. Do not build
 a 15/15 report using hypothetical values. Effective IAM, source fingerprint,
 rollback archives, billing and approval remain separate blockers.
 
-D15.24 revised intake CI and backend regression: **PENDING** at the time
-this section was first added.
+D15.24 corrected validator CI [#44713016657](https://github.com/GOZAO123/nba-betting-tracker/actions/runs/44713016657)
+**SUCCESS: 25/25 tests passed**, covering explicit unlabeled-default metadata for
+both observed Functions plus continued rejection of unknown/non-default/missing
+labels. Backend [#44713016638](https://github.com/GOZAO123/nba-betting-tracker/actions/runs/44713016638)
+**SUCCESS: 592/592 passed**, Node.js 22 syntax and regressions. This is offline
+validation only; no production deployment or external provider request.
 
 ## CI evidence
 
