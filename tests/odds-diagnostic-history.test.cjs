@@ -205,6 +205,10 @@ test("35.1D15.35 clear history control never touches quotas or provider transpor
  assert.match(html,/id="oddsDiagnosticHistoryClear"/);
  assert.match(html,/id="oddsDiagnosticHistoryEntries"/);
  assert.match(html,/id="oddsDiagnosticHistoryStatus"/);
+ assert.match(html,/<details id="oddsDiagnosticHistory"/);
+ assert.ok(html.indexOf('id="oddsDiagnosticHistory"')>
+   html.indexOf('id="espnSendToAnalyzer"'),
+   "Saved summaries must remain below the existing ESPN roster controls.");
  assert.match(html,/localStorage\.removeItem\(oddsHistoryKey\)/);
  assert.match(html,/Cle ar local history|Clear local history/);
  const begin=html.indexOf("const oddsHistoryStatus=document.getElementById(");
