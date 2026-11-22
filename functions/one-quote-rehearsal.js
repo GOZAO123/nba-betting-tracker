@@ -11,6 +11,8 @@ assert.equal(process.env.FIRESTORE_EMULATOR_HOST, firestoreHost);
 assert.equal(process.env.FIREBASE_AUTH_EMULATOR_HOST, authHost);
 
 const {initializeApp, deleteApp} = require("firebase-admin/app");
+const {makeOneQuoteCallable} = require("./one-quote-callable");
+const {HttpsError} = require("firebase-functions/v2/https");
 const {getFirestore} = require("firebase-admin/firestore");
 const {makeOfflineManualQuotePersistence} = require("./offline-manual-quote-persistence");
 const {makeOfflineFixedOriginOddsPapiTransport} = require("./manual-odds-fixed-transport");
@@ -56,7 +58,7 @@ test("one-quote custody with Firestore and Auth emulators", async t => {
       }, {maxAttempts: 5});
     }
 
-    const transport = makeOfflineFixedOriginOddsPapiTransport({
+    const transportDependencies = {
       getApiKey() {
         assert.ok(committed >= 2);
         trace.push("key");
@@ -73,7 +75,8 @@ test("one-quote custody with Firestore and Auth emulators", async t => {
           default: assert.fail("unexpected synthetic transport endpoint");
         }
       }
-    });
+    };
+    const transport = makeOfflineFixedOriginOddsPapiTransport(transportDependencies);
     const custody = {
       doc: path => db.doc(path),
       runTransaction(callback) {
@@ -103,7 +106,7 @@ test("one-quote custody with Firestore and Auth emulators", async t => {
         return record;
       }
     });
-    return {trace, privateReads, collectLinked, run: makeOfflineManualQuotePersistence(options)};
+    return {trace, privateReads, collectLinked, reserve, transportDependencies, run: makeOfflineManualQuotePersistence(options)};
   }
 
   const disabled = manualRun({enabled: false});
@@ -183,25 +186,31 @@ test("one-quote custody with Firestore and Auth emulators", async t => {
   });
   assert.match(coldApprovalId, /^[a-f0-9]{32}$/);
   const coldApproval = db.doc("_internal/oneQuoteCollection/approvals/" + coldApprovalId);
-  const makeOperatorHandoff = collector => makeOfflineOneQuoteApproval({
-    enabled: true, ownerUid: OWNER.auth.uid, approvalId: coldApprovalId, db,
-    now: () => NOW + 60_000,
-    async collect(request) {
-      assert.equal((await coldApproval.get()).data().claimedAtMs, NOW + 60_000);
-      assert.equal((await budget.get()).data().reserved, 2);
-      return collector.collectLinked(request);
-    }
-  });
+  const makeOperatorHandoff = (collector, enabled = "true", approvalId = coldApprovalId) =>
+    makeOneQuoteCallable({
+      HttpsError, ownerUid: OWNER.auth.uid, now: () => NOW + 60_000,
+      getConfig: () => ({enabled, approvalId, scopeJson: JSON.stringify(SCOPE)}),
+      getDb: () => db,
+      async reserve(amount) {
+        if (approvalId === coldApprovalId)
+          assert.equal((await coldApproval.get()).data().claimedAtMs, NOW + 60_000);
+        return collector.reserve(amount);
+      },
+      ...collector.transportDependencies
+    });
+  await assert.rejects(makeOperatorHandoff(cold, "")(OWNER), {code: "failed-precondition"});
+  await assert.rejects(makeOperatorHandoff(cold)({data: {}}), {code: "unauthenticated"});
+  await assert.rejects(makeOperatorHandoff(cold)({...OWNER, data: {approvalId: coldApprovalId}}),
+    {code: "invalid-argument"});
+  assert.equal((await coldApproval.get()).data().claimedAtMs, null);
+  assert.deepEqual(cold.trace, []);
   assert.deepEqual(await makeOperatorHandoff(cold)(OWNER), {status: "LINKED_UNREVIEWED"});
-  assert.deepEqual(cold.trace, freshTrace);
-  assert.equal(cold.privateReads.length, 2);
+  assert.deepEqual(cold.trace, freshTrace.filter(action => action !== "custody"));
   assert.equal((await budget.get()).data().reserved, 4);
 
-  // Replay through a new handler and collector, with no shared in-memory state.
   const replay = manualRun({now: NOW + 60_000});
   await assert.rejects(makeOperatorHandoff(replay)(OWNER), {code: "failed-precondition"});
   assert.deepEqual(replay.trace, []);
-  assert.deepEqual(replay.privateReads, []);
   assert.equal((await budget.get()).data().reserved, 4);
   assert.deepEqual((await receipts()).map(snapshot => snapshot.size), [2, 2]);
 
@@ -212,7 +221,11 @@ test("one-quote custody with Firestore and Auth emulators", async t => {
   assert.deepEqual(partial.trace, freshTrace);
   assert.deepEqual((await receipts()).map(snapshot => snapshot.size), [3, 2]);
   const exhausted = manualRun({now: NOW + 180_000});
-  await assert.rejects(exhausted.run(OWNER), /REHEARSAL_QUOTA_EXHAUSTED/);
+  const {approvalId: exhaustedApprovalId} = await provisionOfflineOneQuoteApproval({
+    db, ttlMs: 120_000, now: () => NOW
+  });
+  await assert.rejects(makeOperatorHandoff(exhausted, "true", exhaustedApprovalId)(OWNER),
+    {code: "unavailable"});
   assert.deepEqual(exhausted.trace, ["budget"]);
   assert.equal((await budget.get()).data().reserved, 6);
   assert.deepEqual((await receipts()).map(snapshot => snapshot.size), [3, 2]);
