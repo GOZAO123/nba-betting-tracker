@@ -183,17 +183,26 @@ test("one-quote custody with Firestore and Auth emulators", async t => {
   });
   assert.match(coldApprovalId, /^[a-f0-9]{32}$/);
   const coldApproval = db.doc("_internal/oneQuoteCollection/approvals/" + coldApprovalId);
-  const collectCold = makeOfflineOneQuoteApproval({
+  const makeOperatorHandoff = collector => makeOfflineOneQuoteApproval({
     enabled: true, ownerUid: OWNER.auth.uid, approvalId: coldApprovalId, db,
     now: () => NOW + 60_000,
     async collect(request) {
       assert.equal((await coldApproval.get()).data().claimedAtMs, NOW + 60_000);
-      return cold.collectLinked(request);
+      assert.equal((await budget.get()).data().reserved, 2);
+      return collector.collectLinked(request);
     }
   });
-  assert.deepEqual(await collectCold(OWNER), {status: "LINKED_UNREVIEWED"});
+  assert.deepEqual(await makeOperatorHandoff(cold)(OWNER), {status: "LINKED_UNREVIEWED"});
   assert.deepEqual(cold.trace, freshTrace);
   assert.equal(cold.privateReads.length, 2);
+  assert.equal((await budget.get()).data().reserved, 4);
+
+  // Replay through a new handler and collector, with no shared in-memory state.
+  const replay = manualRun({now: NOW + 60_000});
+  await assert.rejects(makeOperatorHandoff(replay)(OWNER), {code: "failed-precondition"});
+  assert.deepEqual(replay.trace, []);
+  assert.deepEqual(replay.privateReads, []);
+  assert.equal((await budget.get()).data().reserved, 4);
   assert.deepEqual((await receipts()).map(snapshot => snapshot.size), [2, 2]);
 
   // Fixture and quote are separate transactions. A synthetic quote failure leaves a fixture only.
