@@ -6,7 +6,8 @@
 const { makeLeagueMarketAuditRunner } = require("./league-market-audit-runner");
 const { extractManualProviderIdentityBatch } = require("./provider-evidence-acquisition");
 const { makeOfflineFirestoreProviderEvidenceStore } = require("./provider-evidence-firestore");
-const { freezeUnreviewedProviderPlayerPair } =
+const { freezeUnreviewedProviderPlayerPair, normalizeOfflineQuoteScope,
+  resolveOfflineQuoteSelection } =
   require("./provider-player-quote-snapshot");
 
 const SOURCE = "ODDSPAPI_V4_ODDS_BY_TOURNAMENTS";
@@ -38,7 +39,7 @@ function identitiesEqual(a,b) {
 function makeOfflineManualEvidenceAudit({
   ownerUid, reserve, fetchCatalogue, fetchOdds, db,
   waitBetweenRequests=async()=>{}, onFailure=()=>{}, now=Date.now,
-  onEvidenceOutcome=null, trustedQuoteSelection=null, onTrustedQuote=null
+  onEvidenceOutcome=null, trustedQuoteSelection=null, trustedQuoteScope=null, onTrustedQuote=null
 }={}) {
   if (typeof ownerUid!=="string" || !ownerUid ||
       [reserve,fetchCatalogue,fetchOdds,waitBetweenRequests,onFailure,now]
@@ -48,7 +49,9 @@ function makeOfflineManualEvidenceAudit({
 
   // Opt-in offline-only: the selection and private quote callback must both be
   // constructed on the trusted backend. Never accept request.data selectors.
-  const quoteEnabled=trustedQuoteSelection!==null || onTrustedQuote!==null;
+  const quoteEnabled=trustedQuoteSelection!==null || trustedQuoteScope!==null ||
+    onTrustedQuote!==null;
+  const scope=trustedQuoteScope===null ? null : normalizeOfflineQuoteScope(trustedQuoteScope);
   const selectorValid=trustedQuoteSelection && obj(trustedQuoteSelection) &&
     Object.keys(trustedQuoteSelection).sort().join("|") ===
       "fixtureId|marketId|providerPlayerId" &&
@@ -57,9 +60,10 @@ function makeOfflineManualEvidenceAudit({
     [trustedQuoteSelection.marketId,trustedQuoteSelection.providerPlayerId]
       .every(x=>(typeof x==="string" || typeof x==="number") &&
         /^[1-9][0-9]{0,15}$/.test(String(x)));
-  if (quoteEnabled && (!selectorValid || typeof onTrustedQuote!=="function"))
+  if (quoteEnabled && (typeof onTrustedQuote!=="function" ||
+      (trustedQuoteScope===null ? !selectorValid : !scope || trustedQuoteSelection!==null)))
     throw new TypeError("Invalid trusted quote review dependencies.");
-  const selection=quoteEnabled ? Object.freeze({
+  const selection=selectorValid ? Object.freeze({
     fixtureId:trustedQuoteSelection.fixtureId,
     marketId:String(trustedQuoteSelection.marketId),
     providerPlayerId:String(trustedQuoteSelection.providerPlayerId)
@@ -148,11 +152,12 @@ function makeOfflineManualEvidenceAudit({
     let quote=null;
     if (quoteEnabled && source.catalogue) {
       try {
-        quote=freezeUnreviewedProviderPlayerPair({
+        const resolved=selection ?? resolveOfflineQuoteSelection(
+          scope,source.catalogue,source.odds);
+        if (resolved) quote=freezeUnreviewedProviderPlayerPair({
           catalogue:source.catalogue,leagueOdds:source.odds,
           snapshotReference:batch.snapshotReference,capturedAt:batch.capturedAt,
-          now:tick(),fixtureId:selection.fixtureId,
-          marketId:selection.marketId,providerPlayerId:selection.providerPlayerId
+          now:tick(),...resolved
         });
       } catch (_) { /* never fail ordinary fixture evidence */ }
     }
