@@ -17,7 +17,9 @@ const {makeOfflineFixedOriginOddsPapiTransport} = require("./manual-odds-fixed-t
 const {makeOfflinePlayerReceiptLink} = require("./offline-player-receipt-link");
 const {NOW, OWNER, SCOPE, catalog, fixture} = require("./one-quote-rehearsal-fixtures");
 
-const {makeOfflineOneQuoteApproval, makeOfflineLinkedQuoteCollector} = require("./offline-one-quote-approval");
+const {
+  makeOfflineOneQuoteApproval, makeOfflineLinkedQuoteCollector, provisionOfflineOneQuoteApproval
+} = require("./offline-one-quote-approval");
 
 const budgetPath = "_internal/oddsPapiDailyDiagnosticBudget";
 const fixtureCollection = "_internal/teamEvidence/providerSnapshots";
@@ -176,9 +178,11 @@ test("one-quote custody with Firestore and Auth emulators", async t => {
   // A new composition is cold even with existing receipts and a persistent budget.
   // A later synthetic capture can create another pair.
   const cold = manualRun({now: NOW + 60_000});
-  const coldApprovalId = "c".repeat(32);
+  const {approvalId: coldApprovalId} = await provisionOfflineOneQuoteApproval({
+    db, ttlMs: 120_000, now: () => NOW
+  });
+  assert.match(coldApprovalId, /^[a-f0-9]{32}$/);
   const coldApproval = db.doc("_internal/oneQuoteCollection/approvals/" + coldApprovalId);
-  await coldApproval.set({issuedAtMs: NOW, expiresAtMs: NOW + 120_000, claimedAtMs: null});
   const collectCold = makeOfflineOneQuoteApproval({
     enabled: true, ownerUid: OWNER.auth.uid, approvalId: coldApprovalId, db,
     now: () => NOW + 60_000,
@@ -250,8 +254,14 @@ test("single-use approval gates the offline collector across instances", async t
   await assert.rejects(make()(OWNER), {code: "failed-precondition"});
 
   const failedApprovalId = "b".repeat(32);
+  const provision = ttlMs => provisionOfflineOneQuoteApproval({
+    db, ttlMs, now: () => NOW, generateId: () => failedApprovalId
+  });
+  for (const ttlMs of [0, 1.5, 900_001]) await assert.rejects(provision(ttlMs), TypeError);
+  assert.deepEqual(await provision(60_000), {
+    approvalId: failedApprovalId, expiresAtMs: NOW + 60_000
+  });
   const failedApproval = db.doc("_internal/oneQuoteCollection/approvals/" + failedApprovalId);
-  await failedApproval.set({issuedAtMs: NOW, expiresAtMs: NOW + 60_000, claimedAtMs: null});
   const failed = make({
     approvalId: failedApprovalId,
     async collect() { throw Error("synthetic private downstream failure"); }
@@ -260,5 +270,9 @@ test("single-use approval gates the offline collector across instances", async t
     code: "unavailable", message: "Collection attempt did not complete."
   });
   assert.equal((await failedApproval.get()).data().claimedAtMs, NOW);
+  await assert.rejects(provision(120_000), {code: 6}); // Firestore ALREADY_EXISTS
+  assert.deepEqual((await failedApproval.get()).data(), {
+    issuedAtMs: NOW, expiresAtMs: NOW + 60_000, claimedAtMs: NOW
+  });
   await assert.rejects(failed(OWNER), {code: "failed-precondition"});
 });
