@@ -5,6 +5,7 @@ const fs=require("node:fs");
 const path=require("node:path");
 const {makeOfflineManualQuotePersistence}=
   require("./offline-manual-quote-persistence");
+const {makeOfflinePlayerReceiptLink}=require("./offline-player-receipt-link");
 
 const NOW=Date.parse("2026-11-20T13:30:00.000Z");
 const iso=m=>new Date(NOW+m*60000).toISOString();
@@ -343,7 +344,7 @@ test("D15.32 module, existing production adapter and browser rules remain discon
   assert.doesNotMatch(rules,/quoteEvidence/);
 });
 
-test("scoped manual run resolves one original quote from its two reserved responses",async()=>{
+test("scoped manual run stores one original quote that the private reader can link",async()=>{
   const odds=[fixture()];
   odds[0].fixtureId="synthetic-discovered-fixture";
   const scope={...SCOPE};
@@ -362,6 +363,36 @@ test("scoped manual run resolves one original quote from its two reserved respon
   assert.equal(doc.quote.line,20.5);
   assert.equal(doc.quote.sourceReference,batch.reference);
   assert.equal(doc.quote.capturedAt,batch.capturedAt);
+
+  const selection={
+    fixtureId:doc.quote.fixtureId,
+    marketId:doc.quote.marketId,
+    providerPlayerId:doc.quote.providerPlayerId,
+    sourceReference:batch.reference
+  };
+  const token=Object.freeze({});
+  const privateReads=[];
+  const review=makeOfflinePlayerReceiptLink({
+    now:()=>NOW,
+    isTrustedInternalReview:async(candidate,metadata)=>
+      candidate===token && Object.keys(selection).every(key=>metadata[key]===selection[key]),
+    readPrivateEvidence:async key=>{
+      privateReads.push(key);
+      return s.docs.has(key) ? structuredClone(s.docs.get(key)) : null;
+    }
+  });
+  assert.equal(await review(selection,{}),null);
+  assert.deepEqual(privateReads,[]);
+
+  const link=await review(selection,token);
+  assert.ok(link);
+  assert.equal(link.status,"UNREVIEWED_RECEIPT_LINK_ONLY");
+  assert.equal(link.quoteDigest,doc.quote.digest);
+  assert.equal(link.fixtureDigest,batch.records[0].digest);
+  assert.equal(link.providerPlayerId,selection.providerPlayerId);
+  assert.deepEqual(privateReads,[quoteDocs(s)[0][0],fixtureDocs(s)[0][0]]);
+  for(const flag of ["bookmakerVerified","espnPlayerVerified",
+    "autoLineSelected","captureAllowed"]) assert.equal(link[flag],false);
 });
 
 test("scope cannot be supplied by the caller or combined with an exact selector",async()=>{
