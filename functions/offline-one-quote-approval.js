@@ -1,9 +1,34 @@
 "use strict";
 
+const {randomBytes} = require("node:crypto");
 const {makeOfflineManualQuotePersistence} = require("./offline-manual-quote-persistence");
 
 const APPROVAL_PATH = "_internal/oneQuoteCollection/approvals/";
 const MAX_APPROVAL_WINDOW_MS = 15 * 60 * 1000;
+
+const validApprovalId = id => typeof id === "string" && /^[a-f0-9]{32}$/.test(id);
+
+// Call only from trusted operator code with an Admin Firestore instance.
+async function provisionOfflineOneQuoteApproval({
+  db, ttlMs, now = Date.now, generateId = () => randomBytes(16).toString("hex")
+}) {
+  if (typeof db?.doc !== "function" || !Number.isSafeInteger(ttlMs) ||
+      ttlMs < 1 || ttlMs > MAX_APPROVAL_WINDOW_MS) {
+    throw new TypeError("Invalid trusted approval provisioning configuration.");
+  }
+  const issuedAtMs = now();
+  const expiresAtMs = issuedAtMs + ttlMs;
+  if (!Number.isSafeInteger(issuedAtMs) || issuedAtMs < 0 ||
+      !Number.isSafeInteger(expiresAtMs)) {
+    throw new TypeError("Invalid approval timestamp.");
+  }
+  const approvalId = generateId();
+  if (!validApprovalId(approvalId)) throw new TypeError("Invalid generated approval ID.");
+  await db.doc(APPROVAL_PATH + approvalId).create({
+    issuedAtMs, expiresAtMs, claimedAtMs: null
+  });
+  return {approvalId, expiresAtMs};
+}
 
 function deny(code, message) {
   throw Object.assign(new Error(message), {code});
@@ -18,7 +43,7 @@ function makeOfflineOneQuoteApproval({
     return async () => deny("failed-precondition", "One-quote collection is disabled.");
   }
   if (typeof ownerUid !== "string" || ownerUid.length === 0 ||
-      typeof approvalId !== "string" || !/^[a-f0-9]{32}$/.test(approvalId) ||
+      !validApprovalId(approvalId) ||
       typeof collect !== "function" || typeof now !== "function" ||
       typeof db?.doc !== "function" || typeof db.runTransaction !== "function") {
     throw new TypeError("Invalid trusted one-quote configuration.");
@@ -87,4 +112,6 @@ function makeOfflineLinkedQuoteCollector(options) {
   };
 }
 
-module.exports = {makeOfflineOneQuoteApproval, makeOfflineLinkedQuoteCollector};
+module.exports = {
+  makeOfflineOneQuoteApproval, makeOfflineLinkedQuoteCollector, provisionOfflineOneQuoteApproval
+};
