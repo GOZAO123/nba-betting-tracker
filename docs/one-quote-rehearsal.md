@@ -1,6 +1,6 @@
 # Local one-quote Firestore rehearsal
 
-Use Node.js 22, Java 21, and Firebase CLI 15.35.0 from the repository root. Install the locked Functions dependencies with `npm ci --prefix functions`. The CLI may need to download the Firestore emulator on first use. No Firebase login, provider key, cloud project, or deployment is needed.
+Use Node.js 22, Java 21, and Firebase CLI 15.35.0 from the repository root. Install the Functions dependencies with `npm install --prefix functions --no-audit --no-fund`. The CLI may need to download the Firestore emulator on first use. No Firebase login, provider key, cloud project, or deployment is needed.
 
 ```powershell
 firebase.cmd emulators:exec --config firebase.quote-rehearsal.json --project demo-nba-quote-rehearsal --only firestore,auth "node --test functions/one-quote-rehearsal.js"
