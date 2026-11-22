@@ -1,5 +1,7 @@
 "use strict";
 
+const {makeOfflineManualQuotePersistence} = require("./offline-manual-quote-persistence");
+
 const APPROVAL_PATH = "_internal/oneQuoteCollection/approvals/";
 const MAX_APPROVAL_WINDOW_MS = 15 * 60 * 1000;
 
@@ -54,13 +56,35 @@ function makeOfflineOneQuoteApproval({
 
     // Once claimed, the permit is consumed even if collection fails. Never
     // forward receipts or downstream errors through this boundary.
+    let outcome;
     try {
-      await collect({auth: {uid: ownerUid, token: {email_verified: true}}, data: {}});
+      outcome = await collect({auth: {uid: ownerUid, token: {email_verified: true}}, data: {}});
     } catch (_) {
       deny("unavailable", "Collection attempt did not complete.");
     }
-    return {status: "ATTEMPT_COMPLETED"};
+    const status = outcome === "LINKED_UNREVIEWED" || outcome === "UNLINKED"
+      ? outcome
+      : "ATTEMPT_COMPLETED";
+    return {status};
   };
 }
 
-module.exports = {makeOfflineOneQuoteApproval};
+// Construct a fresh scoped collector for each separately claimed approval.
+function makeOfflineLinkedQuoteCollector(options) {
+  if (typeof options?.readPrivateEvidence !== "function") {
+    throw new TypeError("Missing trusted private receipt reader.");
+  }
+  return async request => {
+    let outcome = "UNLINKED";
+    const collect = makeOfflineManualQuotePersistence({
+      ...options,
+      onQuoteOutcome({status}) {
+        if (status === "LINKED_UNREVIEWED") outcome = status;
+      }
+    });
+    await collect(request);
+    return outcome;
+  };
+}
+
+module.exports = {makeOfflineOneQuoteApproval, makeOfflineLinkedQuoteCollector};
