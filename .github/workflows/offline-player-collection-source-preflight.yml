@@ -3,14 +3,15 @@ name: D15.38 offline player collection source safety
 on:
   pull_request:
     paths:
-      - "functions/offline-player-collection-source-preflight.js"
-      - "functions/offline-player-collection-source-preflight.test.js"
+      - "functions/**"
+      - "firestore.rules"
       - ".github/workflows/offline-player-collection-source-preflight.yml"
   push:
     branches: [main]
     paths:
-      - "functions/offline-player-collection-source-preflight.js"
-      - "functions/offline-player-collection-source-preflight.test.js"
+      - "functions/**"
+      - "firestore.rules"
+      - ".github/workflows/offline-player-collection-source-preflight.yml"
 
 permissions:
   contents: read
