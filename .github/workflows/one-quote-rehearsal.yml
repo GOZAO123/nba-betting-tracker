@@ -1,0 +1,39 @@
+name: One-quote emulator rehearsal
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/one-quote-rehearsal.yml'
+      - 'firebase.quote-rehearsal.json'
+      - 'firestore.rules'
+      - 'functions/**'
+
+permissions:
+  contents: read
+
+jobs:
+  rehearse:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Install Functions dependencies
+        run: npm install --prefix functions --no-audit --no-fund
+      - name: Run Firestore and Auth emulators
+        env:
+          GCLOUD_PROJECT: demo-nba-quote-rehearsal
+          FIREBASE_CLI_DISABLE_TELEMETRY: '1'
+        run: >-
+          npx --yes firebase-tools@15.35.0 emulators:exec
+          --config firebase.quote-rehearsal.json
+          --project demo-nba-quote-rehearsal --only firestore,auth
+          "node --test functions/one-quote-rehearsal.js"
