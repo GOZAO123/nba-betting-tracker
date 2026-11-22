@@ -11,7 +11,7 @@ const { makeOfflineFirestoreQuoteEvidenceStore } =
 
 const KEYS=Object.freeze([
   "enabled","ownerUid","reserve","fetchCatalogue","fetchOdds","db",
-  "trustedQuoteSelection","waitBetweenRequests","now","onFailure",
+  "trustedQuoteSelection","trustedQuoteScope","waitBetweenRequests","now","onFailure",
   "onEvidenceOutcome","onQuoteOutcome"
 ]);
 const META_KEYS=Object.freeze([
@@ -42,7 +42,7 @@ function makeOfflineManualQuotePersistence(config={}) {
   }
 
   const {
-    ownerUid,reserve,fetchCatalogue,fetchOdds,db,trustedQuoteSelection,
+    ownerUid,reserve,fetchCatalogue,fetchOdds,db,trustedQuoteSelection,trustedQuoteScope,
     waitBetweenRequests=async()=>{},now=Date.now,onFailure=()=>{},
     onEvidenceOutcome=null,onQuoteOutcome=null
   }=config;
@@ -105,7 +105,7 @@ function makeOfflineManualQuotePersistence(config={}) {
 
   const audit=makeOfflineManualEvidenceAudit({
     ownerUid,reserve,fetchCatalogue,fetchOdds,db,waitBetweenRequests,
-    now,onFailure,onEvidenceOutcome,trustedQuoteSelection,
+    now,onFailure,onEvidenceOutcome,trustedQuoteSelection,trustedQuoteScope,
     onTrustedQuote:trustedQuoteSink
   });
   // The only exposed interface is D8's parameterless owner-gated manual audit.

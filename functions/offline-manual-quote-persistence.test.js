@@ -12,6 +12,10 @@ const OWNER={auth:{uid:"synthetic-owner",token:{email_verified:true}},data:{}};
 const SELECTOR=Object.freeze({
   fixtureId:"synthetic-d832-fixture",marketId:"91001",providerPlayerId:"93001"
 });
+const SCOPE=Object.freeze({
+  participant1Id:"5001",participant2Id:"5002",startTime:iso(180),
+  family:"PTS",line:20.5,playerName:"Synthetic D832 Athlete"
+});
 const catalog=()=>[{
   marketId:91001,sportId:11,playerProp:true,period:"result",
   marketName:"Over Under Player Points (incl. overtime)",handicap:20.5,
@@ -88,7 +92,8 @@ function harness(options={}) {
   };
   const config={
     enabled:options.enabled??true,ownerUid:"synthetic-owner",
-    trustedQuoteSelection:options.selector??SELECTOR,db,
+    trustedQuoteSelection:options.scope ? options.selector : options.selector??SELECTOR,
+    trustedQuoteScope:options.scope,db,
     now:()=>current,
     reserve:async n=>{
       counts.reserves.push(n);
@@ -336,4 +341,80 @@ test("D15.32 module, existing production adapter and browser rules remain discon
   assert.doesNotMatch(code,/propResearchLedger/);
   assert.match(rules,/allow create, update, delete: if false;/);
   assert.doesNotMatch(rules,/quoteEvidence/);
+});
+
+test("scoped manual run resolves one original quote from its two reserved responses",async()=>{
+  const odds=[fixture()];
+  odds[0].fixtureId="synthetic-discovered-fixture";
+  const scope={...SCOPE};
+  const s=harness({scope,odds});
+  scope.line=99.5;
+  assertAggregate(await s.run(OWNER));
+  assert.deepEqual(s.counts.reserves,[2]);
+  assert.deepEqual([s.counts.catalogue,s.counts.odds],[1,1]);
+  assert.deepEqual(s.events,["FIXTURE_STORED","QUOTE_STORED"]);
+  const [[,batch]]=fixtureDocs(s);
+  const [[,doc]]=quoteDocs(s);
+  assertQuote(doc);
+  assert.equal(doc.quote.fixtureId,"synthetic-discovered-fixture");
+  assert.equal(doc.quote.marketId,"91001");
+  assert.equal(doc.quote.providerPlayerId,"93001");
+  assert.equal(doc.quote.line,20.5);
+  assert.equal(doc.quote.sourceReference,batch.reference);
+  assert.equal(doc.quote.capturedAt,batch.capturedAt);
+});
+
+test("scope cannot be supplied by the caller or combined with an exact selector",async()=>{
+  assert.throws(()=>harness({scope:{...SCOPE,extra:true}}),TypeError);
+  assert.throws(()=>harness({scope:SCOPE,selector:SELECTOR}),TypeError);
+  const s=harness({scope:SCOPE});
+  await assert.rejects(s.run({...OWNER,data:{trustedQuoteScope:{...SCOPE,line:99.5}}}));
+  assert.deepEqual(s.counts.reserves,[]);
+  assert.deepEqual(s.events,[]);
+});
+
+test("ambiguous fixtures, markets or original player IDs never produce a private quote",async()=>{
+  const secondFixture={...fixture(),fixtureId:"synthetic-second-fixture"};
+  const duplicateMarket=fixture();
+  const markets=duplicateMarket.bookmakerOdds["betano.pt"].markets;
+  markets["91002"]=structuredClone(markets["91001"]);
+  const duplicatePlayer=fixture();
+  const [over,under]=Object.values(
+    duplicatePlayer.bookmakerOdds["betano.pt"].markets["91001"].outcomes);
+  over.players["93002"]=quote();
+  under.players["93002"]=quote();
+  const mismatchedPlayer=fixture();
+  const mismatchedUnder=mismatchedPlayer.bookmakerOdds["betano.pt"]
+    .markets["91001"].outcomes["92002"].players;
+  mismatchedUnder["93002"]=mismatchedUnder["93001"];
+  delete mismatchedUnder["93001"];
+  for(const options of [
+    {odds:[fixture(),secondFixture]},
+    {odds:[duplicateMarket],catalogue:[...catalog(),{...catalog()[0],marketId:91002}]},
+    {odds:[duplicatePlayer]},
+    {odds:[mismatchedPlayer]},
+    {scope:{...SCOPE,playerName:"Missing Synthetic Athlete"}}
+  ]) {
+    const s=harness({scope:SCOPE,...options});
+    assertAggregate(await s.run(OWNER));
+    assert.deepEqual([s.counts.catalogue,s.counts.odds],[1,1]);
+    assert.equal(quoteDocs(s).length,0);
+    assert.deepEqual(s.events,["FIXTURE_STORED"]);
+  }
+});
+
+test("scoped runs respect budget and fixture failures, and cached clicks never duplicate evidence",async()=>{
+  const denied=harness({scope:SCOPE,denyBudget:true});
+  await assert.rejects(denied.run(OWNER),/SYNTHETIC_QUOTA_BLOCKED/);
+  assert.deepEqual([denied.counts.catalogue,denied.counts.odds],[0,0]);
+  assert.deepEqual(denied.events,[]);
+  const broken=harness({scope:SCOPE,failFixtureWrite:true});
+  await broken.run(OWNER);
+  assert.deepEqual(broken.events,[]);
+  assert.equal(quoteDocs(broken).length,0);
+  const shared=harness({scope:SCOPE});
+  await Promise.all([shared.run(OWNER),shared.run(OWNER)]);
+  await shared.run(OWNER);
+  assert.deepEqual([shared.counts.catalogue,shared.counts.odds],[1,1]);
+  assert.deepEqual(shared.events,["FIXTURE_STORED","QUOTE_STORED"]);
 });

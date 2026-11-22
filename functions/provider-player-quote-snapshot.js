@@ -153,4 +153,71 @@ function freezeUnreviewedProviderPlayerPair(input = {}) {
   }
 }
 
-module.exports = { freezeUnreviewedProviderPlayerPair };
+// Scope is supplied by the trusted backend before the manual run. Its name
+// filter discovers an original ID for custody only, with no ESPN assertion.
+function normalizeOfflineQuoteScope(scope) {
+  if (!object(scope) || Object.keys(scope).sort().join("|") !==
+      "family|line|participant1Id|participant2Id|playerName|startTime") return null;
+  const participant1Id = identifier(scope.participant1Id);
+  const participant2Id = identifier(scope.participant2Id);
+  const startTime = timestamp(scope.startTime);
+  if (!participant1Id || !participant2Id || participant1Id === participant2Id ||
+      !Number.isFinite(startTime) || !validName(scope.playerName) ||
+      !["PTS","REB","AST","3PT","PR","PA","RA","PRA"].includes(scope.family) ||
+      !Number.isFinite(scope.line) || scope.line < 0 ||
+      scope.line % 1 !== 0.5) return null;
+  return Object.freeze({
+    participant1Id, participant2Id, startTime,
+    playerName:scope.playerName, family:scope.family, line:scope.line
+  });
+}
+
+function resolveOfflineQuoteSelection(scope, catalogue, leagueOdds) {
+  const fixtures = leagueFixtures(leagueOdds);
+  if (!fixtures || fixtures.length > MAX_FIXTURES) return null;
+  const matches = fixtures.filter(f => object(f) &&
+    Number(f.sportId) === 11 && Number(f.tournamentId) === 132 &&
+    identifier(f.participant1Id) === scope.participant1Id &&
+    identifier(f.participant2Id) === scope.participant2Id &&
+    timestamp(f.startTime) === scope.startTime);
+  if (matches.length !== 1 || !fixtureId(matches[0].fixtureId)) return null;
+
+  const book = matches[0].bookmakerOdds?.["betano.pt"];
+  if (!object(book) || book.bookmakerIsActive !== true ||
+      book.suspended === true || !object(book.markets)) return null;
+  const markets = Object.entries(book.markets);
+  if (markets.length > MAX_MARKETS) return null;
+
+  const {mapped} = officialCatalogueMap(catalogue);
+  const wantedMarkets = markets.filter(([id, market]) => {
+    const definition = mapped.get(id);
+    return market?.marketActive === true &&
+      definition?.family === scope.family && definition.line === scope.line;
+  });
+  if (wantedMarkets.length !== 1) return null;
+
+  const [[marketId, market]] = wantedMarkets;
+  let providerPlayerId = null;
+  for (const outcomeId of mapped.get(marketId).outcomeSides.keys()) {
+    const players = market.outcomes?.[outcomeId]?.players;
+    if (!object(players)) return null;
+    const entries = Object.entries(players);
+    if (entries.length > MAX_MARKETS) return null;
+    const matchingPlayers = entries.filter(([, player]) =>
+      player?.playerName === scope.playerName);
+    if (matchingPlayers.length !== 1) return null;
+    const [originalId, player] = matchingPlayers[0];
+    if (!identifier(originalId) || player.active !== true ||
+        (providerPlayerId !== null && providerPlayerId !== originalId)) return null;
+    providerPlayerId = originalId;
+  }
+  return providerPlayerId ? {
+    fixtureId:matches[0].fixtureId, marketId, providerPlayerId
+  } : null;
+}
+
+module.exports = {
+  freezeUnreviewedProviderPlayerPair,
+  normalizeOfflineQuoteScope,
+  resolveOfflineQuoteSelection
+};
