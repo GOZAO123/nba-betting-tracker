@@ -6,6 +6,7 @@ const path=require("node:path");
 const {makeOfflineManualQuotePersistence}=
   require("./offline-manual-quote-persistence");
 const {makeOfflinePlayerReceiptLink}=require("./offline-player-receipt-link");
+const {makeOfflineFixedOriginOddsPapiTransport}=require("./manual-odds-fixed-transport");
 
 const NOW=Date.parse("2026-11-20T13:30:00.000Z");
 const iso=m=>new Date(NOW+m*60000).toISOString();
@@ -44,7 +45,7 @@ function fixture() {
   };
 }
 function harness(options={}) {
-  const docs=new Map(),events=[],outcomes=[],monitor=[];
+  const docs=new Map(),events=[],outcomes=[],monitor=[],transportTrace=[];
   const counts={reserves:[],catalogue:0,odds:0,transactions:0,reads:0,creates:0};
   let current=NOW,slots=0;
   const providerOdds=options.odds??[fixture()];
@@ -54,6 +55,7 @@ function harness(options={}) {
     doc:key=>({path:key}),
     async runTransaction(callback) {
       counts.transactions++;
+      transportTrace.push("DB_TRANSACTION");
       let release;
       const previous=queue;
       queue=new Promise(resolve=>{release=resolve;});
@@ -91,6 +93,33 @@ function harness(options={}) {
       } finally {release();}
     }
   };
+  const source=options.useFixedTransport
+    ? makeOfflineFixedOriginOddsPapiTransport({
+      getApiKey:()=>{
+        transportTrace.push("KEY_LOOKUP");
+        return "SYNTHETIC_TEST_KEY";
+      },
+      fetchImpl:async (target,request)=>{
+        const url=new URL(target);
+        transportTrace.push(url.pathname);
+        assert.equal(url.origin,"https://api.oddspapi.io");
+        assert.equal(request.redirect,"error");
+        if(url.pathname==="/v4/markets") {
+          counts.catalogue++;
+          assert.equal(url.searchParams.get("language"),"en");
+          return Response.json(providerCatalogue);
+        }
+        assert.equal(url.pathname,"/v4/odds-by-tournaments");
+        assert.equal(url.searchParams.get("tournamentIds"),"132");
+        assert.equal(url.searchParams.get("bookmaker"),"betano.pt");
+        counts.odds++;
+        return Response.json(providerOdds);
+      }
+    })
+    : {
+      fetchCatalogue:async()=>{counts.catalogue++;return providerCatalogue;},
+      fetchOdds:async()=>{counts.odds++;return providerOdds;}
+    };
   const config={
     enabled:options.enabled??true,ownerUid:"synthetic-owner",
     trustedQuoteSelection:options.scope ? options.selector : options.selector??SELECTOR,
@@ -98,11 +127,11 @@ function harness(options={}) {
     now:()=>current,
     reserve:async n=>{
       counts.reserves.push(n);
+      transportTrace.push(`RESERVE:${n}`);
       if (options.denyBudget || slots+n>6)throw Error("SYNTHETIC_QUOTA_BLOCKED");
       slots+=n;
     },
-    fetchCatalogue:async()=>{counts.catalogue++;return providerCatalogue;},
-    fetchOdds:async()=>{counts.odds++;return providerOdds;},
+    ...source,
     onQuoteOutcome:async value=>{
       outcomes.push(value);
       if(options.monitorThrows)throw Error("PRIVATE_MONITOR_FAILURE");
@@ -110,7 +139,7 @@ function harness(options={}) {
     onEvidenceOutcome:async value=>{monitor.push(value);}
   };
   const run=makeOfflineManualQuotePersistence(config);
-  return {run,docs,events,outcomes,monitor,counts,providerOdds,
+  return {run,docs,events,outcomes,monitor,counts,providerOdds,transportTrace,
     advance:m=>{current+=m*60000;},quota:()=>slots};
 }
 const fixtureDocs=s=>[...s.docs.entries()].filter(([key])=>
@@ -448,4 +477,41 @@ test("scoped runs respect budget and fixture failures, and cached clicks never d
   await shared.run(OWNER);
   assert.deepEqual([shared.counts.catalogue,shared.counts.odds],[1,1]);
   assert.deepEqual(shared.events,["FIXTURE_STORED","QUOTE_STORED"]);
+});
+
+test("scoped custody makes exactly two fixed-origin requests after one reservation",async()=>{
+  const s=harness({scope:SCOPE,useFixedTransport:true});
+  assert.deepEqual(s.transportTrace,[]);
+  const first=await s.run(OWNER);
+  assertAggregate(first);
+  assert.equal(first.requestsUsedOnThisClick,2);
+  const cached=await s.run(OWNER);
+  assertAggregate(cached);
+  assert.equal(cached.requestsUsedOnThisClick,0);
+  assert.deepEqual(s.transportTrace,[
+    "RESERVE:2","KEY_LOOKUP","/v4/markets","KEY_LOOKUP",
+    "/v4/odds-by-tournaments","DB_TRANSACTION","DB_TRANSACTION"
+  ]);
+  assert.deepEqual(s.events,["FIXTURE_STORED","QUOTE_STORED"]);
+  assert.equal(quoteDocs(s).length,1);
+  assert.doesNotMatch(JSON.stringify(first),/SYNTHETIC_TEST_KEY/);
+});
+
+test("disabled, unauthorized and quota-denied scoped custody have no transport or DB effects",async()=>{
+  const disabled=harness({scope:SCOPE,useFixedTransport:true,enabled:false});
+  await assert.rejects(disabled.run(OWNER),{code:"failed-precondition"});
+  assert.deepEqual(disabled.transportTrace,[]);
+
+  const unauthorized=harness({scope:SCOPE,useFixedTransport:true});
+  for(const request of [
+    {data:{}},
+    {...OWNER,auth:{uid:"synthetic-other",token:{email_verified:true}}},
+    {...OWNER,auth:{uid:"synthetic-owner",token:{email_verified:false}}}
+  ]) await assert.rejects(unauthorized.run(request));
+  assert.deepEqual(unauthorized.transportTrace,[]);
+
+  const denied=harness({scope:SCOPE,useFixedTransport:true,denyBudget:true});
+  await assert.rejects(denied.run(OWNER),/SYNTHETIC_QUOTA_BLOCKED/);
+  assert.deepEqual(denied.transportTrace,["RESERVE:2"]);
+  for(const s of [disabled,unauthorized,denied]) assert.equal(s.docs.size,0);
 });
