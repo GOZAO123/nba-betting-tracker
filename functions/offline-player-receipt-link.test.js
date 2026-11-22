@@ -9,6 +9,9 @@ const {freezeUnreviewedProviderPlayerPair}=
   require("./provider-player-quote-snapshot");
 const {makeOfflinePlayerReceiptLink}=
   require("./offline-player-receipt-link");
+const {makeReviewedTeamBridgeResolver}=require("./offer-team-crosswalk");
+const {makeReviewedPlayerBridgeResolver}=require("./offer-player-crosswalk");
+const {inspectOfflineNbaOffers}=require("./offer-matching");
 
 const NOW=Date.parse("2026-11-20T16:00:00.000Z");
 const iso=n=>new Date(NOW+n*60000).toISOString();
@@ -24,7 +27,7 @@ const market={marketId:91001,sportId:11,playerProp:true,period:"result",
   marketName:"Over Under Player Points (incl. overtime)",handicap:20.5,
   outcomes:[{outcomeId:92001,outcomeName:"Over"},
     {outcomeId:92002,outcomeName:"Under"}]};
-const fixture=()=>({
+const fixture=(mainLine=false)=>({
   fixtureId:FIX,sportId:11,tournamentId:132,
   participant1Id:"5001",participant2Id:"5002",statusId:0,hasOdds:true,
   startTime:iso(180),
@@ -33,11 +36,11 @@ const fixture=()=>({
       marketActive:true,outcomes:{
         "92001":{players:{[PLAYER]:{
           active:true,price:1.88,playerName:"Synthetic First Last",
-          changedAt:iso(-2),mainLine:false
+          changedAt:iso(-2),mainLine
         }}},
         "92002":{players:{[PLAYER]:{
           active:true,price:1.92,playerName:"Synthetic First Last",
-          changedAt:iso(-2),mainLine:false
+          changedAt:iso(-2),mainLine
         }}}
       }
     }}
@@ -47,7 +50,7 @@ const quotePath=()=>"_internal/quoteEvidence/providerObservations/"+
   sha([REF,FIX,PLAYER,MARKET]);
 const teamPath=()=>"_internal/teamEvidence/providerSnapshots/"+REF;
 function setup(options={}) {
-  const source=fixture();
+  const source=fixture(options.mainLine);
   const quoted=freezeUnreviewedProviderPlayerPair({
     now:NOW,capturedAt:iso(-1),snapshotReference:REF,
     fixtureId:FIX,marketId:MARKET,providerPlayerId:PLAYER,
@@ -86,7 +89,7 @@ function setup(options={}) {
     readPrivateEvidence:reader,isTrustedInternalReview:trust,
     now:options.now??(()=>NOW)
   });
-  return {docs,review,calls,quoted,batch,quoteDoc,run:(s=selector(),t=TOKEN)=>
+  return {docs,review,calls,quoted,batch,quoteDoc,source,run:(s=selector(),t=TOKEN)=>
     review(s,t)};
 }
 const denied=async promise=>assert.equal(await promise,null);
@@ -334,4 +337,106 @@ test("D15.37 code and production remain offline and browser research writes deni
   assert.doesNotMatch(file,/\b(?:adminTx|db|tx)\.(?:set|update|delete|create)\s*\(/);
   assert.doesNotMatch(file,/propResearchLedger/);
   assert.match(rules,/allow create, update, delete: if false;/);
+});
+
+function reviewSyntheticOffer(h, athletes) {
+  const espnEvent={
+    eventId:"40101010",startTime:iso(180),status:"STATUS_SCHEDULED",
+    homeTeamId:"1001",awayTeamId:"1002"
+  };
+  const resolveTeams=makeReviewedTeamBridgeResolver([{
+    schemaVersion:1,providerFixtureId:FIX,providerStartTime:iso(180),
+    espnEventId:espnEvent.eventId,reviewMethod:"MANUAL_TWO_SOURCE_ID_REVIEW",
+    reviewStatus:"APPROVED",reviewedAt:iso(-30),validUntil:iso(120),
+    evidence:{
+      providerReference:"ODDSPAPI_FIXTURE_REVIEW_SYNTHETIC",
+      espnReference:"ESPN_SCOREBOARD_REVIEW_SYNTHETIC"
+    },
+    teams:[
+      {providerParticipantId:"5001",espnTeamId:"1001"},
+      {providerParticipantId:"5002",espnTeamId:"1002"}
+    ]
+  }],()=>NOW);
+  const reviewedTeamBridge=resolveTeams({
+    fixtureId:FIX,participant1Id:"5001",participant2Id:"5002",
+    startTime:iso(180)
+  });
+  assert.ok(reviewedTeamBridge);
+
+  const espnRoster={teamId:"1001",athletes};
+  const resolvePlayer=makeReviewedPlayerBridgeResolver([{
+    schemaVersion:1,reviewMethod:"MANUAL_TWO_SOURCE_PLAYER_ID_REVIEW",
+    reviewStatus:"APPROVED",reviewedAt:iso(-1),validUntil:iso(120),
+    provider:{
+      fixtureId:FIX,participantId:"5001",playerId:PLAYER,
+      playerName:h.quoted.providerPlayerName,quoteDigest:h.quoted.digest,
+      sourceReference:REF,startTime:iso(180)
+    },
+    espn:{
+      eventId:espnEvent.eventId,teamId:"1001",athleteId:"7001",
+      displayName:h.quoted.providerPlayerName,
+      reference:"ESPN_ROSTER_MANUAL_SYNTHETIC"
+    }
+  }],()=>NOW);
+  const athlete=resolvePlayer({quote:h.quoted,reviewedTeamBridge,espnRoster});
+  const offer=inspectOfflineNbaOffers({
+    catalogue:[market],fixture:h.source,espnEvent,
+    teamBridge:reviewedTeamBridge.teamBridge,
+    rosters:[espnRoster,{teamId:"1002",athletes:[
+      {id:"7003",displayName:"Other Synthetic Athlete"}
+    ]}],
+    providerPlayerId:PLAYER,reviewedAthleteBridge:athlete,now:NOW
+  });
+  return {athlete,offer};
+}
+
+test("synthetic Betano main-line candidate matches reviewed ESPN identity and the original receipt",async()=>{
+  const h=setup({mainLine:true});
+  const receipt=await h.run();
+  assert.ok(receipt);
+  assert.equal(receipt.quoteDigest,h.quoted.digest);
+  assert.equal(receipt.fixtureDigest,h.batch.records[0].digest);
+  assert.equal(receipt.marketId,MARKET);
+  assert.equal(h.quoted.line,20.5);
+  assert.equal(h.quoted.outcomes.Over.mainLineFlag,true);
+  assert.equal(h.quoted.outcomes.Under.mainLineFlag,true);
+
+  const {athlete,offer}=reviewSyntheticOffer(h,[
+    {id:"7001",displayName:receipt.providerPlayerName}
+  ]);
+  assert.equal(athlete?.espnAthleteId,"7001");
+  assert.equal(athlete.providerPlayerId,receipt.providerPlayerId);
+  assert.equal(offer.status,"REVIEW_CANDIDATES_ONLY");
+  assert.equal(offer.athleteMatch,"REVIEW_ASSERTION_ONLY");
+  assert.deepEqual(offer.families.find(row=>row.market==="PTS"),{
+    market:"PTS",pairedLines:1,freshPairs:1,stalePairs:0,explicitMainPairs:1,
+    decision:"EXPLICIT_MAIN_LINE_REVIEW_REQUIRED"
+  });
+  for(const result of [receipt,athlete,offer]) {
+    assert.equal(result.bookmakerVerified,false);
+    assert.equal(result.autoLineSelected,false);
+    assert.equal(result.captureAllowed,false);
+  }
+  assert.deepEqual(h.calls,[quotePath(),teamPath()]);
+});
+
+test("synthetic main-line quote stays unverified when ESPN identity is ambiguous",async()=>{
+  const h=setup({mainLine:true});
+  const receipt=await h.run();
+  assert.ok(receipt);
+  const displayName=receipt.providerPlayerName;
+  const {athlete,offer}=reviewSyntheticOffer(h,[
+    {id:"7001",displayName},{id:"7002",displayName}
+  ]);
+  assert.equal(athlete,null);
+  assert.equal(offer.status,"AMBIGUOUS_ESPN_NAME");
+  assert.equal(offer.captureAllowed,false);
+});
+
+test("synthetic main-line quote cannot link a mismatched original receipt",async()=>{
+  const h=setup({mainLine:true});
+  h.quoteDoc.quote.startTime=iso(181);
+  rehashQuote(h.quoteDoc.quote);
+  await denied(h.run());
+  assert.deepEqual(h.calls,[quotePath(),teamPath()]);
 });
