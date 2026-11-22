@@ -1175,3 +1175,20 @@ exports.ledgerReconcileReviewedInactive = onCall(
     }
   }
 );
+
+const {makeOneQuoteCallable} = require("./one-quote-callable");
+exports.oddsPapiCollectOneQuote = onCall(
+  {region:"europe-west1", secrets:[oddsPapiKey], memory:"512MiB", timeoutSeconds:120,
+    maxInstances:1, concurrency:1},
+  makeOneQuoteCallable({
+    HttpsError, ownerUid:LEDGER_OWNER, getDb:getFirestore,
+    getConfig:()=>({
+      enabled:process.env.ODDSPAPI_ONE_QUOTE_ENABLED,
+      approvalId:process.env.ODDSPAPI_ONE_QUOTE_APPROVAL_ID,
+      scopeJson:process.env.ODDSPAPI_ONE_QUOTE_SCOPE
+    }),
+    reserve:reserveDiagnosticRequests,
+    getApiKey:()=>oddsPapiKey.value(),
+    fetchImpl:(...args)=>fetch(...args)
+  })
+);
