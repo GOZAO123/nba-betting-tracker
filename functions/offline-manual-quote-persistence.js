@@ -9,10 +9,12 @@ const { makeOfflineManualEvidenceAudit } = require("./manual-evidence-receipt");
 const { makeOfflineFirestoreQuoteEvidenceStore } =
   require("./offline-quote-evidence-firestore");
 
+const { makeOfflinePlayerReceiptLink } = require("./offline-player-receipt-link");
+
 const KEYS=Object.freeze([
   "enabled","ownerUid","reserve","fetchCatalogue","fetchOdds","db",
   "trustedQuoteSelection","trustedQuoteScope","waitBetweenRequests","now","onFailure",
-  "onEvidenceOutcome","onQuoteOutcome"
+  "onEvidenceOutcome","onQuoteOutcome","readPrivateEvidence"
 ]);
 const META_KEYS=Object.freeze([
   "capturedAt","digest","fixtureId","marketId","providerPlayerId",
@@ -44,7 +46,7 @@ function makeOfflineManualQuotePersistence(config={}) {
   const {
     ownerUid,reserve,fetchCatalogue,fetchOdds,db,trustedQuoteSelection,trustedQuoteScope,
     waitBetweenRequests=async()=>{},now=Date.now,onFailure=()=>{},
-    onEvidenceOutcome=null,onQuoteOutcome=null
+    onEvidenceOutcome=null,onQuoteOutcome=null,readPrivateEvidence=null
   }=config;
   if (typeof ownerUid!=="string" || ownerUid.length===0 ||
       [reserve,fetchCatalogue,fetchOdds,waitBetweenRequests,now,onFailure]
@@ -52,7 +54,8 @@ function makeOfflineManualQuotePersistence(config={}) {
       !db || typeof db.doc!=="function" ||
       typeof db.runTransaction!=="function" ||
       (onEvidenceOutcome!==null && typeof onEvidenceOutcome!=="function") ||
-      (onQuoteOutcome!==null && typeof onQuoteOutcome!=="function"))
+      (onQuoteOutcome!==null && typeof onQuoteOutcome!=="function") ||
+      (readPrivateEvidence!==null && typeof readPrivateEvidence!=="function"))
     throw new TypeError("Missing trusted backend quote integration dependencies.");
 
   let active=null;
@@ -69,6 +72,15 @@ function makeOfflineManualQuotePersistence(config={}) {
       scope.claimed=true; // one use before any transaction work
       return true;
     }
+  });
+
+  const review=readPrivateEvidence && makeOfflinePlayerReceiptLink({
+    now,readPrivateEvidence,
+    isTrustedInternalReview:(token,selection)=>
+      active?.token===token && active.claimed &&
+      selection.sourceReference===active.metadata.reference &&
+      ["fixtureId","marketId","providerPlayerId"].every(key=>
+        selection[key]===active.metadata[key])
   });
 
   const trustedQuoteSink=async quote=>{
@@ -92,6 +104,15 @@ function makeOfflineManualQuotePersistence(config={}) {
       const result=await quoteStore.store(quote,token);
       if (result && SAFE_STATUSES.includes(result.status) &&
           Object.keys(result).length===1) status=result.status;
+      if (review && status==="STORED") {
+        status="UNLINKED";
+        const {fixtureId,marketId,providerPlayerId,reference,digest}=metadata;
+        const linked=await review({
+          fixtureId,marketId,providerPlayerId,sourceReference:reference
+        },token);
+        if (linked?.status==="UNREVIEWED_RECEIPT_LINK_ONLY" &&
+            linked.quoteDigest===digest) status="LINKED_UNREVIEWED";
+      }
     } catch (_) {
       // No provider retries, no raw provider data or private error forwarding.
     } finally {
