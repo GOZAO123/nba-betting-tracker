@@ -17,7 +17,7 @@ const {makeOfflineFixedOriginOddsPapiTransport} = require("./manual-odds-fixed-t
 const {makeOfflinePlayerReceiptLink} = require("./offline-player-receipt-link");
 const {NOW, OWNER, SCOPE, catalog, fixture} = require("./one-quote-rehearsal-fixtures");
 
-const {makeOfflineOneQuoteApproval} = require("./offline-one-quote-approval");
+const {makeOfflineOneQuoteApproval, makeOfflineLinkedQuoteCollector} = require("./offline-one-quote-approval");
 
 const budgetPath = "_internal/oddsPapiDailyDiagnosticBudget";
 const fixtureCollection = "_internal/teamEvidence/providerSnapshots";
@@ -33,7 +33,7 @@ test("one-quote custody with Firestore and Auth emulators", async t => {
   assert.equal((await budget.get()).exists, false, "start with an empty emulator");
   assert.deepEqual((await receipts()).map(snapshot => snapshot.size), [0, 0]);
 
-  function manualRun({enabled = true, failQuoteWrite = false, now = NOW} = {}) {
+  function manualRun({enabled = true, failQuoteWrite = false, corruptReadback = false, now = NOW} = {}) {
     const trace = [];
     const utcDay = new Date(now).toISOString().slice(0, 10);
     let committed;
@@ -87,10 +87,21 @@ test("one-quote custody with Firestore and Auth emulators", async t => {
         }));
       }
     };
-    return {trace, run: makeOfflineManualQuotePersistence({
+    const options = {
       enabled, ownerUid: OWNER.auth.uid, trustedQuoteScope: SCOPE,
       now: () => now, reserve, db: custody, ...transport
-    })};
+    };
+    const privateReads = [];
+    const collectLinked = makeOfflineLinkedQuoteCollector({
+      ...options,
+      async readPrivateEvidence(path) {
+        privateReads.push(path);
+        const record = (await db.doc(path).get()).data();
+        if (corruptReadback && record?.quote) record.quote.digest = "0".repeat(64);
+        return record;
+      }
+    });
+    return {trace, privateReads, collectLinked, run: makeOfflineManualQuotePersistence(options)};
   }
 
   const disabled = manualRun({enabled: false});
@@ -173,16 +184,18 @@ test("one-quote custody with Firestore and Auth emulators", async t => {
     now: () => NOW + 60_000,
     async collect(request) {
       assert.equal((await coldApproval.get()).data().claimedAtMs, NOW + 60_000);
-      assert.equal((await cold.run(request)).requestsUsedOnThisClick, 2);
+      return cold.collectLinked(request);
     }
   });
-  assert.deepEqual(await collectCold(OWNER), {status: "ATTEMPT_COMPLETED"});
+  assert.deepEqual(await collectCold(OWNER), {status: "LINKED_UNREVIEWED"});
   assert.deepEqual(cold.trace, freshTrace);
+  assert.equal(cold.privateReads.length, 2);
   assert.deepEqual((await receipts()).map(snapshot => snapshot.size), [2, 2]);
 
   // Fixture and quote are separate transactions. A synthetic quote failure leaves a fixture only.
   const partial = manualRun({now: NOW + 120_000, failQuoteWrite: true});
-  assert.equal((await partial.run(OWNER)).requestsUsedOnThisClick, 2);
+  assert.equal(await partial.collectLinked(OWNER), "UNLINKED");
+  assert.deepEqual(partial.privateReads, []);
   assert.deepEqual(partial.trace, freshTrace);
   assert.deepEqual((await receipts()).map(snapshot => snapshot.size), [3, 2]);
   const exhausted = manualRun({now: NOW + 180_000});
@@ -190,6 +203,13 @@ test("one-quote custody with Firestore and Auth emulators", async t => {
   assert.deepEqual(exhausted.trace, ["budget"]);
   assert.equal((await budget.get()).data().reserved, 6);
   assert.deepEqual((await receipts()).map(snapshot => snapshot.size), [3, 2]);
+
+  // Reset only the synthetic budget to exercise a stored quote with bad readback.
+  await budget.set({utcDay: new Date(NOW).toISOString().slice(0, 10), reserved: 0});
+  const mismatch = manualRun({now: NOW + 240_000, corruptReadback: true});
+  assert.equal(await mismatch.collectLinked(OWNER), "UNLINKED");
+  assert.equal(mismatch.privateReads.length, 1);
+  assert.deepEqual((await receipts()).map(snapshot => snapshot.size), [4, 3]);
 });
 
 test("single-use approval gates the offline collector across instances", async t => {
