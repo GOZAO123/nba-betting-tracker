@@ -17,6 +17,8 @@ const {makeOfflineFixedOriginOddsPapiTransport} = require("./manual-odds-fixed-t
 const {makeOfflinePlayerReceiptLink} = require("./offline-player-receipt-link");
 const {NOW, OWNER, SCOPE, catalog, fixture} = require("./one-quote-rehearsal-fixtures");
 
+const {makeOfflineOneQuoteApproval} = require("./offline-one-quote-approval");
+
 const budgetPath = "_internal/oddsPapiDailyDiagnosticBudget";
 const fixtureCollection = "_internal/teamEvidence/providerSnapshots";
 const quoteCollection = "_internal/quoteEvidence/providerObservations";
@@ -163,7 +165,18 @@ test("one-quote custody with Firestore and Auth emulators", async t => {
   // A new composition is cold even with existing receipts and a persistent budget.
   // A later synthetic capture can create another pair.
   const cold = manualRun({now: NOW + 60_000});
-  assert.equal((await cold.run(OWNER)).requestsUsedOnThisClick, 2);
+  const coldApprovalId = "c".repeat(32);
+  const coldApproval = db.doc("_internal/oneQuoteCollection/approvals/" + coldApprovalId);
+  await coldApproval.set({issuedAtMs: NOW, expiresAtMs: NOW + 120_000, claimedAtMs: null});
+  const collectCold = makeOfflineOneQuoteApproval({
+    enabled: true, ownerUid: OWNER.auth.uid, approvalId: coldApprovalId, db,
+    now: () => NOW + 60_000,
+    async collect(request) {
+      assert.equal((await coldApproval.get()).data().claimedAtMs, NOW + 60_000);
+      assert.equal((await cold.run(request)).requestsUsedOnThisClick, 2);
+    }
+  });
+  assert.deepEqual(await collectCold(OWNER), {status: "ATTEMPT_COMPLETED"});
   assert.deepEqual(cold.trace, freshTrace);
   assert.deepEqual((await receipts()).map(snapshot => snapshot.size), [2, 2]);
 
@@ -177,4 +190,55 @@ test("one-quote custody with Firestore and Auth emulators", async t => {
   assert.deepEqual(exhausted.trace, ["budget"]);
   assert.equal((await budget.get()).data().reserved, 6);
   assert.deepEqual((await receipts()).map(snapshot => snapshot.size), [3, 2]);
+});
+
+test("single-use approval gates the offline collector across instances", async t => {
+  const app = initializeApp({projectId}, "approval-rehearsal");
+  t.after(() => deleteApp(app));
+  const db = getFirestore(app);
+  const approvalId = "a".repeat(32);
+  const approval = db.doc("_internal/oneQuoteCollection/approvals/" + approvalId);
+  let calls = 0;
+  const config = {
+    enabled: true, ownerUid: OWNER.auth.uid, approvalId, db, now: () => NOW,
+    async collect() {
+      calls++;
+      assert.equal((await approval.get()).data().claimedAtMs, NOW);
+      return {privateReceipt: "synthetic-private-receipt"};
+    }
+  };
+  const make = overrides => makeOfflineOneQuoteApproval({...config, ...overrides});
+  await assert.rejects(make({enabled: false})(OWNER), {code: "failed-precondition"});
+  await assert.rejects(make()({data: {}}), {code: "unauthenticated"});
+  for (const auth of [
+    {...OWNER.auth, uid: "synthetic-other"},
+    {...OWNER.auth, token: {email_verified: false}}
+  ]) await assert.rejects(make()({...OWNER, auth}), {code: "permission-denied"});
+  await assert.rejects(make()({...OWNER, data: {enabled: true}}), {code: "invalid-argument"});
+  await assert.rejects(make()(OWNER), {code: "failed-precondition"});
+  await approval.set({issuedAtMs: NOW - 2000, expiresAtMs: NOW, claimedAtMs: null});
+  await assert.rejects(make()(OWNER), {code: "failed-precondition"});
+  assert.equal(calls, 0);
+
+  await approval.set({issuedAtMs: NOW, expiresAtMs: NOW + 60_000, claimedAtMs: null});
+  const outcomes = await Promise.allSettled([make()(OWNER), make()(OWNER)]);
+  assert.equal(calls, 1);
+  assert.deepEqual(outcomes.find(outcome => outcome.status === "fulfilled")?.value,
+    {status: "ATTEMPT_COMPLETED"});
+  assert.equal(outcomes.find(outcome => outcome.status === "rejected")?.reason.code,
+    "failed-precondition");
+  await assert.rejects(make()(OWNER), {code: "failed-precondition"});
+
+  const failedApprovalId = "b".repeat(32);
+  const failedApproval = db.doc("_internal/oneQuoteCollection/approvals/" + failedApprovalId);
+  await failedApproval.set({issuedAtMs: NOW, expiresAtMs: NOW + 60_000, claimedAtMs: null});
+  const failed = make({
+    approvalId: failedApprovalId,
+    async collect() { throw Error("synthetic private downstream failure"); }
+  });
+  await assert.rejects(failed(OWNER), {
+    code: "unavailable", message: "Collection attempt did not complete."
+  });
+  assert.equal((await failedApproval.get()).data().claimedAtMs, NOW);
+  await assert.rejects(failed(OWNER), {code: "failed-precondition"});
 });
