@@ -34,8 +34,8 @@ const blocked=r=>{
  assert.equal(Object.isFrozen(r.blockers),true);
 };
 const has=(r,b)=>assert.ok(r.blockers.includes(b),JSON.stringify(r.blockers));
-test("D15.12 source inventory has exactly 14 exports plus separately deployed preflight",()=>{
- assert.equal(SOURCE_NAMES.length,14);
+test("D15.12 source inventory has 15 exports and the live baseline includes separate preflight",()=>{
+ assert.equal(SOURCE_NAMES.length,15);
  assert.equal(EXPECTED.length,15);
  assert.equal(PREFLIGHT,"oddsPapiAccountPreflight");
  assert.equal(SOURCE_NAMES.includes(PREFLIGHT),false);
@@ -63,7 +63,7 @@ test("D15.12 canonical 15-row, Node22, europe-west1 table matches inventory but 
   "OWNER_APPROVAL_FOR_CLOUD_CHANGES_NOT_GRANTED"
  ]);
 });
-test("D15.12 missing preflight blocks even if 14 current GitHub exports match",()=>{
+test("D15.12 missing preflight blocks even if current GitHub exports match",()=>{
  const copy=rows().filter(r=>r[0]!==PREFLIGHT);
  const result=assess(table(copy),SOURCE);blocked(result);
  assert.equal(result.inventoryMatches,false);
@@ -284,4 +284,14 @@ test("D15.12 module is inert and never touched by Firebase entrypoint",()=>{
  assert.doesNotMatch(SOURCE,/offline-production-function-inventory|offline-production-inventory-cli/);
  assert.doesNotMatch(code,/\bfetch\(|onCall\(|onRequest\(|setInterval\(|firebase-admin|google-auth-library/);
  assert.doesNotMatch(cli,/\bfetch\(|onCall\(|onRequest\(|setInterval\(|firebase-admin|google-auth-library/);
+});
+
+test("staged collector is unexpected in the pre-deploy live inventory",()=>{
+ const result=assess(table([...rows(),[
+  "oddsPapiCollectOneQuote","v2","callable","europe-west1","512","nodejs22"
+ ]]),SOURCE);
+ blocked(result);
+ assert.equal(result.inventoryMatches,false);
+ assert.equal(result.unexpectedCount,1);
+ has(result,"UNEXPECTED_FUNCTIONS_PRESENT");
 });

@@ -13,12 +13,12 @@ function blocked(r){
  assert.ok(Object.isFrozen(r.sourceCallers));
 }
 const has=(r,k)=>assert.ok(r.blockers.includes(k),JSON.stringify(r.blockers));
-test("D15.11 current source has exactly five direct and three delegated paid callers",()=>{
+test("D15.11 current source has exactly five direct and four delegated paid callers",()=>{
  const r=assess(production());
  blocked(r);
  assert.equal(r.sourceInventoryVerified,true,JSON.stringify(r.blockers));
- assert.equal(DIRECT.length,5);assert.equal(DELEGATED.length,3);
- assert.equal(r.sourceCallers.length,8);
+ assert.equal(DIRECT.length,5);assert.equal(DELEGATED.length,4);
+ assert.equal(r.sourceCallers.length,9);
  assert.deepEqual([...r.sourceCallers].sort(),
    [...DIRECT.map(x=>x.name),...DELEGATED].sort());
  has(r,"LIVE_DEPLOYED_FUNCTION_REVISIONS_NOT_INVENTORIED");
@@ -132,4 +132,19 @@ test("D15.11 source inventory module is inert and cannot enable deployed code",(
  // "onCall(" is an inert string search marker in this scanner; do not
  // mistake that literal for a registered Firebase export.
  assert.doesNotMatch(src,/\.listen\(|\bfetch\(|onRequest\(|setInterval\(/);
+});
+
+test("staged collector must delegate to the shared reservation exactly once",()=>{
+ const source=production();
+ const marker="exports.oddsPapiCollectOneQuote = onCall(";
+ const start=source.indexOf(marker);
+ assert.ok(start>=0);
+ const changed=source.slice(0,start)+source.slice(start).replace(
+  "reserve:reserveDiagnosticRequests,","reserve:unsharedReservation,");
+ const report=assess(changed);
+ has(report,"ONE_QUOTE_RESERVATION_UNVERIFIED");
+ assert.equal(report.sourceInventoryVerified,false);
+ has(assess(source.replace(marker,"exports.oddsPapiOtherCollector = onCall(")),
+  "PAID_CALLER_EXPORT_INVENTORY_DRIFT");
+ has(assess(source+"\n"+marker+"async()=>{});"),"PAID_CALLER_EXPORT_INVENTORY_DRIFT");
 });

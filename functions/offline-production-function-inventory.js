@@ -13,10 +13,11 @@ const SOURCE_NAMES=Object.freeze([
  "oddsPapiNbaMarketAudit","oddsPapiNbaIdentitySchemaDiagnostic",
  "ledgerCaptureProspective","ledgerBatchCaptureProspective",
  "ledgerSettleProspective","ledgerAutoSettleProspective",
- "ledgerReconcileReviewedInactive"
+ "ledgerReconcileReviewedInactive","oddsPapiCollectOneQuote"
 ]);
 const PREFLIGHT="oddsPapiAccountPreflight"; // separately deployed; not in main
-const EXPECTED=Object.freeze([...SOURCE_NAMES,PREFLIGHT]);
+// The collector is staged in source. The pre-deploy live baseline excludes it.
+const EXPECTED=Object.freeze([...SOURCE_NAMES.filter(name=>name!=="oddsPapiCollectOneQuote"),PREFLIGHT]);
 const HEADERS=Object.freeze(["Function","Version","Trigger","Location","Memory","Runtime"]);
 const EXTERNAL_BLOCKERS=Object.freeze([
  "LIVE_CLOUD_RUN_REVISIONS_NOT_ATTESTED",

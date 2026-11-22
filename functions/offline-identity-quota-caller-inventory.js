@@ -13,7 +13,8 @@ const DIRECT=Object.freeze([
 const DELEGATED=Object.freeze([
   "oddsPapiNbaFeasibilityProbe",
   "oddsPapiNbaMarketAudit",
-  "oddsPapiNbaIdentitySchemaDiagnostic"
+  "oddsPapiNbaIdentitySchemaDiagnostic",
+  "oddsPapiCollectOneQuote"
 ]);
 const EXPECTED=Object.freeze([...DIRECT.map(x=>x.name),...DELEGATED]);
 // Only these known *external* attestations may remain when the checked-out
@@ -95,6 +96,13 @@ function assessOfflinePaidCallerInventory(source){
      !safe(exportBlock(source||"",DELEGATED[2]),
        /runNbaIdentitySchemaCallable/))
     add("IDENTITY_DIAGNOSTIC_RESERVATION_UNVERIFIED");
+  const oneQuote=exportBlock(source,DELEGATED[3]);
+  if(!safe(source,/const \{makeOneQuoteCallable\} = require\("\.\/one-quote-callable"\);/)||
+     !safe(oneQuote,/makeOneQuoteCallable\(\{[\s\S]*?\bgetDb:getFirestore,/)||
+     !safe(oneQuote,/^\s*reserve:reserveDiagnosticRequests,\s*$/m)||
+     !safe(oneQuote,/^\s*enabled:process\.env\.ODDSPAPI_ONE_QUOTE_ENABLED,\s*$/m)||
+     (oneQuote.match(/^\s*reserve\s*:/gm)||[]).length!==1)
+    add("ONE_QUOTE_RESERVATION_UNVERIFIED");
   if(!safe(source,/const ODDSPAPI_REQUESTS_PER_UTC_DAY = 6;/)||
      !safe(source,/db\.doc\("_internal\/oddsPapiDailyDiagnosticBudget"\)/)||
      !safe(source,/const NBA_IDENTITY_SCHEMA_DIAGNOSTIC_ENABLED = false;/)||
