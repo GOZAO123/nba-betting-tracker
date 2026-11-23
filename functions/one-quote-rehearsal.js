@@ -727,3 +727,189 @@ test("D18 manual source-aware review journal is atomic and private in emulators"
   await assert.rejects(journal.loadHistory(fixtureId),/Invalid review event/);
   assert.equal(await gate1.resolve(query),null);
 });
+
+
+test("D18 different-fixture global team-ID claims are atomic in emulators",async t=>{
+  const {extractOfflineFixtureTeamEvidence}=
+    require("./offline-fixture-team-evidence");
+  const {makeOfflineFixturesTeamReviewGate}=
+    require("./offline-fixtures-team-review-gate");
+  const {makeOfflineGloballyGuardedReviewJournal}=
+    require("./offline-fixtures-global-review-registry");
+  const app=initializeApp({projectId},"offline-global-id-write-race");
+  t.after(()=>deleteApp(app));
+  const db=getFirestore(app);
+  const iso=ms=>new Date(NOW+ms).toISOString();
+  const oneMinute=60000;
+  const fmt={A:"A",B:"B",C:"C"};
+  function source(letter,providerIds,espnIds) {
+    const fixtureId="synthetic-write-registry-"+letter;
+    const startTime=iso(180*oneMinute);
+    const receipt=extractOfflineFixtureTeamEvidence([{
+      fixtureId,sportId:11,tournamentId:132,statusId:0,hasOdds:true,
+      startTime,updatedAt:iso(-2*oneMinute),
+      participant1Id:providerIds[0],participant2Id:providerIds[1],
+      participant1Name:"Synthetic Provider "+providerIds[0],
+      participant2Name:"Synthetic Provider "+providerIds[1],
+      rawOdds:{"betano.pt":{PTS:{price:1.85}}},
+      secret:"DO_NOT_COPY_SECRET"
+    }],{
+      reference:"ODDSPAPI_FIXTURES_"+fmt[letter].repeat(32),
+      capturedAt:iso(-oneMinute)
+    },NOW);
+    assert.ok(receipt);
+    return {
+      fixtureId,providerIds,espnIds,startTime,
+      providerReceipt:receipt,
+      espnScoreboard:{events:[{
+        id:{"A":"401987651","B":"401987652","C":"401987653"}[letter],
+        date:startTime,status:{type:{state:"pre"}},
+        season:{type:2},competitions:[{competitors:[
+          {homeAway:"home",team:{
+            id:espnIds[0],displayName:"Synthetic ESPN "+espnIds[0]
+          }},
+          {homeAway:"away",team:{
+            id:espnIds[1],displayName:"Synthetic ESPN "+espnIds[1]
+          }}
+        ]}]
+      }]},
+      espnMetadata:{
+        reference:"ESPN_WRITE_"+letter+"_REVIEW",
+        capturedAt:iso(-30000)
+      }
+    };
+  }
+  const a=source("A",["5001","5002"],["14","13"]);
+  const b=source("B",["5001","5003"],["16","15"]);
+  let tick=NOW;
+  const guarded=makeOfflineGloballyGuardedReviewJournal({db});
+  function buildGate(entry) {
+    return makeOfflineFixturesTeamReviewGate({
+      authorize:async auth=>auth===OWNER ?
+        {allowed:true,reviewerReference:"OWNER_REVIEW_01"} :
+        {allowed:false,reviewerReference:"UNKNOWN"},
+      async loadEvidence(id){
+        assert.equal(id,entry.fixtureId);
+        return {
+          providerReceipt:entry.providerReceipt,
+          espnScoreboard:entry.espnScoreboard,
+          espnMetadata:entry.espnMetadata
+        };
+      },
+      loadHistory:guarded.loadHistory,
+      appendDecision:guarded.appendDecision,
+      now:()=>tick
+    });
+  }
+  const gateA=buildGate(a),gateB=buildGate(b);
+  const pairs=entry=>[
+    {providerParticipantId:entry.providerIds[0],
+      espnTeamId:entry.espnIds[0]},
+    {providerParticipantId:entry.providerIds[1],
+      espnTeamId:entry.espnIds[1]}
+  ];
+  const approve=(gate,entry)=>gate.submit(OWNER,{
+    fixtureId:entry.fixtureId,action:"APPROVE",
+    expectedRevision:0,pairs:pairs(entry)
+  });
+  const revoke=(gate,entry)=>gate.submit(OWNER,{
+    fixtureId:entry.fixtureId,action:"REVOKE",expectedRevision:1
+  });
+  const query=entry=>({
+    fixtureId:entry.fixtureId,
+    participant1Id:entry.providerIds[0],
+    participant2Id:entry.providerIds[1],
+    startTime:entry.startTime
+  });
+  const providerDoc=db.doc("_internal/teamReview/globalProviderIds/5001");
+  const registryEspn=id=>db.doc("_internal/teamReview/globalEspnIds/"+id);
+  assert.equal((await providerDoc.get()).exists,false);
+
+  // Both approvals have different fixture heads but SHARE provider ID 5001.
+  // One must win the single global registry transaction; never both.
+  const outcomes=await Promise.all([approve(gateA,a),approve(gateB,b)]);
+  assert.equal(outcomes.filter(x=>x.status==="APPROVED").length,1);
+  assert.equal(outcomes.filter(x=>x.status==="REVISION_CONFLICT").length,1);
+  const winnerIndex=outcomes.findIndex(x=>x.status==="APPROVED");
+  const winner=winnerIndex===0?a:b;
+  const loser=winnerIndex===0?b:a;
+  const winnerGate=winnerIndex===0?gateA:gateB;
+  const loserGate=winnerIndex===0?gateB:gateA;
+  const registered=(await providerDoc.get()).data();
+  assert.equal(registered.schemaVersion,1);
+  assert.deepEqual(registered.fixtureIds,[winner.fixtureId]);
+  assert.equal(registered.espnTeamId,winner.espnIds[0]);
+  assert.equal((await db.doc("_internal/teamReview/fixtureJournals/"+
+    loser.fixtureId).get()).exists,false);
+  assert.ok(await winnerGate.resolve(query(winner)));
+  assert.equal(await loserGate.resolve(query(loser)),null);
+
+  // A compatible second fixture may share the exact provider->ESPN pair.
+  const c=source("C",["5001","5004"],[
+    winner.espnIds[0],"17"
+  ]);
+  const gateC=buildGate(c);
+  assert.deepEqual(await approve(gateC,c),{status:"APPROVED",revision:1});
+  assert.deepEqual((await providerDoc.get()).data().fixtureIds,
+    [winner.fixtureId,c.fixtureId].sort());
+  assert.deepEqual((await registryEspn(winner.espnIds[0]).get())
+    .data().fixtureIds,[winner.fixtureId,c.fixtureId].sort());
+  assert.equal((await providerDoc.get()).data().espnTeamId,
+    winner.espnIds[0]);
+
+  // Revoking one fixture cannot silently free an ID still claimed by
+  // another approved fixture. A conflicting replay must stay blocked.
+  tick+=1000;
+  assert.deepEqual(await revoke(winnerGate,winner),
+    {status:"REVOKED",revision:2});
+  assert.deepEqual((await providerDoc.get()).data().fixtureIds,
+    [c.fixtureId]);
+  assert.deepEqual(await approve(loserGate,loser),
+    {status:"REVISION_CONFLICT"});
+  assert.equal(await winnerGate.resolve(query(winner)),null);
+  assert.ok(await gateC.resolve(query(c)));
+
+  // Only after the LAST compatible fixture is explicitly revoked can
+  // the mapping be assigned differently. Rejections never claim IDs.
+  tick+=1000;
+  assert.deepEqual(await revoke(gateC,c),{status:"REVOKED",revision:2});
+  assert.equal((await providerDoc.get()).exists,false);
+  assert.equal((await registryEspn(winner.espnIds[0]).get()).exists,false);
+  assert.deepEqual(await approve(loserGate,loser),
+    {status:"APPROVED",revision:1});
+  assert.equal((await providerDoc.get()).data().espnTeamId,
+    loser.espnIds[0]);
+  assert.deepEqual((await providerDoc.get()).data().fixtureIds,
+    [loser.fixtureId]);
+  assert.equal((await db.doc("_internal/teamReview/fixtureJournals/"+
+    loser.fixtureId).get()).data().revision,1);
+  assert.ok(await loserGate.resolve(query(loser)));
+
+  // Firestore browser rules keep every registry path Admin-only.
+  const signup=await fetch("http://"+authHost+
+    "/identitytoolkit.googleapis.com/v1/accounts:signUp?key=synthetic",{
+    method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({returnSecureToken:true})
+  });
+  assert.equal(signup.status,200);
+  const {idToken}=await signup.json();
+  const headers={Authorization:"Bearer "+idToken};
+  for(const p of [providerDoc.path,
+    registryEspn(loser.espnIds[0]).path]) {
+    const url="http://"+firestoreHost+"/v1/projects/"+projectId+
+      "/databases/(default)/documents/"+p;
+    assert.equal((await fetch(url,{headers})).status,403);
+    assert.equal((await fetch(url,{
+      method:"PATCH",
+      headers:{...headers,"Content-Type":"application/json"},
+      body:JSON.stringify({fields:{espnTeamId:{stringValue:"999"}}})
+    })).status,403);
+  }
+
+  // A tampered registry must not be repaired implicitly or bypassed.
+  await providerDoc.update({espnTeamId:"999"});
+  const d=source("C",["5001","5004"],[loser.espnIds[0],"17"]);
+  const invalid=await approve(buildGate(d),d);
+  assert.equal(invalid.status,"REVISION_CONFLICT");
+  assert.equal((await providerDoc.get()).data().espnTeamId,"999");
+});
