@@ -102,4 +102,6 @@ function makeOfflineGloballyGuardedReviewJournal({db}={}) {
     db,globalGuard:makeOfflineGlobalIdGuard(db)
   });
 }
-module.exports={makeOfflineGloballyGuardedReviewJournal};
+// Export the same protected registry guard for the strictly source-bound
+// offline wrapper. Existing globally guarded factory behavior is unchanged.
+module.exports={makeOfflineGloballyGuardedReviewJournal,makeOfflineGlobalIdGuard};
