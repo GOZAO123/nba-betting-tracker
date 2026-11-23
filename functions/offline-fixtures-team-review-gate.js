@@ -213,10 +213,11 @@ function makeOfflineFixturesTeamReviewGate({
 // Does NOT attest to source provenance or authenticate the review journal.
 // It deliberately reuses the identical D18 history/manifest validation
 // used by the manual review gate; no second approval policy is invented.
-function inspectOfflineSourceBoundTeamReview({
-  fixtureId,providerReceipt,espnScoreboard,espnMetadata,history,now
-}={}) {
+function inspectOfflineSourceBoundTeamReview(input) {
   try {
+    if(!exact(input,["fixtureId","providerReceipt","espnScoreboard",
+      "espnMetadata","history","now"])) return null;
+    const {fixtureId,providerReceipt,espnScoreboard,espnMetadata,history,now}=input;
     if(typeof fixtureId!=="string" || !FID.test(fixtureId) ||
        !Array.isArray(history) || !Number.isSafeInteger(now) || now<0)
       return null;
