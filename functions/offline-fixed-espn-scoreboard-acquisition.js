@@ -105,6 +105,13 @@ function makeOfflineFixedEspnScoreboardAcquisition({
       if(!scoreboard||!Number.isSafeInteger(finished)||
          finished<begun||finished-begun>TIMEOUT)
         return safeError();
+      // The intended fixture is still unreviewed: require exactly ONE
+      // pregame regular-season ESPN event near its independently supplied
+      // tipoff, without inferring provider-to-ESPN team identity.
+      const matches=scoreboard.events.filter(e=>
+        e.status.type.state==="pre" && e.season.type===2 &&
+        Math.abs(Date.parse(e.date)-startMs)<=5*MINUTE);
+      if(matches.length!==1)return safeError();
 
       const reference="ESPN_CAPTURE_"+randomBytes(16).toString("hex").toUpperCase();
       const capturedAt=new Date(finished).toISOString();
