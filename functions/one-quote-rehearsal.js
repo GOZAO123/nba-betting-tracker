@@ -1078,3 +1078,103 @@ test("D18 source fingerprints are rechecked within review and ID-claim transacti
   assert.ok(!JSON.stringify(journalDoc).includes("NEVER_STORE_RAW_PROVIDER_SECRET"));
   assert.ok(!JSON.stringify(journalDoc).includes("bookmakerOdds"));
 });
+
+
+test("D19 ESPN create-only evidence custody is private in Firestore/Auth emulators",async t=>{
+  const {makeOfflineEspnScoreboardCustody}=
+    require("./offline-espn-scoreboard-custody");
+  const {makeOfflineFixtureEspnReviewPacket}=
+    require("./offline-fixture-espn-review-packet");
+  const {extractOfflineFixtureTeamEvidence}=
+    require("./offline-fixture-team-evidence");
+  const app=initializeApp({projectId},"offline-espn-snapshot-custody");
+  t.after(()=>deleteApp(app));
+  const db=getFirestore(app);
+  const iso=ms=>new Date(NOW+ms).toISOString();
+  const metadata={reference:"ESPN_REHEARSAL_CAPTURE_001",capturedAt:iso(-60000)};
+  const ref=db.doc("_internal/teamReview/espnSnapshots/"+metadata.reference);
+  const token=Object.freeze({});
+  const fixtureId="synthetic-espn-snapshot-fixture";
+  const raw={
+    events:[{
+      id:"401996543",date:iso(180*60000),
+      status:{type:{state:"pre",hidden:"NEVER_PERSIST_SECRET"}},
+      season:{type:2},competitions:[{competitors:[
+        {homeAway:"home",team:{id:"33",displayName:"Synthetic Home",
+          stats:{private:"NEVER_PERSIST_SECRET"}}},
+        {homeAway:"away",team:{id:"34",displayName:"Synthetic Away"}}
+      ]}],
+      privateOdds:{PTS:{price:1.81}}
+    }],responseSecret:"NEVER_PERSIST_SECRET"
+  };
+  const custody=makeOfflineEspnScoreboardCustody({
+    db,now:()=>NOW,
+    attestCapture:async (candidate,details)=>
+      candidate===token && details.source==="ESPN_NBA_SCOREBOARD" &&
+      details.reference===metadata.reference &&
+      details.capturedAt===metadata.capturedAt &&
+      /^[a-f0-9]{64}$/.test(details.digest)
+  });
+  assert.deepEqual(await custody.storeCapture(raw,metadata,{}),
+    {status:"DENIED"});
+  assert.equal((await ref.get()).exists,false);
+  const results=await Promise.all([
+    custody.storeCapture(raw,metadata,token),
+    custody.storeCapture(raw,metadata,token)
+  ]);
+  assert.equal(results.filter(x=>x.status==="STORED").length,1);
+  assert.ok(results.every(x=>["STORED","REPLAY_BLOCKED",
+    "STORE_UNAVAILABLE"].includes(x.status)));
+  assert.deepEqual(await custody.storeCapture(raw,metadata,token),
+    {status:"REPLAY_BLOCKED"});
+  const saved=(await ref.get()).data();
+  assert.deepEqual(Object.keys(saved).sort(),
+    ["capturedAt","reference","schemaVersion","scoreboard","source"]);
+  assert.doesNotMatch(JSON.stringify(saved),
+    /NEVER_PERSIST_SECRET|privateOdds|price|stats/);
+
+  // The persisted allowlisted source must remain usable by the existing
+  // D18 source-aware packet builder, without granting a reviewed mapping.
+  const provider=extractOfflineFixtureTeamEvidence([{
+    fixtureId,sportId:11,tournamentId:132,statusId:0,hasOdds:true,
+    startTime:iso(180*60000),updatedAt:iso(-120000),
+    participant1Id:"7801",participant1Name:"Synthetic Home",
+    participant2Id:"7802",participant2Name:"Synthetic Away"
+  }],{
+    reference:"ODDSPAPI_FIXTURES_"+"D".repeat(32),
+    capturedAt:iso(-120000)
+  },NOW);
+  assert.ok(provider);
+  const packet=makeOfflineFixtureEspnReviewPacket({
+    fixtureId,providerReceipt:provider,
+    espnScoreboard:saved.scoreboard,
+    espnMetadata:{reference:saved.reference,capturedAt:saved.capturedAt},
+    now:NOW
+  });
+  assert.ok(packet);
+  assert.equal(packet.reviewedPairs,null);
+  assert.equal(packet.approved,false);
+  assert.deepEqual([packet.espn.home.teamId,packet.espn.away.teamId],
+    ["33","34"]);
+
+  const signup=await fetch("http://"+authHost+
+    "/identitytoolkit.googleapis.com/v1/accounts:signUp?key=synthetic",{
+    method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({returnSecureToken:true})
+  });
+  assert.equal(signup.status,200);
+  const {idToken}=await signup.json();
+  const headers={Authorization:"Bearer "+idToken};
+  for(const privateRef of [
+    ref,db.doc("_internal/teamReview/espnSnapshots/ESPN_MISSING_001")
+  ]){
+    const url="http://"+firestoreHost+"/v1/projects/"+projectId+
+      "/databases/(default)/documents/"+privateRef.path;
+    assert.equal((await fetch(url,{headers})).status,403);
+    assert.equal((await fetch(url,{
+      method:"PATCH",headers:{...headers,"Content-Type":"application/json"},
+      body:JSON.stringify({fields:{source:{stringValue:"FORGED"}}})
+    })).status,403);
+  }
+  assert.equal((await ref.get()).data().source,"ESPN_NBA_SCOREBOARD");
+});
