@@ -3,7 +3,10 @@ const test=require("node:test"),assert=require("node:assert/strict");
 const fs=require("node:fs"),path=require("node:path");
 const {DIRECT,DELEGATED,assessOfflinePaidCallerInventory:assess}=
   require("./offline-identity-quota-caller-inventory");
-const production=()=>fs.readFileSync(path.join(__dirname,"index.js"),"utf8");
+// Normalize only the synthetic source fixture for exact-string mutation tests.
+// Production code and the fail-closed inspector remain unchanged.
+const production=()=>fs.readFileSync(path.join(__dirname,"index.js"),"utf8")
+ .replace(/\r\n/g,"\n");
 function blocked(r){
  assert.equal(r.status,"BLOCKED");
  assert.equal(r.cutoverReady,false);
@@ -24,6 +27,15 @@ test("D15.11 current source has exactly five direct and four delegated paid call
  has(r,"LIVE_DEPLOYED_FUNCTION_REVISIONS_NOT_INVENTORIED");
  has(r,"ACCOUNT_PREFLIGHT_DEPLOYED_SOURCE_NOT_ATTESTED");
  has(r,"EVERY_PAID_CALLER_DUAL_RESERVATION_NOT_VERIFIED");
+});
+test("D15.11 scanner retains quota and caller checks for CRLF source",()=>{
+ const unix=assess(production());
+ const windows=assess(production().replace(/\n/g,"\r\n"));
+ blocked(windows);
+ assert.equal(windows.sourceInventoryVerified,true,
+  JSON.stringify(windows.blockers));
+ assert.deepEqual(windows.sourceCallers,unix.sourceCallers);
+ assert.deepEqual(windows.blockers,unix.blockers);
 });
 test("D15.11 unknown additional provider callable blocks source review",()=>{
  const r=assess(production()+
