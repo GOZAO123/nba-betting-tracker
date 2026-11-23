@@ -425,3 +425,163 @@ test("disconnected identity discovery single-use permit is atomic across instanc
   await assert.rejects(blocked(OWNER),{code:"failed-precondition"});
   assert.deepEqual([reservations,secretReads,providerCalls],[1,1,1]);
 });
+
+
+test("fixture-name discovery permit, quota and private receipt are atomic in emulators", async t => {
+  const {makeOfflineManualFixturesCollector} =
+    require("./offline-manual-fixtures-collector");
+  const app=initializeApp({projectId},"fixtures-team-identity-rehearsal");
+  t.after(()=>deleteApp(app));
+  const db=getFirestore(app);
+  const approvalId="e".repeat(32);
+  const approval=db.doc("_internal/fixtureTeamDiscovery/approvals/"+approvalId);
+  const budget=db.doc("_internal/fixtureTeamDiscoveryEmulatorBudget");
+  const collection=db.collection("_internal/teamEvidence/fixtureTeamSnapshots");
+  const utcDay=new Date(NOW).toISOString().slice(0,10);
+  const syntheticFixtureId="synthetic-fixtures-team-map-unique";
+  let reservations=0,credentialReads=0,providerCalls=0;
+  await approval.create({
+    issuedAtMs:NOW-1000,expiresAtMs:NOW+60000,claimedAtMs:null
+  });
+  assert.equal((await budget.get()).exists,false);
+  assert.equal((await collection.get()).size,0);
+
+  async function reserve(amount) {
+    assert.equal(amount,1);
+    assert.equal((await approval.get()).data().claimedAtMs,NOW);
+    const remaining=await db.runTransaction(async tx=>{
+      const old=(await tx.get(budget)).data();
+      const reserved=old?.utcDay===utcDay ? old.reserved : 0;
+      assert.ok(Number.isSafeInteger(reserved) && reserved>=0);
+      if(reserved+amount>6)throw Error("synthetic quota exhausted");
+      tx.set(budget,{utcDay,reserved:reserved+amount,limit:6});
+      return 6-reserved-amount;
+    },{maxAttempts:5});
+    reservations++;
+    return {utcDay,remaining};
+  }
+  const make=(overrides={})=>makeOfflineManualFixturesCollector({
+    enabled:true,ownerUid:OWNER.auth.uid,approvalId,
+    now:()=>NOW,getDb:()=>db,reserve,
+    getApiKey() {
+      assert.equal(reservations,1,"credential lookup requires committed reservation");
+      credentialReads++;
+      return "SYNTHETIC_FIXTURES_PROVIDER_KEY";
+    },
+    async fetchImpl(target,options) {
+      const url=new URL(target);
+      assert.equal(url.origin,"https://api.oddspapi.io");
+      assert.equal(url.pathname,"/v4/fixtures");
+      for(const [key,value] of Object.entries({
+        sportId:"11",tournamentId:"132",statusId:"0",
+        hasOdds:"true",bookmakers:"betano.pt",language:"en"
+      }))assert.equal(url.searchParams.get(key),value);
+      assert.equal(options.method,"GET");
+      assert.equal(options.redirect,"error");
+      assert.equal((await budget.get()).data().reserved,1);
+      providerCalls++;
+      return Response.json([{
+        fixtureId:syntheticFixtureId,sportId:11,tournamentId:132,
+        statusId:0,hasOdds:true,
+        startTime:new Date(NOW+180*60000).toISOString(),
+        updatedAt:new Date(NOW-60000).toISOString(),
+        participant1Id:"5001",participant2Id:"5002",
+        participant1Name:"Synthetic Los Angeles Lakers",
+        participant2Name:"Synthetic Utah Jazz",
+        privateApiKey:"SYNTHETIC_FIXTURES_RAW_SECRET",
+        bookmakerOdds:{"betano.pt":{price:1.87}}
+      }]);
+    },
+    ...overrides
+  });
+
+  await assert.rejects(makeOfflineManualFixturesCollector()(OWNER),
+    {code:"failed-precondition"});
+  await assert.rejects(make()({...OWNER,
+    auth:{uid:"synthetic-intruder",token:{email_verified:true}}}),
+  {code:"permission-denied"});
+  await assert.rejects(make()({...OWNER,data:{fixtureId:syntheticFixtureId}}),
+    {code:"invalid-argument"});
+  assert.equal((await approval.get()).data().claimedAtMs,null);
+  assert.deepEqual([reservations,credentialReads,providerCalls],[0,0,0]);
+
+  // Two independent cold factories must not both claim or spend this permit.
+  const results=await Promise.allSettled([make()(OWNER),make()(OWNER)]);
+  const successful=results.filter(x=>x.status==="fulfilled");
+  const denied=results.filter(x=>x.status==="rejected");
+  assert.equal(successful.length,1);
+  assert.deepEqual(successful[0].value,{status:"STORED_UNREVIEWED"});
+  assert.equal(denied.length,1);
+  assert.equal(denied[0].reason.code,"failed-precondition");
+  assert.equal((await approval.get()).data().claimedAtMs,NOW);
+  assert.deepEqual((await budget.get()).data(),{
+    utcDay,reserved:1,limit:6
+  });
+  assert.deepEqual([reservations,credentialReads,providerCalls],[1,1,1]);
+
+  const snapshot=await collection.get();
+  assert.equal(snapshot.size,1);
+  const document=snapshot.docs[0];
+  const stored=document.data();
+  assert.match(document.id,/^ODDSPAPI_FIXTURES_[A-F0-9]{32}$/);
+  assert.equal(stored.source,"ODDSPAPI_V4_FIXTURES");
+  assert.equal(stored.status,"UNREVIEWED_PROVIDER_TEAM_NAMES");
+  assert.equal(stored.acceptedFixtures,1);
+  assert.equal(stored.records[0].fixtureId,syntheticFixtureId);
+  assert.deepEqual([
+    stored.records[0].participant1Id,stored.records[0].participant2Id
+  ],["5001","5002"]);
+  assert.deepEqual([
+    stored.records[0].participant1Name,stored.records[0].participant2Name
+  ],["Synthetic Los Angeles Lakers","Synthetic Utah Jazz"]);
+  assert.ok(!JSON.stringify(stored).includes("SYNTHETIC_FIXTURES_RAW_SECRET"));
+  assert.ok(!JSON.stringify(stored).includes("bookmakerOdds"));
+  assert.ok(!JSON.stringify(stored).includes("price"));
+  assert.equal("espnEventId" in stored,false);
+  assert.equal("reviewStatus" in stored,false);
+  assert.ok(!JSON.stringify(successful[0].value).includes(syntheticFixtureId));
+
+  // Client Auth cannot read or mutate the private Admin-only evidence.
+  const signup=await fetch("http://"+authHost+
+    "/identitytoolkit.googleapis.com/v1/accounts:signUp?key=synthetic",{
+    method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({returnSecureToken:true})
+  });
+  assert.equal(signup.status,200);
+  const {idToken}=await signup.json();
+  const privateUrl="http://"+firestoreHost+"/v1/projects/"+projectId+
+    "/databases/(default)/documents/"+document.ref.path;
+  const headers={Authorization:"Bearer "+idToken};
+  const deniedRead=await fetch(privateUrl,{headers});
+  assert.equal(deniedRead.status,403);
+  const deniedWrite=await fetch(privateUrl,{
+    method:"PATCH",headers:{...headers,"Content-Type":"application/json"},
+    body:JSON.stringify({fields:{status:{stringValue:"APPROVED"}}})
+  });
+  assert.equal(deniedWrite.status,403);
+  assert.equal((await document.ref.get()).data().status,
+    "UNREVIEWED_PROVIDER_TEAM_NAMES");
+
+  await assert.rejects(make()(OWNER),{code:"failed-precondition"});
+  assert.deepEqual([reservations,credentialReads,providerCalls],[1,1,1]);
+  assert.equal((await collection.get()).size,1);
+
+  // A distinct permit can be consumed on quota failure, never reading a key.
+  const quotaId="f".repeat(32);
+  const quotaApproval=db.doc("_internal/fixtureTeamDiscovery/approvals/"+quotaId);
+  await quotaApproval.create({
+    issuedAtMs:NOW-1000,expiresAtMs:NOW+60000,claimedAtMs:null
+  });
+  const blocked=make({
+    approvalId:quotaId,
+    async reserve(amount) {
+      assert.equal(amount,1);
+      throw Object.assign(Error("synthetic budget exhausted"),
+        {code:"resource-exhausted"});
+    }
+  });
+  await assert.rejects(blocked(OWNER),{code:"resource-exhausted"});
+  assert.equal((await quotaApproval.get()).data().claimedAtMs,NOW);
+  await assert.rejects(blocked(OWNER),{code:"failed-precondition"});
+  assert.deepEqual([reservations,credentialReads,providerCalls],[1,1,1]);
+});
