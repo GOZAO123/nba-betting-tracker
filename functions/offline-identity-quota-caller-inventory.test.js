@@ -53,7 +53,8 @@ test("D15.11 missing callable export blocks the fixed inventory",()=>{
 test("D15.11 changing an individual direct quota amount cannot hide in another caller",()=>{
  const src=production().replace("await reserveDiagnosticRequests(2);",
    "await reserveDiagnosticRequests(1);");
- assert.notEqual(src,production());
+ assert.ok(src!==production(),
+  "synthetic source mutation must change the source");
  const r=assess(src);
  blocked(r);
  has(r,"DIRECT_RESERVATION_UNVERIFIED_oddsPapiDetailedPropsProbe");
@@ -82,7 +83,8 @@ test("D15.11 changing market audit legacy reservation path blocks inspection",()
  const marker="const runNbaMarketAudit = makeLeagueMarketAuditRunner({\n  ownerUid: LEDGER_OWNER,\n  reserve: reserveDiagnosticRequests,";
  const src=production().replace(marker,
   "const runNbaMarketAudit = makeLeagueMarketAuditRunner({\n  ownerUid: LEDGER_OWNER,\n  reserve: () => Promise.resolve(),");
- assert.notEqual(src,production());
+ assert.ok(src!==production(),
+  "synthetic source mutation must change the source");
  const r=assess(src);blocked(r);
  has(r,"MARKET_AUDIT_RESERVATION_UNVERIFIED");
 });
@@ -98,7 +100,8 @@ test("D15.11 switching identity diagnostic to a separate budget fails review",()
  const before=production().slice(0,scoped),after=production().slice(scoped);
  const disabled=before+after.replace(old,
   "  ownerUid: LEDGER_OWNER,\n  reserveDifferentBudget,");
- assert.notEqual(disabled,production());
+ assert.ok(disabled!==production(),
+  "synthetic source mutation must change the source");
  const check=assess(disabled);blocked(check);
  has(check,"IDENTITY_DIAGNOSTIC_RESERVATION_UNVERIFIED");
 });
