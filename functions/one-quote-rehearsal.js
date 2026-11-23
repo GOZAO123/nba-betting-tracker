@@ -1178,3 +1178,164 @@ test("D19 ESPN create-only evidence custody is private in Firestore/Auth emulato
   }
   assert.equal((await ref.get()).data().source,"ESPN_NBA_SCOREBOARD");
 });
+
+
+test("D21 create-only source binding composes with atomic D18 review in Firestore emulator",async t=>{
+  const {extractOfflineFixtureTeamEvidence}=
+    require("./offline-fixture-team-evidence");
+  const {makeOfflineFixtureEspnReviewPacket}=
+    require("./offline-fixture-espn-review-packet");
+  const {makeOfflineTwoSourceBindingCustody}=
+    require("./offline-two-source-binding-custody");
+  const {makeOfflineSourceBoundGloballyGuardedReviewJournal}=
+    require("./offline-fixtures-atomic-source-review-journal");
+  const {makeOfflineFixturesTeamReviewGate}=
+    require("./offline-fixtures-team-review-gate");
+  const app=initializeApp({projectId},"offline-atomic-two-source-binding-custody");
+  t.after(()=>deleteApp(app));
+  const db=getFirestore(app);
+  const iso=offset=>new Date(NOW+offset).toISOString();
+  const fixtureId="synthetic-d21-two-source-fixture";
+  const pRef="ODDSPAPI_FIXTURES_"+"E".repeat(32);
+  const eRef="ESPN_CAPTURE_D21_BIND_001";
+  const token=Object.freeze({});
+  const receipt=extractOfflineFixtureTeamEvidence([{
+    fixtureId,sportId:11,tournamentId:132,statusId:0,hasOdds:true,
+    startTime:iso(180*60000),updatedAt:iso(-150000),
+    participant1Id:"9901",participant1Name:"Synthetic Provider First",
+    participant2Id:"9902",participant2Name:"Synthetic Provider Second"
+  }],{reference:pRef,capturedAt:iso(-120000)},NOW);
+  assert.ok(receipt);
+  const scoreboard={events:[{
+    id:"401998877",date:iso(180*60000),
+    status:{type:{state:"pre"}},season:{type:2},
+    competitions:[{competitors:[
+      {homeAway:"home",team:{id:"1201",displayName:"Synthetic ESPN First"}},
+      {homeAway:"away",team:{id:"1202",displayName:"Synthetic ESPN Second"}}
+    ]}]
+  }]};
+  const espnMetadata={reference:eRef,capturedAt:iso(-30000)};
+  const packet=makeOfflineFixtureEspnReviewPacket({
+    fixtureId,providerReceipt:receipt,
+    espnScoreboard:scoreboard,espnMetadata,now:NOW
+  });
+  assert.ok(packet);
+  const docs={
+    binding:db.doc("_internal/teamReview/sourceBindings/"+fixtureId),
+    provider:db.doc("_internal/teamEvidence/fixtureTeamSnapshots/"+pRef),
+    espn:db.doc("_internal/teamReview/espnSnapshots/"+eRef),
+    journal:db.doc("_internal/teamReview/fixtureJournals/"+fixtureId),
+    registry:db.doc("_internal/teamReview/globalProviderIds/9901")
+  };
+  await docs.provider.create({...receipt,receivedAt:iso(-60000)});
+  await docs.espn.create({
+    schemaVersion:1,source:"ESPN_NBA_SCOREBOARD",
+    reference:eRef,capturedAt:espnMetadata.capturedAt,scoreboard
+  });
+  const input={
+    fixtureId,providerReference:pRef,espnReference:eRef
+  };
+  let trustedReads=0;
+  const custody=makeOfflineTwoSourceBindingCustody({
+    db,now:()=>NOW,
+    authorizeBinding:async (candidate,proposal)=>
+      candidate===token&&
+      proposal.fixtureId===fixtureId&&
+      proposal.providerReference===pRef&&
+      proposal.espnReference===eRef,
+    attestSourceOrigins:async (candidate,proof)=>{
+      trustedReads++;
+      return candidate===token&&
+        proof.fixtureId===fixtureId&&
+        proof.providerDigest===packet.provider.snapshotDigest&&
+        proof.espnDigest===packet.espn.digest&&
+        proof.packetDigest===packet.packetDigest;
+    }
+  });
+
+  // An untrusted caller must be rejected before any binding is created.
+  assert.deepEqual(await custody.bindSources(input,{}),{status:"DENIED"});
+  assert.equal((await docs.binding.get()).exists,false);
+  // Competing writers preserve exactly one immutable source binding.
+  const results=await Promise.all([
+    custody.bindSources(input,token),custody.bindSources(input,token)
+  ]);
+  assert.equal(results.filter(x=>x.status==="STORED").length,1);
+  assert.ok(results.every(x=>["STORED","REPLAY_BLOCKED",
+    "STORE_UNAVAILABLE"].includes(x.status)));
+  const saved=(await docs.binding.get()).data();
+  assert.deepEqual(Object.keys(saved).sort(),
+    ["espnDigest","espnReference","fixtureId","packetDigest",
+     "providerDigest","providerReference","schemaVersion"]);
+  assert.equal(saved.packetDigest,packet.packetDigest);
+  assert.deepEqual(await custody.bindSources(input,token),
+    {status:"REPLAY_BLOCKED"});
+  assert.equal((await docs.journal.get()).exists,false);
+  assert.equal((await docs.registry.get()).exists,false,
+    "source observation alone NEVER approves a team mapping");
+  assert.ok(trustedReads>=1);
+
+  const journal=makeOfflineSourceBoundGloballyGuardedReviewJournal({db});
+  const gate=makeOfflineFixturesTeamReviewGate({
+    authorize:async auth=>auth===OWNER?
+      {allowed:true,reviewerReference:"OWNER_REVIEW_01"}:
+      {allowed:false,reviewerReference:"UNKNOWN"},
+    loadEvidence:async id=>{
+      assert.equal(id,fixtureId);
+      const source=(await docs.provider.get()).data();
+      const {receivedAt,...providerReceipt}=source;
+      const espn=(await docs.espn.get()).data();
+      return {
+        providerReceipt,espnScoreboard:espn.scoreboard,
+        espnMetadata:{
+          reference:espn.reference,capturedAt:espn.capturedAt
+        }
+      };
+    },
+    loadHistory:journal.loadHistory,
+    appendDecision:journal.appendDecision,
+    now:()=>NOW
+  });
+  const pairs=[
+    {providerParticipantId:"9901",espnTeamId:"1201"},
+    {providerParticipantId:"9902",espnTeamId:"1202"}
+  ];
+  // Even with a valid source binding, only explicit owner review can
+  // approve two verified pairs. A stale binding fails on changed data.
+  const altered=structuredClone(scoreboard);
+  altered.events[0].competitions[0].competitors[0]
+    .team.displayName="Altered ESPN Label";
+  await docs.espn.update({scoreboard:altered});
+  const approve=()=>gate.submit(OWNER,{
+    fixtureId,action:"APPROVE",expectedRevision:0,pairs
+  });
+  assert.notDeepEqual(await approve(),{status:"APPROVED",revision:1});
+  assert.equal((await docs.journal.get()).exists,false);
+  assert.equal((await docs.registry.get()).exists,false);
+  await docs.espn.update({scoreboard});
+  assert.deepEqual(await approve(),{status:"APPROVED",revision:1});
+  assert.equal((await docs.journal.get()).data().packetDigest,
+    packet.packetDigest);
+  assert.equal((await docs.registry.get()).data().espnTeamId,"1201");
+
+  // Ordinary Firebase clients cannot read or mutate private bindings.
+  const signup=await fetch("http://"+authHost+
+    "/identitytoolkit.googleapis.com/v1/accounts:signUp?key=synthetic",{
+      method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({returnSecureToken:true})
+    });
+  assert.equal(signup.status,200);
+  const {idToken}=await signup.json();
+  const headers={Authorization:"Bearer "+idToken};
+  const privateUrl="http://"+firestoreHost+"/v1/projects/"+projectId+
+    "/databases/(default)/documents/"+docs.binding.path;
+  assert.equal((await fetch(privateUrl,{headers})).status,403);
+  assert.equal((await fetch(privateUrl,{
+    method:"PATCH",headers:{...headers,"Content-Type":"application/json"},
+    body:JSON.stringify({fields:{packetDigest:{
+      stringValue:"0".repeat(64)
+    }}})
+  })).status,403);
+  assert.equal((await docs.binding.get()).data().packetDigest,
+    packet.packetDigest);
+});
