@@ -65,10 +65,11 @@ function fakeDb(){
   return db;
 }
 function setup({clock=()=>NOW,makeSignal=()=>({aborted:false}),
-  reply,payloadOverride=payload(),db=fakeDb()}={}){
+  reply,payloadOverride=payload(),db=fakeDb(),
+  deliverPrivateReceipt=null}={}){
   const calls=[];
   const transport=makeOfflineFixedEspnScoreboardAcquisition({
-    db,now:clock,makeSignal,
+    db,now:clock,makeSignal,deliverPrivateReceipt,
     fetchImpl:async(url,options)=>{
       calls.push({url,options});
       if(typeof reply==="function")return reply(url,options);
@@ -248,6 +249,110 @@ test("D20 pre-aborted signal prevents the ESPN request",async()=>{
   assert.deepEqual(await t.capture(),{status:"ESPN_CAPTURE_UNAVAILABLE"});
   assert.deepEqual(t.calls,[]);
   assert.deepEqual(t.db.ops,[]);
+});
+
+test("D22 private receipt is delivered ONLY after committed ESPN source custody",async()=>{
+  const received=[];
+  const t=setup({deliverPrivateReceipt:async receipt=>{
+    assert.equal(t.db.docs.size,1,
+      "private handoff must occur only AFTER Firestore commit");
+    const [path,saved]=[...t.db.docs.entries()][0];
+    assert.equal(saved.reference,receipt.reference);
+    assert.equal(path,"_internal/teamReview/espnSnapshots/"+receipt.reference);
+    assert.equal(saved.capturedAt,receipt.capturedAt);
+    received.push(receipt);
+    return true;
+  }});
+  const status=await t.capture();
+  assert.deepEqual(status,{status:"STORED"});
+  assert.deepEqual(Object.keys(status),["status"]);
+  assert.equal(t.calls.length,1);
+  assert.equal(received.length,1);
+  assert.ok(Object.isFrozen(received[0]));
+  assert.deepEqual(Object.keys(received[0]).sort(),
+    ["capturedAt","reference","source"]);
+  assert.equal(received[0].source,"ESPN_NBA_SCOREBOARD");
+  assert.match(received[0].reference,/^ESPN_CAPTURE_[A-F0-9]{32}$/);
+  assert.equal(received[0].capturedAt,ISO(NOW));
+  assert.doesNotMatch(JSON.stringify(status),
+    /ESPN_CAPTURE|401234567|Synthetic|secret|reference/);
+  assert.doesNotMatch(JSON.stringify(received[0]),
+    /401234567|Synthetic|rawHeaders|UNTRUSTED_ESPN/);
+});
+
+test("D22 private receipt delivery is optional and cannot be caller-selected",async()=>{
+  const legacy=setup();
+  assert.deepEqual(await legacy.capture(),{status:"STORED"});
+  assert.equal(legacy.db.docs.size,1);
+  assert.throws(()=>makeOfflineFixedEspnScoreboardAcquisition({
+    db:fakeDb(),now:()=>NOW,fetchImpl:async()=>{},
+    deliverPrivateReceipt:{reference:"UNTRUSTED"}
+  }),TypeError);
+  assert.throws(()=>makeOfflineFixedEspnScoreboardAcquisition({
+    db:fakeDb(),now:()=>NOW,fetchImpl:async()=>{},
+    deliverPrivateReceipt:true
+  }),TypeError);
+});
+
+test("D22 delivery failure cannot hide that ESPN was already committed",async()=>{
+  for(const privateHandler of [
+    async()=>false,
+    async()=>undefined,
+    async()=>({status:"STORED",reference:"MALICIOUS"}),
+    async()=>{throw Error("PRIVATE_HANDOFF_SECRET");}
+  ]){
+    let handoffs=0;
+    const t=setup({deliverPrivateReceipt:async receipt=>{
+      handoffs++;
+      return privateHandler(receipt);
+    }});
+    const result=await t.capture();
+    assert.deepEqual(result,{status:"STORED_HANDOFF_UNCONFIRMED"});
+    assert.deepEqual(Object.keys(result),["status"]);
+    assert.doesNotMatch(JSON.stringify(result),
+      /PRIVATE|MALICIOUS|ESPN_CAPTURE|reference/);
+    assert.equal(handoffs,1);
+    assert.equal(t.calls.length,1,
+      "a private delivery error must NEVER refetch the scoreboard");
+    assert.equal(t.db.docs.size,1,
+      "a private delivery error must not roll back a committed source");
+    assert.equal(t.db.ops.filter(x=>x==="create").length,1);
+  }
+});
+
+test("D22 callback never runs for malformed source, unsafe fixture or failed storage",async()=>{
+  let count=0;
+  const sink=async()=>{count++;return true;};
+  const invalid=setup({deliverPrivateReceipt:sink,
+    reply:url=>response(url,payload(),{redirected:true})});
+  assert.deepEqual(await invalid.capture(),{status:"ESPN_CAPTURE_UNAVAILABLE"});
+  assert.equal(count,0);
+  assert.equal(invalid.db.docs.size,0);
+
+  const badStart=setup({deliverPrivateReceipt:sink});
+  assert.deepEqual(await badStart.transport.captureForFixtureStart(NOW),
+    {status:"INVALID_FIXTURE_START"});
+  assert.equal(count,0);
+  assert.equal(badStart.calls.length,0);
+
+  const rejectedDb=fakeDb();
+  rejectedDb.runTransaction=async()=>{throw Error("PRIVATE_STORE_FAILURE");};
+  const unavailable=setup({db:rejectedDb,deliverPrivateReceipt:sink});
+  assert.deepEqual(await unavailable.capture(),{status:"STORE_UNAVAILABLE"});
+  assert.equal(count,0);
+  assert.equal(unavailable.calls.length,1);
+});
+
+test("D22 source code never returns or logs the private reference to callers",()=>{
+  const source=fs.readFileSync(path.join(__dirname,
+    "offline-fixed-espn-scoreboard-acquisition.js"),"utf8");
+  const prod=fs.readFileSync(path.join(__dirname,"index.js"),"utf8");
+  assert.doesNotMatch(prod,
+    /require\(["']\.\/offline-fixed-espn-scoreboard-acquisition["']\)/);
+  assert.doesNotMatch(source,
+    /console\.|onCall\s*\(|onSchedule\s*\(|setInterval\s*\(|api\.oddspapi\.io/);
+  assert.match(source,/stored\.status!=="STORED"/);
+  assert.match(source,/deliverPrivateReceipt\(Object\.freeze\(\{/);
 });
 
 test("D20 source remains disconnected from production, no OddsPapi or automatic polling",()=>{
