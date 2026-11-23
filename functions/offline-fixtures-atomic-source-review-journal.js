@@ -61,6 +61,18 @@ function validateProvider(row,reference) {
   return receipt;
 }
 
+function checkSourcePairing(pairs,packet) {
+  if(!Array.isArray(pairs)||pairs.length!==2)return false;
+  const providers=new Set(packet.provider.participants.map(x=>x.participantId));
+  const espn=new Set([packet.espn.home.teamId,packet.espn.away.teamId]);
+  for(const pair of pairs) {
+    if(!exact(pair,["providerParticipantId","espnTeamId"]) ||
+       !providers.delete(pair.providerParticipantId) ||
+       !espn.delete(pair.espnTeamId))return false;
+  }
+  return providers.size===0 && espn.size===0;
+}
+
 // Source binding references must be created by a separate authenticated
 // backend custody operation, never by the browser. This wrapper does not
 // provision any of those docs or import any Firebase SDK.
@@ -70,7 +82,7 @@ function makeOfflineSourceBoundGloballyGuardedReviewJournal({db}={}) {
      typeof db?.getAll!=="function")
     throw new TypeError("Trusted Admin Firestore dependencies required.");
   const idGuard=makeOfflineGlobalIdGuard(db);
-  const sourceGuard=async ({tx,fixtureId,event})=>{
+  const sourceGuard=async ({tx,fixtureId,event,previousEvent})=>{
     if(typeof fixtureId!=="string" || !FIXTURE.test(fixtureId) ||
        typeof event?.packetDigest!=="string" ||
        !HASH.test(event.packetDigest) ||
@@ -113,7 +125,12 @@ function makeOfflineSourceBoundGloballyGuardedReviewJournal({db}={}) {
       packet.provider.snapshotDigest===binding.providerDigest &&
       packet.espn.digest===binding.espnDigest &&
       packet.packetDigest===binding.packetDigest &&
-      packet.packetDigest===event.packetDigest;
+      packet.packetDigest===event.packetDigest &&
+      (event.action==="APPROVE" ?
+        checkSourcePairing(event.pairs,packet) :
+        event.action==="REVOKE" ?
+          checkSourcePairing(previousEvent?.pairs,packet) :
+          event.action==="REJECT" && event.pairs===null);
   };
   return makeOfflineFixtureReviewJournal({
     db,
