@@ -53,7 +53,7 @@ output is an in-memory fixture JSON array. **It never calls OddsPapi**.
 - All permit IDs, team IDs, names, fixture dates and credentials used
   in the test are explicitly synthetic and isolated from production.
 - A future independent owner review of the exact two-way source IDs,
-  authenticated D4 revision journal and ERP/crosswalk is still necessary,
+  authenticated D4 revision journal and ESPN crosswalk is still necessary,
   together with database-specific IAM, billing, quota and rollback review.
 - Retain `functions/index.js`, Firestore rules, browser behavior, the
   production collector's disabled checkpoint and the six/UTC-day guard.
