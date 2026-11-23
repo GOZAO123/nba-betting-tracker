@@ -298,3 +298,130 @@ test("single-use approval gates the offline collector across instances", async t
   });
   await assert.rejects(failed(OWNER), {code: "failed-precondition"});
 });
+
+
+test("disconnected identity discovery single-use permit is atomic across instances", async t => {
+  const {makeOfflineManualIdentityDiscovery} =
+    require("./offline-manual-identity-discovery");
+  const app=initializeApp({projectId},"offline-identity-discovery-rehearsal");
+  t.after(()=>deleteApp(app));
+  const db=getFirestore(app);
+  const approvalId="c".repeat(32);
+  const approval=db.doc("_internal/identityDiscovery/approvals/"+approvalId);
+  const isolatedBudget=db.doc("_internal/identityDiscoveryRehearsalBudget");
+  const utcDay=new Date(NOW).toISOString().slice(0,10);
+  const capturedAt=new Date(NOW).toISOString();
+  const discoveryFixtureId="synthetic-discovery-unique-fixture";
+  let reservations=0,secretReads=0,providerCalls=0;
+
+  await approval.create({
+    issuedAtMs:NOW-1000,expiresAtMs:NOW+60000,claimedAtMs:null
+  });
+  assert.equal((await isolatedBudget.get()).exists,false);
+
+  async function reserve(amount) {
+    assert.equal(amount,1);
+    assert.equal((await approval.get()).data().claimedAtMs,NOW);
+    const remaining=await db.runTransaction(async tx=>{
+      const old=(await tx.get(isolatedBudget)).data();
+      const used=old?.utcDay===utcDay?old.reserved:0;
+      if(used+amount>6)throw Error("synthetic exhausted budget");
+      tx.set(isolatedBudget,{utcDay,reserved:used+amount,limit:6});
+      return 6-used-amount;
+    });
+    reservations++;
+    return {utcDay,remaining};
+  }
+  const factory=(overrides={})=>makeOfflineManualIdentityDiscovery({
+    enabled:true,ownerUid:OWNER.auth.uid,approvalId,
+    getDb:()=>db,reserve,now:()=>NOW,
+    getApiKey(){
+      assert.ok(reservations>=1,"secret only after a committed reservation");
+      secretReads++;
+      return "SYNTHETIC_IDENTITY_DISCOVERY_KEY";
+    },
+    async fetchImpl(target,options) {
+      assert.equal(new URL(target).origin,"https://api.oddspapi.io");
+      assert.equal(new URL(target).pathname,"/v4/odds-by-tournaments");
+      assert.equal(new URL(target).searchParams.get("bookmaker"),"betano.pt");
+      assert.equal(options.method,"GET");
+      assert.equal(options.redirect,"error");
+      providerCalls++;
+      return Response.json([{...fixture(),fixtureId:discoveryFixtureId}]);
+    },
+    ...overrides
+  });
+
+  await assert.rejects(makeOfflineManualIdentityDiscovery()(OWNER),
+    {code:"failed-precondition"});
+  await assert.rejects(factory()({...OWNER,auth:{uid:"someone-else",
+    token:{email_verified:true}}}),{code:"permission-denied"});
+  await assert.rejects(factory()({...OWNER,data:{market:"PTS"}}),
+    {code:"invalid-argument"});
+  assert.equal((await approval.get()).data().claimedAtMs,null);
+  assert.equal(reservations,0);
+  assert.equal(providerCalls,0);
+
+  // Separate cold factories model independent Cloud Function instances.
+  const outcomes=await Promise.allSettled([factory()(OWNER),factory()(OWNER)]);
+  const completed=outcomes.filter(o=>o.status==="fulfilled");
+  const denied=outcomes.filter(o=>o.status==="rejected");
+  assert.equal(completed.length,1);
+  assert.deepEqual(completed[0].value,{status:"STORED_UNREVIEWED"});
+  assert.equal(denied.length,1);
+  assert.equal(denied[0].reason.code,"failed-precondition");
+  assert.equal((await approval.get()).data().claimedAtMs,NOW);
+  assert.equal((await isolatedBudget.get()).data().reserved,1);
+  assert.deepEqual([reservations,secretReads,providerCalls],[1,1,1]);
+
+  const evidence=await db.collection(fixtureCollection).get();
+  const matching=evidence.docs.filter(doc=>{
+    const value=doc.data();
+    return value.capturedAt===capturedAt &&
+      value.records?.some(row=>row.fixtureId===discoveryFixtureId);
+  });
+  assert.equal(matching.length,1);
+  const value=matching[0].data();
+  assert.equal(value.status,"UNREVIEWED_PROVIDER_EVIDENCE");
+  assert.equal(value.acceptedFixtures,1);
+  assert.deepEqual(value.records[0].participantIds,["5001","5002"]);
+  assert.ok(!JSON.stringify(value).includes("SYNTHETIC_PRIVATE_KEY"));
+  assert.ok(!JSON.stringify(value).includes("bookmakerOdds"));
+  assert.ok(!JSON.stringify(completed[0].value).includes(discoveryFixtureId));
+
+  // The client-facing Firestore rules must deny the stored private evidence.
+  const signup=await fetch("http://"+authHost+
+    "/identitytoolkit.googleapis.com/v1/accounts:signUp?key=synthetic",{
+    method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({returnSecureToken:true})
+  });
+  assert.equal(signup.status,200);
+  const {idToken}=await signup.json();
+  const privateUrl="http://"+firestoreHost+"/v1/projects/"+projectId+
+    "/databases/(default)/documents/"+matching[0].ref.path;
+  const clientRead=await fetch(privateUrl,{headers:{
+    Authorization:"Bearer "+idToken
+  }});
+  assert.equal(clientRead.status,403);
+  await assert.rejects(factory()(OWNER),{code:"failed-precondition"});
+  assert.deepEqual([reservations,secretReads,providerCalls],[1,1,1]);
+
+  // A separate valid approval with denied quota is consumed without HTTP.
+  const deniedId="d".repeat(32);
+  const deniedApproval=db.doc("_internal/identityDiscovery/approvals/"+deniedId);
+  await deniedApproval.create({
+    issuedAtMs:NOW-1000,expiresAtMs:NOW+60000,claimedAtMs:null
+  });
+  const blocked=factory({
+    approvalId:deniedId,
+    async reserve(amount){
+      assert.equal(amount,1);
+      throw Object.assign(Error("synthetic quota reached"),
+        {code:"resource-exhausted"});
+    }
+  });
+  await assert.rejects(blocked(OWNER),{code:"resource-exhausted"});
+  assert.equal((await deniedApproval.get()).data().claimedAtMs,NOW);
+  await assert.rejects(blocked(OWNER),{code:"failed-precondition"});
+  assert.deepEqual([reservations,secretReads,providerCalls],[1,1,1]);
+});
