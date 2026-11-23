@@ -741,7 +741,7 @@ test("D18 different-fixture global team-ID claims are atomic in emulators",async
   const db=getFirestore(app);
   const iso=ms=>new Date(NOW+ms).toISOString();
   const oneMinute=60000;
-  const fmt={A:"A",B:"B",C:"C"};
+  const fmt={A:"A",B:"B",C:"C",D:"D"};
   function source(letter,providerIds,espnIds) {
     const fixtureId="synthetic-write-registry-"+letter;
     const startTime=iso(180*oneMinute);
@@ -762,7 +762,7 @@ test("D18 different-fixture global team-ID claims are atomic in emulators",async
       fixtureId,providerIds,espnIds,startTime,
       providerReceipt:receipt,
       espnScoreboard:{events:[{
-        id:{"A":"401987651","B":"401987652","C":"401987653"}[letter],
+        id:{"A":"401987651","B":"401987652","C":"401987653","D":"401987654"}[letter],
         date:startTime,status:{type:{state:"pre"}},
         season:{type:2},competitions:[{competitors:[
           {homeAway:"home",team:{
@@ -908,7 +908,7 @@ test("D18 different-fixture global team-ID claims are atomic in emulators",async
 
   // A tampered registry must not be repaired implicitly or bypassed.
   await providerDoc.update({espnTeamId:"999"});
-  const d=source("C",["5001","5004"],[loser.espnIds[0],"17"]);
+  const d=source("D",["5001","5005"],[loser.espnIds[0],"18"]);
   const invalid=await approve(buildGate(d),d);
   assert.equal(invalid.status,"REVISION_CONFLICT");
   assert.equal((await providerDoc.get()).data().espnTeamId,"999");
