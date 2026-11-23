@@ -55,7 +55,7 @@ function fakeDb() {
   };
 }
 function setup({enabled=true,approval=null,broken=null,
-  provider=[fixture()],badQuota=false}={}) {
+  provider=[fixture()],badQuota=false,deliverPrivateReceipt=null}={}) {
   const db=fakeDb(),trace=[];
   db.docs.set(APPROVAL_PATH,approval??{
     issuedAtMs:NOW-1000,expiresAtMs:NOW+60_000,claimedAtMs:null
@@ -63,6 +63,7 @@ function setup({enabled=true,approval=null,broken=null,
   const opts={
     enabled,ownerUid:OWNER.auth.uid,approvalId:APPROVAL_ID,
     getDb(){trace.push("db");return db;},now:()=>NOW,
+    deliverPrivateReceipt,
     async reserve(n) {
       trace.push("reserve");
       assert.equal(n,1);
@@ -210,6 +211,105 @@ test("store failures are sanitized and do not authorize retries",async()=>{
   assert.equal(stored(t.db).length,0);
   await assert.rejects(t.run(OWNER),{code:"failed-precondition"});
   assert.deepEqual(t.trace,["db","reserve","secret","provider","db"]);
+});
+
+test("D23 private fixture reference handoff is post-commit, frozen and never returned",async()=>{
+  const received=[];
+  const t=setup({deliverPrivateReceipt:async value=>{
+    const items=stored(t.db);
+    assert.equal(items.length,1,"source commit must precede callback");
+    assert.equal(items[0][1].reference,value.reference);
+    assert.equal(items[0][1].capturedAt,value.capturedAt);
+    assert.equal(items[0][1].source,value.source);
+    assert.equal(t.db.docs.get(APPROVAL_PATH).claimedAtMs,NOW);
+    assert.ok(Object.isFrozen(value));
+    received.push(value);
+    return true;
+  }});
+  const result=await t.run(OWNER);
+  assert.deepEqual(result,{status:"STORED_UNREVIEWED"});
+  assert.deepEqual(Object.keys(result),["status"]);
+  assert.equal(received.length,1);
+  assert.deepEqual(Object.keys(received[0]).sort(),
+    ["capturedAt","reference","source"]);
+  assert.equal(received[0].source,"ODDSPAPI_V4_FIXTURES");
+  assert.match(received[0].reference,/^ODDSPAPI_FIXTURES_[A-F0-9]{32}$/);
+  assert.equal(received[0].capturedAt,iso(0));
+  assert.deepEqual(t.trace,["db","reserve","secret","provider"]);
+  assert.doesNotMatch(JSON.stringify(result),
+    /ODDSPAPI_FIXTURES|Lakers|Jazz|5001|5002|reference|apiKey/);
+  assert.doesNotMatch(JSON.stringify(received[0]),
+    /Lakers|Jazz|5001|5002|apiKey|SYNTHETIC_SECRET|bookmakerOdds/);
+});
+
+test("D23 private sink is optional, typed, and disabled factory remains inert",async()=>{
+  assert.deepEqual(await setup().run(OWNER),{status:"STORED_UNREVIEWED"});
+  for(const invalid of [true,{},[],42,"browser supplied function name"]){
+    assert.throws(()=>makeOfflineManualFixturesCollector({
+      enabled:true,ownerUid:OWNER.auth.uid,approvalId:APPROVAL_ID,
+      getDb:()=>fakeDb(),reserve:async()=>({utcDay:"2026-11-23",remaining:5}),
+      getApiKey:()=>"secret",fetchImpl:async()=>{},now:()=>NOW,
+      deliverPrivateReceipt:invalid
+    }),TypeError);
+  }
+  const disabled=makeOfflineManualFixturesCollector({
+    deliverPrivateReceipt:()=>{throw Error("MUST NOT BE CALLED");}
+  });
+  await assert.rejects(disabled(OWNER),{code:"failed-precondition"});
+});
+
+test("D23 failed private delivery keeps stored unreviewed receipt and consumes permit/quota",async()=>{
+  for(const sink of [
+    async()=>false,
+    async()=>undefined,
+    async()=>({reference:"PRIVATE_CANNOT_RETURN_TO_BROWSER"}),
+    async()=>{throw Error("PRIVATE_PROVIDER_HANDOFF_SECRET");}
+  ]){
+    let deliveries=0;
+    const t=setup({deliverPrivateReceipt:async value=>{
+      deliveries++;return sink(value);
+    }});
+    const result=await t.run(OWNER);
+    assert.deepEqual(result,{
+      status:"STORED_UNREVIEWED_HANDOFF_UNCONFIRMED"
+    });
+    assert.deepEqual(Object.keys(result),["status"]);
+    assert.equal(deliveries,1);
+    assert.equal(stored(t.db).length,1);
+    assert.equal(t.db.docs.get(APPROVAL_PATH).claimedAtMs,NOW);
+    assert.deepEqual(t.trace,["db","reserve","secret","provider"]);
+    assert.doesNotMatch(JSON.stringify(result),
+      /PRIVATE|ODDSPAPI_FIXTURES|reference|5001|5002|apiKey/);
+    await assert.rejects(t.run(OWNER),{code:"failed-precondition"});
+    assert.deepEqual(t.trace,["db","reserve","secret","provider","db"],
+      "failed private handoff must not reconsume quota or refetch provider");
+    assert.equal(stored(t.db).length,1);
+  }
+});
+
+test("D23 private handoff never runs before successful source write",async()=>{
+  let callbacks=0;
+  const sink=async()=>{callbacks++;return true;};
+  const rejected=setup({broken:"quota",deliverPrivateReceipt:sink});
+  await assert.rejects(rejected.run(OWNER),{code:"resource-exhausted"});
+  assert.equal(callbacks,0);
+  assert.equal(stored(rejected.db).length,0);
+  const invalid=setup({provider:[],deliverPrivateReceipt:sink});
+  assert.deepEqual(await invalid.run(OWNER),{status:"NO_STORABLE_FIXTURES"});
+  assert.equal(callbacks,0);
+  const unavailable=setup({broken:"http",deliverPrivateReceipt:sink});
+  await assert.rejects(unavailable.run(OWNER),{code:"unavailable"});
+  assert.equal(callbacks,0);
+  const storeFail=setup({deliverPrivateReceipt:sink});
+  const original=storeFail.db.runTransaction;
+  let n=0;
+  storeFail.db.runTransaction=async cb=>{
+    n++;if(n===2)throw Error("PRIVATE_STORAGE_FAILURE");
+    return original.call(storeFail.db,cb);
+  };
+  await assert.rejects(storeFail.run(OWNER),{code:"unavailable"});
+  assert.equal(callbacks,0);
+  assert.equal(stored(storeFail.db).length,0);
 });
 
 test("no production wiring, client exports, payment calls or scheduled work",()=>{
