@@ -133,7 +133,9 @@ test("D20 invalid, late and distant fixture starts reject before HTTP or databas
   for(const start of [undefined,null,"20261123",NaN,0,-1,
     NOW,NOW+5*60000,NOW+72*3600000+1]) {
     const t=setup();
-    assert.deepEqual(await t.capture(start),
+    // Call the exported operation directly: the test harness capture()
+    // convenience wrapper defaults undefined to a valid START.
+    assert.deepEqual(await t.transport.captureForFixtureStart(start),
       {status:"INVALID_FIXTURE_START"});
     assert.equal(t.calls.length,0);
     assert.equal(t.db.docs.size,0);
