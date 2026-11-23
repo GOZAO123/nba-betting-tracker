@@ -308,7 +308,7 @@ test("disconnected identity discovery single-use permit is atomic across instanc
   const db=getFirestore(app);
   const approvalId="c".repeat(32);
   const approval=db.doc("_internal/identityDiscovery/approvals/"+approvalId);
-  const isolatedBudget=db.doc("_internal/identityDiscoveryRehearsal/budget");
+  const isolatedBudget=db.doc("_internal/identityDiscoveryRehearsalBudget");
   const utcDay=new Date(NOW).toISOString().slice(0,10);
   const capturedAt=new Date(NOW).toISOString();
   const discoveryFixtureId="synthetic-discovery-unique-fixture";
