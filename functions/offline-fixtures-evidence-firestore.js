@@ -129,4 +129,7 @@ function makeOfflineFixtureTeamEvidenceStore({
   return Object.freeze({storeReceipt});
 }
 
-module.exports={makeOfflineFixtureTeamEvidenceStore};
+// Read-only verification helper for trusted backend review adapters. This checks
+// canonical shape/digests, NOT actual provider provenance or reviewer authority.
+module.exports={makeOfflineFixtureTeamEvidenceStore,
+  validateOfflineFixtureTeamEvidenceReceipt:normalizedSourceReceipt};
