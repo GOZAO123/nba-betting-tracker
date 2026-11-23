@@ -65,13 +65,16 @@ async function readJson(response,expected){
 
 function makeOfflineFixedEspnScoreboardAcquisition({
   db,fetchImpl,now=Date.now,
-  makeSignal=()=>AbortSignal.timeout(TIMEOUT)
+  makeSignal=()=>AbortSignal.timeout(TIMEOUT),
+  deliverPrivateReceipt=null
 }={}){
   if(typeof db?.doc!=="function"||
      typeof db?.runTransaction!=="function"||
      typeof fetchImpl!=="function"||
      typeof now!=="function"||
-     typeof makeSignal!=="function")
+     typeof makeSignal!=="function"||
+     (deliverPrivateReceipt!==null &&
+      typeof deliverPrivateReceipt!=="function"))
     throw new TypeError("Trusted ESPN acquisition dependencies required.");
 
   async function captureForFixtureStart(startMs){
@@ -136,8 +139,26 @@ function makeOfflineFixedEspnScoreboardAcquisition({
       const stored=await custody.storeCapture(scoreboard,{
         reference,capturedAt
       },token);
+      // A private, constructor-injected backend sink may receive ONLY the
+      // reference to an already-committed observation. It is never a
+      // browser-supplied callback and never changes the status-only result.
+      // Delivery is outside the Firestore transaction so retries cannot
+      // accidentally cause multiple handoff attempts.
+      if(stored.status!=="STORED"||deliverPrivateReceipt===null)
+        return Object.freeze({status:stored.status});
+      try {
+        const acknowledged=await deliverPrivateReceipt(Object.freeze({
+          source:"ESPN_NBA_SCOREBOARD",reference,capturedAt
+        }));
+        if(acknowledged!==true)
+          return Object.freeze({status:"STORED_HANDOFF_UNCONFIRMED"});
+      }catch(_){
+        // The source was ALREADY stored. Do not misreport a failed fetch,
+        // retry the source request, or return any private reference.
+        return Object.freeze({status:"STORED_HANDOFF_UNCONFIRMED"});
+      }
       // Only status-only results cross the trusted backend boundary.
-      return Object.freeze({status:stored.status});
+      return Object.freeze({status:"STORED"});
     }catch(_){return safeError();}
   }
   return Object.freeze({captureForFixtureStart});
