@@ -293,10 +293,15 @@ test("D15.3 only the existing shared budget document is touched in a transaction
  // Treat the IAM permissions as a CANDIDATE manifest, not an active grant.
  const doc=fs.readFileSync(path.join(__dirname,"..","docs",
   "update-35-1d15-3-firestore-quota-iam-review.md"),"utf8");
- const candidate=doc.match(
-  /<!-- CANDIDATE_PERMISSIONS_BEGIN -->\s*```text\n([\s\S]*?)\n```\s*<!-- CANDIDATE_PERMISSIONS_END -->/
- );
+ const candidateBlock=/<!-- CANDIDATE_PERMISSIONS_BEGIN -->\s*```text\r?\n([\s\S]*?)\r?\n```\s*<!-- CANDIDATE_PERMISSIONS_END -->/;
+ const candidate=doc.match(candidateBlock);
  assert.ok(candidate,"candidate IAM contract must be explicitly labeled");
+ // A Windows checkout uses CRLF; both variants must retain the same
+ // explicit IAM candidate labels rather than weakening the safety gate.
+ const windowsCandidate=doc.replace(/\r?\n/g,"\r\n").match(candidateBlock);
+ assert.ok(windowsCandidate,"CRLF IAM candidate must remain labeled");
+ assert.equal(windowsCandidate[1].replace(/\r\n/g,"\n"),
+  candidate[1].replace(/\r\n/g,"\n"));
  assert.deepEqual(candidate[1].split(/\r?\n/).filter(Boolean),[
   "datastore.databases.get","datastore.entities.get",
   "datastore.entities.create","datastore.entities.update"
