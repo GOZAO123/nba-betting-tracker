@@ -1480,3 +1480,214 @@ test("D22 backend-only ESPN reference handoff feeds D21 custody without browser 
     })).status,403);
   }
 });
+
+
+test("D23 both private source references compose a single unreviewed D21 binding in emulators",async t=>{
+  const {makeOfflineManualFixturesCollector}=
+    require("./offline-manual-fixtures-collector");
+  const {makeOfflineFixedEspnScoreboardAcquisition}=
+    require("./offline-fixed-espn-scoreboard-acquisition");
+  const {makeOfflineFixtureEspnReviewPacket}=
+    require("./offline-fixture-espn-review-packet");
+  const {makeOfflineTwoSourceBindingCustody}=
+    require("./offline-two-source-binding-custody");
+
+  const app=initializeApp({projectId},"offline-dual-private-source-handoff-d23");
+  t.after(()=>deleteApp(app));
+  const db=getFirestore(app);
+  const iso=offset=>new Date(NOW+offset).toISOString();
+  const startMs=NOW+180*60000;
+  const fixtureId="synthetic-d23-both-private-refs";
+  const approvalId="1".repeat(32);
+  const approval=db.doc("_internal/fixtureTeamDiscovery/approvals/"+approvalId);
+  const token=Object.freeze({});
+  let providerRef=null,espnRef=null;
+  let reserved=0,providerCalls=0,espnCalls=0,secretReads=0;
+  let providerDeliveries=0,espnDeliveries=0;
+  await approval.create({
+    issuedAtMs:NOW-1000,expiresAtMs:NOW+60000,claimedAtMs:null
+  });
+  const scoreboard={events:[{
+    id:"401991177",date:iso(180*60000).replace(".000Z","Z"),
+    status:{type:{state:"pre",internal:"DO_NOT_PERSIST_THIS"}},
+    season:{type:2},
+    competitions:[{competitors:[
+      {homeAway:"home",team:{id:"211",displayName:"Synthetic ESPN Red"}},
+      {homeAway:"away",team:{id:"212",displayName:"Synthetic ESPN Blue"}}
+    ]}]
+  }],unusedSecret:"DO_NOT_PERSIST_THIS"};
+
+  async function attachEspn(receipt){
+    providerDeliveries++;
+    assert.equal(receipt.source,"ODDSPAPI_V4_FIXTURES");
+    assert.deepEqual(Object.keys(receipt).sort(),
+      ["capturedAt","reference","source"]);
+    assert.ok(Object.isFrozen(receipt));
+    providerRef=receipt.reference;
+    assert.equal((await db.doc(
+      "_internal/teamEvidence/fixtureTeamSnapshots/"+providerRef).get()).exists,true,
+      "provider document must be committed before its reference handoff");
+
+    const espn=makeOfflineFixedEspnScoreboardAcquisition({
+      db,now:()=>NOW,makeSignal:()=>({aborted:false}),
+      fetchImpl:async (url,options)=>{
+        espnCalls++;
+        assert.match(url,
+          /^https:\/\/site\.api\.espn\.com\/apis\/site\/v2\/sports\/basketball\/nba\/scoreboard\?dates=\d{8}$/);
+        assert.equal(options.redirect,"error");
+        assert.equal(options.method,"GET");
+        const bytes=Buffer.from(JSON.stringify(scoreboard));
+        return {
+          ok:true,redirected:false,url,
+          headers:{get:k=>k==="content-type"?"application/json":null},
+          body:new ReadableStream({start(c){
+            c.enqueue(bytes);c.close();
+          }})
+        };
+      },
+      deliverPrivateReceipt:async espnReceipt=>{
+        espnDeliveries++;
+        assert.equal(espnReceipt.source,"ESPN_NBA_SCOREBOARD");
+        assert.deepEqual(Object.keys(espnReceipt).sort(),
+          ["capturedAt","reference","source"]);
+        assert.ok(Object.isFrozen(espnReceipt));
+        espnRef=espnReceipt.reference;
+        assert.equal((await db.doc(
+          "_internal/teamReview/espnSnapshots/"+espnRef).get()).exists,true,
+          "ESPN document must be committed before its reference handoff");
+
+        const binder=makeOfflineTwoSourceBindingCustody({
+          db,now:()=>NOW,
+          authorizeBinding:async (candidate,proposal)=>
+            candidate===token&&
+            proposal.fixtureId===fixtureId&&
+            proposal.providerReference===providerRef&&
+            proposal.espnReference===espnRef,
+          attestSourceOrigins:async (candidate,proof)=>{
+            if(candidate!==token||proof.fixtureId!==fixtureId||
+               proof.providerReference!==providerRef||
+               proof.espnReference!==espnRef)return false;
+            // This is SYNTHETIC source attestation, NOT a verified real
+            // OddsPapi/ESPN network origin or production owner grant.
+            const providerDoc=(await db.doc(
+              "_internal/teamEvidence/fixtureTeamSnapshots/"+providerRef)
+              .get()).data();
+            const espnDoc=(await db.doc(
+              "_internal/teamReview/espnSnapshots/"+espnRef)
+              .get()).data();
+            const {receivedAt,...providerReceipt}=providerDoc;
+            const packet=makeOfflineFixtureEspnReviewPacket({
+              fixtureId,providerReceipt,
+              espnScoreboard:espnDoc.scoreboard,
+              espnMetadata:{
+                reference:espnDoc.reference,capturedAt:espnDoc.capturedAt
+              },now:NOW
+            });
+            return !!packet&&
+              proof.providerDigest===packet.provider.snapshotDigest&&
+              proof.espnDigest===packet.espn.digest&&
+              proof.packetDigest===packet.packetDigest;
+          }
+        });
+        const result=await binder.bindSources({
+          fixtureId,providerReference:providerRef,espnReference:espnRef
+        },token);
+        return result.status==="STORED";
+      }
+    });
+    return (await espn.captureForFixtureStart(startMs)).status==="STORED";
+  }
+
+  const collector=makeOfflineManualFixturesCollector({
+    enabled:true,ownerUid:OWNER.auth.uid,approvalId,
+    getDb:()=>db,now:()=>NOW,
+    reserve:async n=>{
+      assert.equal(n,1);
+      assert.equal((await approval.get()).data().claimedAtMs,NOW);
+      reserved++;
+      assert.equal(reserved,1,"one paid slot for one provider fetch");
+      return {utcDay:iso(0).slice(0,10),remaining:5};
+    },
+    getApiKey:()=>{
+      secretReads++;
+      assert.equal(reserved,1);
+      return "SYNTHETIC_PROVIDER_KEY_D23";
+    },
+    fetchImpl:async (url,options)=>{
+      providerCalls++;
+      const target=new URL(url);
+      assert.equal(target.origin,"https://api.oddspapi.io");
+      assert.equal(target.pathname,"/v4/fixtures");
+      assert.equal(target.searchParams.get("tournamentId"),"132");
+      assert.equal(target.searchParams.get("bookmakers"),"betano.pt");
+      assert.equal(options.redirect,"error");
+      assert.equal(reserved,1);
+      return Response.json([{
+        fixtureId,sportId:11,tournamentId:132,statusId:0,hasOdds:true,
+        startTime:iso(180*60000),updatedAt:iso(-60000),
+        participant1Id:"9601",participant2Id:"9602",
+        participant1Name:"Synthetic Provider Red",
+        participant2Name:"Synthetic Provider Blue",
+        privateApiKey:"DO_NOT_PERSIST_THIS",
+        bookmakerOdds:{"betano.pt":{price:1.99}}
+      }]);
+    },
+    deliverPrivateReceipt:attachEspn
+  });
+
+  const result=await collector(OWNER);
+  assert.deepEqual(result,{status:"STORED_UNREVIEWED"});
+  assert.deepEqual(Object.keys(result),["status"]);
+  assert.deepEqual([
+    reserved,secretReads,providerCalls,providerDeliveries,espnCalls,espnDeliveries
+  ],[1,1,1,1,1,1]);
+  const providerDoc=db.doc(
+    "_internal/teamEvidence/fixtureTeamSnapshots/"+providerRef);
+  const espnDoc=db.doc(
+    "_internal/teamReview/espnSnapshots/"+espnRef);
+  const binding=db.doc("_internal/teamReview/sourceBindings/"+fixtureId);
+  const [savedProvider,savedEspn,savedBinding]=await Promise.all([
+    providerDoc.get(),espnDoc.get(),binding.get()
+  ]);
+  assert.equal(savedProvider.exists,true);
+  assert.equal(savedEspn.exists,true);
+  assert.equal(savedBinding.exists,true);
+  assert.equal(savedBinding.data().providerReference,providerRef);
+  assert.equal(savedBinding.data().espnReference,espnRef);
+  assert.doesNotMatch(JSON.stringify(savedProvider.data()),
+    /DO_NOT_PERSIST_THIS|bookmakerOdds|price|privateApiKey/);
+  assert.doesNotMatch(JSON.stringify(savedEspn.data()),
+    /DO_NOT_PERSIST_THIS|unusedSecret|internal/);
+  assert.doesNotMatch(JSON.stringify(result),
+    /ODDSPAPI_FIXTURES|ESPN_CAPTURE|9601|9602|source|reference/);
+  assert.equal((await db.doc(
+    "_internal/teamReview/fixtureJournals/"+fixtureId).get()).exists,false);
+  assert.equal((await db.doc(
+    "_internal/teamReview/globalProviderIds/9601").get()).exists,false);
+
+  // The one-use owner permit is already consumed. No second OddsPapi call.
+  await assert.rejects(collector(OWNER),{code:"failed-precondition"});
+  assert.equal(providerCalls,1);
+  assert.equal(reserved,1);
+
+  const signup=await fetch("http://"+authHost+
+    "/identitytoolkit.googleapis.com/v1/accounts:signUp?key=synthetic",{
+      method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({returnSecureToken:true})
+    });
+  assert.equal(signup.status,200);
+  const {idToken}=await signup.json();
+  const headers={Authorization:"Bearer "+idToken};
+  for(const ref of [providerDoc,espnDoc,binding]){
+    const url="http://"+firestoreHost+
+      "/v1/projects/"+projectId+"/databases/(default)/documents/"+ref.path;
+    assert.equal((await fetch(url,{headers})).status,403);
+    assert.equal((await fetch(url,{
+      method:"PATCH",
+      headers:{...headers,"Content-Type":"application/json"},
+      body:JSON.stringify({fields:{status:{
+        stringValue:"APPROVED_BY_UNTRUSTED_BROWSER"
+      }}})
+    })).status,403);
+  }
+});
