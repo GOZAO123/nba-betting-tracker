@@ -913,3 +913,168 @@ test("D18 different-fixture global team-ID claims are atomic in emulators",async
   assert.equal(invalid.status,"REVISION_CONFLICT");
   assert.equal((await providerDoc.get()).data().espnTeamId,"999");
 });
+
+
+test("D18 source fingerprints are rechecked within review and ID-claim transaction",async t=>{
+  const {extractOfflineFixtureTeamEvidence}=
+    require("./offline-fixture-team-evidence");
+  const {makeOfflineFixtureEspnReviewPacket}=
+    require("./offline-fixture-espn-review-packet");
+  const {makeOfflineFixturesTeamReviewGate}=
+    require("./offline-fixtures-team-review-gate");
+  const {makeOfflineSourceBoundGloballyGuardedReviewJournal}=
+    require("./offline-fixtures-atomic-source-review-journal");
+  const app=initializeApp({projectId},"source-bound-review-emulator-rehearsal");
+  t.after(()=>deleteApp(app));
+  const db=getFirestore(app);
+  const iso=delta=>new Date(NOW+delta).toISOString();
+  const fixtureId="synthetic-bound-review-fixture";
+  const pRef="ODDSPAPI_FIXTURES_"+"C".repeat(32);
+  const eRef="ESPN_BOUND_REVIEW_SOURCE_001";
+  const startTime=iso(180*60000);
+  const providerReceipt=extractOfflineFixtureTeamEvidence([{
+    fixtureId,sportId:11,tournamentId:132,
+    statusId:0,hasOdds:true,startTime,updatedAt:iso(-2*60000),
+    participant1Id:"7501",participant2Id:"7502",
+    participant1Name:"Synthetic Mountain Team",
+    participant2Name:"Synthetic Coast Team",
+    bookmakerOdds:{"betano.pt":{PTS:{price:1.91}}},
+    credential:"NEVER_STORE_RAW_PROVIDER_SECRET"
+  }],{reference:pRef,capturedAt:iso(-60000)},NOW);
+  assert.ok(providerReceipt);
+  const scoreboard={events:[{
+    id:"401997345",date:startTime,status:{type:{state:"pre"}},
+    season:{type:2},competitions:[{competitors:[
+      {homeAway:"home",team:{id:"80",displayName:"Synthetic Home Team"}},
+      {homeAway:"away",team:{id:"81",displayName:"Synthetic Away Team"}}
+    ]}]
+  }]};
+  const espnMetadata={reference:eRef,capturedAt:iso(-30000)};
+  const packet=makeOfflineFixtureEspnReviewPacket({
+    fixtureId,providerReceipt,espnScoreboard:scoreboard,
+    espnMetadata,now:NOW
+  });
+  assert.ok(packet);
+  const docs={
+    binding:db.doc("_internal/teamReview/sourceBindings/"+fixtureId),
+    provider:db.doc("_internal/teamEvidence/fixtureTeamSnapshots/"+pRef),
+    espn:db.doc("_internal/teamReview/espnSnapshots/"+eRef),
+    head:db.doc("_internal/teamReview/fixtureJournals/"+fixtureId),
+    registry:db.doc("_internal/teamReview/globalProviderIds/7501")
+  };
+  await docs.provider.create({
+    ...providerReceipt,receivedAt:iso(0)
+  });
+  await docs.espn.create({
+    schemaVersion:1,source:"ESPN_NBA_SCOREBOARD",
+    reference:eRef,capturedAt:espnMetadata.capturedAt,
+    scoreboard
+  });
+  const sourceBinding={
+    schemaVersion:1,fixtureId,
+    providerReference:pRef,espnReference:eRef,
+    providerDigest:packet.provider.snapshotDigest,
+    espnDigest:packet.espn.digest,packetDigest:packet.packetDigest
+  };
+  const journal=makeOfflineSourceBoundGloballyGuardedReviewJournal({db});
+  // The unprivileged gate is supplied with a stale but valid synthetic
+  // packet, while the guard MUST reread original Admin sources each time.
+  let tick=NOW;
+  const gate=makeOfflineFixturesTeamReviewGate({
+    authorize:async auth=>auth===OWNER ?
+      {allowed:true,reviewerReference:"OWNER_REVIEW_01"} :
+      {allowed:false,reviewerReference:"UNKNOWN"},
+    async loadEvidence(id){
+      assert.equal(id,fixtureId);
+      return {providerReceipt,espnScoreboard:scoreboard,espnMetadata};
+    },
+    loadHistory:journal.loadHistory,
+    appendDecision:journal.appendDecision,
+    now:()=>tick
+  });
+  const pairs=[
+    {providerParticipantId:"7501",espnTeamId:"80"},
+    {providerParticipantId:"7502",espnTeamId:"81"}
+  ];
+  const approve=()=>gate.submit(OWNER,{
+    fixtureId,action:"APPROVE",expectedRevision:0,pairs
+  });
+  const revocation=()=>gate.submit(OWNER,{
+    fixtureId,action:"REVOKE",expectedRevision:1
+  });
+  const query={
+    fixtureId,participant1Id:"7501",participant2Id:"7502",
+    startTime
+  };
+  const noMutation=async()=>{
+    assert.equal((await docs.head.get()).exists,false);
+    assert.equal((await docs.registry.get()).exists,false);
+  };
+
+  // Even a fully valid packet cannot authorize WITHOUT the pinned
+  // server-only binding; no empty fallback and no global ID claims.
+  assert.deepEqual(await approve(),{status:"REVISION_CONFLICT"});
+  await noMutation();
+  await docs.binding.create(sourceBinding);
+
+  // The stored provider receipt can have a valid reference but an
+  // altered digest. Cached pretransaction evidence must not bypass it.
+  await docs.provider.update({digest:"0".repeat(64)});
+  assert.deepEqual(await approve(),{status:"REVISION_CONFLICT"});
+  await noMutation();
+  await docs.provider.update({digest:providerReceipt.digest});
+
+  // A valid ESPN record at the pinned ref with changed team names
+  // invalidates the source packet digest inside the transaction.
+  const forged=structuredClone(scoreboard);
+  forged.events[0].competitions[0].competitors[0].team
+    .displayName="Synthetic Replaced Home";
+  await docs.espn.update({scoreboard:forged});
+  assert.deepEqual(await approve(),{status:"REVISION_CONFLICT"});
+  await noMutation();
+  await docs.espn.update({scoreboard});
+
+  // Correct documents + matching binding permit only the exact human
+  // reviewed pair decision, with registry and journal in one transaction.
+  assert.deepEqual(await approve(),{status:"APPROVED",revision:1});
+  assert.equal((await docs.head.get()).data().packetDigest,
+    packet.packetDigest);
+  assert.equal((await docs.registry.get()).data().espnTeamId,"80");
+  assert.equal((await docs.head.collection("events").get()).size,1);
+  assert.ok(await gate.resolve(query));
+
+  // Changing the independent binding after approval blocks the
+  // subsequent REVOKE rather than accepting a different source.
+  tick+=1000;
+  await docs.binding.update({espnDigest:"f".repeat(64)});
+  assert.deepEqual(await revocation(),{status:"REVISION_CONFLICT"});
+  assert.equal((await docs.head.get()).data().revision,1);
+  assert.equal((await docs.registry.get()).exists,true);
+  await docs.binding.update({espnDigest:packet.espn.digest});
+  assert.deepEqual(await revocation(),{status:"REVOKED",revision:2});
+  assert.equal((await docs.registry.get()).exists,false);
+  assert.equal(await gate.resolve(query),null);
+
+  // The Firestore rules deny arbitrary browser reads/writes of these
+  // backend-only source bindings and independent ESPN observations.
+  const signup=await fetch("http://"+authHost+
+    "/identitytoolkit.googleapis.com/v1/accounts:signUp?key=synthetic",{
+    method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({returnSecureToken:true})
+  });
+  assert.equal(signup.status,200);
+  const {idToken}=await signup.json();
+  const headers={Authorization:"Bearer "+idToken};
+  for(const ref of [docs.binding,docs.provider,docs.espn]) {
+    const url="http://"+firestoreHost+"/v1/projects/"+projectId+
+      "/databases/(default)/documents/"+ref.path;
+    assert.equal((await fetch(url,{headers})).status,403);
+    assert.equal((await fetch(url,{
+      method:"PATCH",headers:{...headers,"Content-Type":"application/json"},
+      body:JSON.stringify({fields:{source:{stringValue:"FORGED"}}})
+    })).status,403);
+  }
+  const journalDoc=(await docs.head.collection("events").doc("000001").get()).data();
+  assert.ok(!JSON.stringify(journalDoc).includes("NEVER_STORE_RAW_PROVIDER_SECRET"));
+  assert.ok(!JSON.stringify(journalDoc).includes("bookmakerOdds"));
+});
