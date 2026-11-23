@@ -19,7 +19,8 @@ const fail=(code,message)=>Object.assign(new Error(message),{code});
 
 function makeOfflineManualFixturesCollector({
   enabled=false,ownerUid,approvalId,getDb,reserve,
-  getApiKey,fetchImpl,now=Date.now
+  getApiKey,fetchImpl,now=Date.now,
+  deliverPrivateReceipt=null
 }={}) {
   if(enabled!==true) {
     return Object.freeze(async()=>{
@@ -28,7 +29,9 @@ function makeOfflineManualFixturesCollector({
   }
   if(typeof ownerUid!=="string" || ownerUid.length<1 ||
       typeof approvalId!=="string" || !APPROVAL_RE.test(approvalId) ||
-      [getDb,reserve,getApiKey,fetchImpl,now].some(x=>typeof x!=="function"))
+      [getDb,reserve,getApiKey,fetchImpl,now].some(x=>typeof x!=="function") ||
+      (deliverPrivateReceipt!==null &&
+       typeof deliverPrivateReceipt!=="function"))
     throw new TypeError("Missing trusted fixture-discovery configuration.");
 
   return Object.freeze(async request=>{
@@ -123,6 +126,30 @@ function makeOfflineManualFixturesCollector({
       });
       const stored=await store.storeReceipt(snapshot,privateToken);
       if(stored?.status!=="STORED")throw Error("Persistence");
+
+      // Optional constructor-injected BACKEND-ONLY reference sink. Invoke
+      // exactly once AFTER the protected create-only transaction commits.
+      // The browser never supplies this callback or sees this reference.
+      // The original approval and paid quota are already consumed.
+      if(deliverPrivateReceipt!==null){
+        try{
+          const acknowledged=await deliverPrivateReceipt(Object.freeze({
+            source:"ODDSPAPI_V4_FIXTURES",
+            reference:snapshot.reference,
+            capturedAt:snapshot.capturedAt
+          }));
+          if(acknowledged!==true)
+            return Object.freeze({
+              status:"STORED_UNREVIEWED_HANDOFF_UNCONFIRMED"
+            });
+        }catch(_){
+          // A failed handoff is NOT a failed provider capture. Do not
+          // repeat a paid request or hide the committed source evidence.
+          return Object.freeze({
+            status:"STORED_UNREVIEWED_HANDOFF_UNCONFIRMED"
+          });
+        }
+      }
       // Never expose fixture IDs, team names, provider bodies or receipts.
       return Object.freeze({status:"STORED_UNREVIEWED"});
     } catch(_) {
