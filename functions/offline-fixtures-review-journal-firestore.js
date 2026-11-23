@@ -60,10 +60,11 @@ function validHead(head,fixtureId) {
     typeof head.updatedAt==="string"&&
     Number.isFinite(Date.parse(head.updatedAt));
 }
-function makeOfflineFixtureReviewJournal({db}={}) {
+function makeOfflineFixtureReviewJournal({db,globalGuard=null}={}) {
   if(typeof db?.doc!=="function" ||
      typeof db?.runTransaction!=="function" ||
-     typeof db?.getAll!=="function")
+     typeof db?.getAll!=="function" ||
+     (globalGuard!==null && typeof globalGuard!=="function"))
     throw new TypeError("Trusted Admin Firestore dependencies required.");
 
   async function appendDecision({fixtureId,expectedRevision,packetDigest,event}={}) {
@@ -81,6 +82,7 @@ function makeOfflineFixtureReviewJournal({db}={}) {
 
     try {
       return await db.runTransaction(async tx=>{
+        let previousEvent=null;
         const old=await tx.get(headRef);
         const head=old?.exists ? old.data() : null;
         if(expectedRevision===0) {
@@ -96,7 +98,15 @@ function makeOfflineFixtureReviewJournal({db}={}) {
             !validEvent(previous.data(),fixtureId,expectedRevision-1,packetDigest)||
             previous.data().eventDigest!==head.latestEventDigest)
             return false;
+          previousEvent=previous.data();
         }
+        // D18 optional write-side global ID arbitration. It runs INSIDE
+        // this transaction, before any journal or registry writes.
+        // The factory stays backwards compatible with offline rehearsals;
+        // production must use the separate guard-required factory.
+        if(globalGuard &&
+          await globalGuard({tx,fixtureId,event,previousEvent})!==true)
+          return false;
         const newHead={
           schemaVersion:1,fixtureId,packetDigest,
           revision:expectedRevision+1,lastAction:event.action,
