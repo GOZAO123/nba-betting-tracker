@@ -96,7 +96,9 @@ test("only existing fixture ID can be selected; no guessing from kickoff",()=>{
 });
 
 test("stale or future provider and ESPN capture times fail closed",()=>{
-  const ancient=extractOfflineFixtureTeamEvidence([fixture()],{
+  const ancient=extractOfflineFixtureTeamEvidence([{
+    ...fixture(),updatedAt:iso(-32*60000)
+  }],{
     reference,capturedAt:iso(-31*60000)
   },NOW-30*60000);
   assert.ok(ancient);
