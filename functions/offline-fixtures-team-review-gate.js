@@ -208,4 +208,31 @@ function makeOfflineFixturesTeamReviewGate({
   return Object.freeze({submit,resolve});
 }
 
-module.exports={makeOfflineFixturesTeamReviewGate};
+
+// Pure verification for a complete, privately loaded review snapshot.
+// Does NOT attest to source provenance or authenticate the review journal.
+// It deliberately reuses the identical D18 history/manifest validation
+// used by the manual review gate; no second approval policy is invented.
+function inspectOfflineSourceBoundTeamReview({
+  fixtureId,providerReceipt,espnScoreboard,espnMetadata,history,now
+}={}) {
+  try {
+    if(typeof fixtureId!=="string" || !FID.test(fixtureId) ||
+       !Array.isArray(history) || !Number.isSafeInteger(now) || now<0)
+      return null;
+    const packet=makeOfflineFixtureEspnReviewPacket({
+      fixtureId,providerReceipt,espnScoreboard,espnMetadata,now
+    });
+    if(!packet)return null;
+    const state=checkedHistory(history,packet,now);
+    if(!state)return null;
+    const manifest=buildManifest(packet,state,now);
+    // An approved record that cannot still resolve is NOT silently
+    // treated as unreviewed, omitted, or exempt from the global gate.
+    if(state.status==="APPROVED" && !manifest)return null;
+    return Object.freeze({status:state.status,manifest});
+  } catch (_) {return null;}
+}
+
+module.exports={makeOfflineFixturesTeamReviewGate,
+  inspectOfflineSourceBoundTeamReview};
