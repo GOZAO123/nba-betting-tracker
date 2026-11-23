@@ -585,3 +585,145 @@ test("fixture-name discovery permit, quota and private receipt are atomic in emu
   await assert.rejects(blocked(OWNER),{code:"failed-precondition"});
   assert.deepEqual([reservations,credentialReads,providerCalls],[1,1,1]);
 });
+
+
+test("D18 manual source-aware review journal is atomic and private in emulators",async t=>{
+  const {extractOfflineFixtureTeamEvidence}=
+    require("./offline-fixture-team-evidence");
+  const {makeOfflineFixturesTeamReviewGate}=
+    require("./offline-fixtures-team-review-gate");
+  const {makeOfflineFixtureReviewJournal}=
+    require("./offline-fixtures-review-journal-firestore");
+  const {getReviewedTeamBridge}=require("./offer-team-crosswalk");
+  const app=initializeApp({projectId},"offline-team-review-journal-rehearsal");
+  t.after(()=>deleteApp(app));
+  const db=getFirestore(app);
+  const fixtureId="synthetic-d18-journal-001";
+  const journalRef=db.doc("_internal/teamReview/fixtureJournals/"+fixtureId);
+  const eventCollection=journalRef.collection("events");
+  const toIso=delta=>new Date(NOW+delta).toISOString();
+  const providerReceipt=extractOfflineFixtureTeamEvidence([{
+    fixtureId,sportId:11,tournamentId:132,statusId:0,hasOdds:true,
+    startTime:toIso(180*60000),updatedAt:toIso(-120000),
+    participant1Id:"5001",participant2Id:"5002",
+    participant1Name:"Synthetic Lakers",
+    participant2Name:"Synthetic Utah Jazz",
+    bookmakerOdds:{"betano.pt":{price:1.85}},
+    privateToken:"SYNTHETIC_NEVER_STORE_SECRET"
+  }],{
+    reference:"ODDSPAPI_FIXTURES_"+"B".repeat(32),
+    capturedAt:toIso(-60000)
+  },NOW);
+  assert.ok(providerReceipt);
+  const evidence={
+    providerReceipt,
+    espnScoreboard:{events:[{
+      id:"401123456",date:toIso(180*60000),season:{type:2},
+      status:{type:{state:"pre"}},competitions:[{competitors:[
+        {homeAway:"home",team:{id:"13",displayName:"Synthetic Utah Jazz"}},
+        {homeAway:"away",team:{id:"14",displayName:"Synthetic Los Angeles Lakers"}}
+      ]}]
+    }]},
+    espnMetadata:{
+      reference:"ESPN_SERVER_OBS_001",capturedAt:toIso(-30000)
+    }
+  };
+  const pairs=[
+    {providerParticipantId:"5001",espnTeamId:"14"},
+    {providerParticipantId:"5002",espnTeamId:"13"}
+  ];
+  const query={
+    fixtureId,participant1Id:"5001",participant2Id:"5002",
+    startTime:toIso(180*60000)
+  };
+  let tick=NOW,loads=0;
+  const journal=makeOfflineFixtureReviewJournal({db});
+  const make=()=>makeOfflineFixturesTeamReviewGate({
+    async authorize(auth) {
+      return auth===OWNER ?
+        {allowed:true,reviewerReference:"OWNER_REVIEW_01"} :
+        {allowed:false,reviewerReference:"UNKNOWN"};
+    },
+    async loadEvidence(requestedId) {
+      assert.equal(requestedId,fixtureId);
+      loads++;
+      return structuredClone(evidence);
+    },
+    loadHistory:journal.loadHistory,
+    appendDecision:journal.appendDecision,
+    now:()=>tick
+  });
+  const gate1=make(),gate2=make();
+  const approve=gate=>gate.submit(OWNER,{
+    fixtureId,action:"APPROVE",expectedRevision:0,pairs
+  });
+  assert.equal((await journalRef.get()).exists,false);
+  assert.equal((await eventCollection.get()).size,0);
+  assert.equal(await gate1.resolve(query),null);
+  const loadsBeforeAuth=loads;
+  assert.deepEqual(await gate1.submit({auth:{uid:"someone-else"}},{
+    fixtureId,action:"APPROVE",expectedRevision:0,pairs
+  }),{status:"DENIED"});
+  assert.equal(loads,loadsBeforeAuth);
+  assert.equal((await journalRef.get()).exists,false);
+
+  // Independently constructed gates race through real Admin Firestore
+  // transactions. Both may see revision 0, but only one can commit.
+  const outcomes=await Promise.all([approve(gate1),approve(gate2)]);
+  assert.equal(outcomes.filter(x=>x.status==="APPROVED").length,1);
+  assert.equal(outcomes.filter(x=>x.status==="REVISION_CONFLICT").length,1);
+  const head=(await journalRef.get()).data();
+  assert.equal(head.schemaVersion,1);
+  assert.equal(head.revision,1);
+  assert.equal(head.lastAction,"APPROVE");
+  assert.equal((await eventCollection.get()).size,1);
+  assert.deepEqual((await journal.loadHistory(fixtureId))[0].pairs,pairs);
+  assert.deepEqual((await gate1.resolve(query)).teamBridge,pairs);
+  assert.equal(getReviewedTeamBridge(query),null,
+    "production reviewed team manifest must remain empty");
+
+  assert.deepEqual(await approve(gate2),{status:"REVISION_CONFLICT"});
+  assert.equal((await eventCollection.get()).size,1);
+  tick+=1000;
+  const revoke=()=>gate1.submit(OWNER,{
+    fixtureId,action:"REVOKE",expectedRevision:1
+  });
+  assert.deepEqual(await revoke(),{status:"REVOKED",revision:2});
+  assert.equal((await journalRef.get()).data().revision,2);
+  assert.equal((await eventCollection.get()).size,2);
+  assert.equal((await gate1.resolve(query)),null);
+  assert.deepEqual(await revoke(),{status:"REVISION_CONFLICT"});
+  assert.deepEqual(await approve(gate1),{status:"REVISION_CONFLICT"});
+
+  // Auth-emulator browser users cannot read or mutate Admin-only journal
+  // head OR immutable event documents. Explicitly test both documents.
+  const signup=await fetch("http://"+authHost+
+    "/identitytoolkit.googleapis.com/v1/accounts:signUp?key=synthetic",{
+    method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({returnSecureToken:true})
+  });
+  assert.equal(signup.status,200);
+  const {idToken}=await signup.json();
+  const headers={Authorization:"Bearer "+idToken};
+  const paths=[journalRef.path,eventCollection.doc("000001").path];
+  for(const privatePath of paths) {
+    const url="http://"+firestoreHost+"/v1/projects/"+projectId+
+      "/databases/(default)/documents/"+privatePath;
+    assert.equal((await fetch(url,{headers})).status,403);
+    assert.equal((await fetch(url,{
+      method:"PATCH",headers:{...headers,"Content-Type":"application/json"},
+      body:JSON.stringify({fields:{reviewStatus:{stringValue:"APPROVED"}}})
+    })).status,403);
+  }
+  const records=await journal.loadHistory(fixtureId);
+  assert.equal(records.length,2);
+  assert.deepEqual(records.map(x=>x.action),["APPROVE","REVOKE"]);
+  assert.ok(!JSON.stringify(records).includes("SYNTHETIC_NEVER_STORE_SECRET"));
+  assert.ok(!JSON.stringify(records).includes("bookmakerOdds"));
+
+  // Simulate an administrator tampering with an immutable historical
+  // event: readback and the gate must refuse to authorize that journal.
+  await eventCollection.doc("000001").update({eventDigest:"0".repeat(64)});
+  await assert.rejects(journal.loadHistory(fixtureId),/Invalid review event/);
+  assert.equal(await gate1.resolve(query),null);
+});
