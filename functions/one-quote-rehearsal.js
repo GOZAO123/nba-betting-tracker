@@ -1339,3 +1339,144 @@ test("D21 create-only source binding composes with atomic D18 review in Firestor
   assert.equal((await docs.binding.get()).data().packetDigest,
     packet.packetDigest);
 });
+
+
+test("D22 backend-only ESPN reference handoff feeds D21 custody without browser disclosure",async t=>{
+  const {extractOfflineFixtureTeamEvidence}=
+    require("./offline-fixture-team-evidence");
+  const {makeOfflineFixtureEspnReviewPacket}=
+    require("./offline-fixture-espn-review-packet");
+  const {makeOfflineTwoSourceBindingCustody}=
+    require("./offline-two-source-binding-custody");
+  const {makeOfflineFixedEspnScoreboardAcquisition}=
+    require("./offline-fixed-espn-scoreboard-acquisition");
+
+  const app=initializeApp({projectId},"offline-private-espn-handoff-d22");
+  t.after(()=>deleteApp(app));
+  const db=getFirestore(app);
+  const iso=ms=>new Date(NOW+ms).toISOString();
+  const fixtureId="synthetic-d22-es-pair";
+  const pRef="ODDSPAPI_FIXTURES_"+"F".repeat(32);
+  const startMs=NOW+180*60000;
+  const receipt=extractOfflineFixtureTeamEvidence([{
+    fixtureId,sportId:11,tournamentId:132,statusId:0,hasOdds:true,
+    startTime:iso(180*60000),updatedAt:iso(-150000),
+    participant1Id:"9501",participant1Name:"Synthetic Provider One",
+    participant2Id:"9502",participant2Name:"Synthetic Provider Two"
+  }],{reference:pRef,capturedAt:iso(-120000)},NOW);
+  assert.ok(receipt);
+  await db.doc("_internal/teamEvidence/fixtureTeamSnapshots/"+pRef)
+    .create({...receipt,receivedAt:iso(-60000)});
+  const scoreboard={events:[{
+    id:"401998811",date:iso(180*60000).replace(".000Z","Z"),
+    status:{type:{state:"pre"},unusedSecret:"DO_NOT_SAVE_SECRET"},
+    season:{type:2},
+    competitions:[{competitors:[
+      {homeAway:"home",team:{id:"202",displayName:"Synthetic ESPN One"}},
+      {homeAway:"away",team:{id:"203",displayName:"Synthetic ESPN Two"}}
+    ]}]
+  }],secret:"DO_NOT_SAVE_SECRET"};
+  let fetchCalls=0,handoffCalls=0,privateReference=null;
+  const token=Object.freeze({});
+  const binding=makeOfflineTwoSourceBindingCustody({
+    db,now:()=>NOW,
+    authorizeBinding:async (candidate,input)=>
+      candidate===token&&
+      input.fixtureId===fixtureId&&
+      input.providerReference===pRef&&
+      input.espnReference===privateReference,
+    attestSourceOrigins:async (candidate,proof)=>{
+      if(candidate!==token||proof.fixtureId!==fixtureId||
+         proof.providerReference!==pRef||
+         proof.espnReference!==privateReference)
+        return false;
+      const source=(await db.doc(
+        "_internal/teamReview/espnSnapshots/"+privateReference).get()).data();
+      const packet=makeOfflineFixtureEspnReviewPacket({
+        fixtureId,providerReceipt:receipt,
+        espnScoreboard:source.scoreboard,
+        espnMetadata:{
+          reference:source.reference,capturedAt:source.capturedAt
+        },now:NOW
+      });
+      // Synthetic attestation: this is NOT an independent live source proof.
+      return !!packet&&
+        proof.providerDigest===packet.provider.snapshotDigest&&
+        proof.espnDigest===packet.espn.digest&&
+        proof.packetDigest===packet.packetDigest;
+    }
+  });
+
+  const acquisition=makeOfflineFixedEspnScoreboardAcquisition({
+    db,now:()=>NOW,makeSignal:()=>({aborted:false}),
+    fetchImpl:async (url,options)=>{
+      fetchCalls++;
+      assert.match(url,
+        /^https:\/\/site\.api\.espn\.com\/apis\/site\/v2\/sports\/basketball\/nba\/scoreboard\?dates=\d{8}$/);
+      assert.equal(options.redirect,"error");
+      assert.equal(options.method,"GET");
+      return {
+        ok:true,redirected:false,url,
+        headers:{get:k=>k==="content-type"?"application/json":null},
+        body:new ReadableStream({start(c){
+          c.enqueue(Buffer.from(JSON.stringify(scoreboard)));c.close();
+        }})
+      };
+    },
+    deliverPrivateReceipt:async source=>{
+      handoffCalls++;
+      assert.deepEqual(Object.keys(source).sort(),
+        ["capturedAt","reference","source"]);
+      privateReference=source.reference;
+      const result=await binding.bindSources({
+        fixtureId,providerReference:pRef,espnReference:source.reference
+      },token);
+      return result.status==="STORED";
+    }
+  });
+  const result=await acquisition.captureForFixtureStart(startMs);
+  assert.deepEqual(result,{status:"STORED"});
+  assert.deepEqual(Object.keys(result),["status"]);
+  assert.equal(fetchCalls,1);
+  assert.equal(handoffCalls,1);
+  assert.ok(/^ESPN_CAPTURE_[A-F0-9]{32}$/.test(privateReference));
+  assert.doesNotMatch(JSON.stringify(result),
+    /ESPN_CAPTURE_|9501|9502|401998811|source|reference/);
+
+  const sourceRef=db.doc(
+    "_internal/teamReview/espnSnapshots/"+privateReference);
+  const bindRef=db.doc("_internal/teamReview/sourceBindings/"+fixtureId);
+  const [storedSource,storedBinding]=await Promise.all([
+    sourceRef.get(),bindRef.get()
+  ]);
+  assert.equal(storedSource.exists,true);
+  assert.equal(storedBinding.exists,true);
+  assert.equal(storedBinding.data().espnReference,privateReference);
+  assert.equal(storedBinding.data().providerReference,pRef);
+  assert.doesNotMatch(JSON.stringify(storedSource.data()),
+    /DO_NOT_SAVE_SECRET|unusedSecret/);
+  assert.equal((await db.doc(
+    "_internal/teamReview/fixtureJournals/"+fixtureId).get()).exists,false);
+  assert.equal((await db.doc(
+    "_internal/teamReview/globalProviderIds/9501").get()).exists,false);
+
+  const signup=await fetch("http://"+authHost+
+    "/identitytoolkit.googleapis.com/v1/accounts:signUp?key=synthetic",{
+      method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({returnSecureToken:true})
+    });
+  assert.equal(signup.status,200);
+  const {idToken}=await signup.json();
+  const headers={Authorization:"Bearer "+idToken};
+  for(const ref of [sourceRef,bindRef]){
+    const url="http://"+firestoreHost+
+      "/v1/projects/"+projectId+"/databases/(default)/documents/"+ref.path;
+    assert.equal((await fetch(url,{headers})).status,403);
+    assert.equal((await fetch(url,{
+      method:"PATCH",
+      headers:{...headers,"Content-Type":"application/json"},
+      body:JSON.stringify({fields:{source:{
+        stringValue:"SPOOFED_SOURCE"}}})
+    })).status,403);
+  }
+});
