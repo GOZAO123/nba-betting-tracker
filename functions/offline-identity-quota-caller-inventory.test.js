@@ -3,7 +3,10 @@ const test=require("node:test"),assert=require("node:assert/strict");
 const fs=require("node:fs"),path=require("node:path");
 const {DIRECT,DELEGATED,assessOfflinePaidCallerInventory:assess}=
   require("./offline-identity-quota-caller-inventory");
-const production=()=>fs.readFileSync(path.join(__dirname,"index.js"),"utf8");
+// Normalize only the synthetic source fixture for exact-string mutation tests.
+// Production code and the fail-closed inspector remain unchanged.
+const production=()=>fs.readFileSync(path.join(__dirname,"index.js"),"utf8")
+ .replace(/\r\n/g,"\n");
 function blocked(r){
  assert.equal(r.status,"BLOCKED");
  assert.equal(r.cutoverReady,false);
@@ -25,6 +28,15 @@ test("D15.11 current source has exactly five direct and four delegated paid call
  has(r,"ACCOUNT_PREFLIGHT_DEPLOYED_SOURCE_NOT_ATTESTED");
  has(r,"EVERY_PAID_CALLER_DUAL_RESERVATION_NOT_VERIFIED");
 });
+test("D15.11 scanner retains quota and caller checks for CRLF source",()=>{
+ const unix=assess(production());
+ const windows=assess(production().replace(/\n/g,"\r\n"));
+ blocked(windows);
+ assert.equal(windows.sourceInventoryVerified,true,
+  JSON.stringify(windows.blockers));
+ assert.deepEqual(windows.sourceCallers,unix.sourceCallers);
+ assert.deepEqual(windows.blockers,unix.blockers);
+});
 test("D15.11 unknown additional provider callable blocks source review",()=>{
  const r=assess(production()+
    "\nexports.oddsPapiUnreviewedPaidProbe = onCall(async()=>{});\n");
@@ -41,7 +53,8 @@ test("D15.11 missing callable export blocks the fixed inventory",()=>{
 test("D15.11 changing an individual direct quota amount cannot hide in another caller",()=>{
  const src=production().replace("await reserveDiagnosticRequests(2);",
    "await reserveDiagnosticRequests(1);");
- assert.notEqual(src,production());
+ assert.ok(src!==production(),
+  "synthetic source mutation must change the source");
  const r=assess(src);
  blocked(r);
  has(r,"DIRECT_RESERVATION_UNVERIFIED_oddsPapiDetailedPropsProbe");
@@ -70,7 +83,8 @@ test("D15.11 changing market audit legacy reservation path blocks inspection",()
  const marker="const runNbaMarketAudit = makeLeagueMarketAuditRunner({\n  ownerUid: LEDGER_OWNER,\n  reserve: reserveDiagnosticRequests,";
  const src=production().replace(marker,
   "const runNbaMarketAudit = makeLeagueMarketAuditRunner({\n  ownerUid: LEDGER_OWNER,\n  reserve: () => Promise.resolve(),");
- assert.notEqual(src,production());
+ assert.ok(src!==production(),
+  "synthetic source mutation must change the source");
  const r=assess(src);blocked(r);
  has(r,"MARKET_AUDIT_RESERVATION_UNVERIFIED");
 });
@@ -86,7 +100,8 @@ test("D15.11 switching identity diagnostic to a separate budget fails review",()
  const before=production().slice(0,scoped),after=production().slice(scoped);
  const disabled=before+after.replace(old,
   "  ownerUid: LEDGER_OWNER,\n  reserveDifferentBudget,");
- assert.notEqual(disabled,production());
+ assert.ok(disabled!==production(),
+  "synthetic source mutation must change the source");
  const check=assess(disabled);blocked(check);
  has(check,"IDENTITY_DIAGNOSTIC_RESERVATION_UNVERIFIED");
 });
