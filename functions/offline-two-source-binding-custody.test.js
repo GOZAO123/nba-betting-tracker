@@ -209,7 +209,13 @@ test("D21 tampering either original source digest or its shape fails closed",asy
     (p,e)=>{e.rawKey="REJECT_EXTRA";}
   ];
   for(const mutate of mutations){
-    const src=makeSources();
+    // D17 receipts are intentionally frozen. Tamper an independent
+    // stored-document clone, not the immutable source constructor.
+    const source=makeSources();
+    const src={
+      provider:structuredClone(source.provider),
+      espn:structuredClone(source.espn)
+    };
     mutate(src.provider,src.espn);
     const h=harness({initial:{
       [PATHS.provider]:src.provider,[PATHS.espn]:src.espn
