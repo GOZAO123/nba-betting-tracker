@@ -249,8 +249,9 @@ test("D15.2 pins a dedicated identity only for the new disabled callable",()=>{
  assert.match(identity[1],/memory:\s*"512MiB"/);
  assert.match(prod,/const NBA_IDENTITY_SCHEMA_DIAGNOSTIC_ENABLED = false;/);
  assert.match(prod,/const NBA_PROVIDER_EVIDENCE_ENABLED = false;/);
- assert.equal((prod.match(/\bserviceAccount\s*:/g)||[]).length,1,
-  "never override another deployed function's runtime identity");
+ assert.equal((prod.match(/\bserviceAccount\s*:/g)||[]).length,2,
+  "only identity diagnostic and status pilot may override runtime identity");
+ assert.match(prod,/exports\.oddsBackendStatus\s*=\s*onCall\(\s*\{[^}]*serviceAccount:\s*"nba-status-runtime@nba-betting-tracker-3979d\.iam\.gserviceaccount\.com"/);
  const legacy=prod.match(
   /exports\.oddsPapiNbaMarketAudit\s*=\s*onCall\(\s*\{([\s\S]*?)\}\s*,\s*async request\s*=>/
  );

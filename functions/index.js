@@ -53,7 +53,8 @@ async function reserveDiagnosticRequests(amount) {
 
 
 exports.oddsBackendStatus = onCall(
-  { region: "europe-west1", maxInstances: 2, enforceAppCheck: false },
+  { region: "europe-west1", maxInstances: 2, enforceAppCheck: false,
+    serviceAccount: "nba-status-runtime@nba-betting-tracker-3979d.iam.gserviceaccount.com" },
   async (request) => {
     if (!request.auth) {
       throw new HttpsError("unauthenticated", "Sign in to check the odds backend.");
