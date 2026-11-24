@@ -250,3 +250,17 @@ authorized live acceptance can verify effective runtime permissions.
 Release result remains **BLOCKED**. The next decision after review is whether
 to approve a *separate* minimal implementation PR with deterministic tests;
 do not equate design approval with rollout permission.
+
+## Step 52C addendum — 24 November 2026
+
+The preceding historical evidence and approvals are retained as dated records. This addendum supersedes the old inventory and implementation-approval status, not the release gates.
+
+- Current source has 15 exports; owner-observed production has 16 ACTIVE functions, including the separate preflight absent from source. The collector is deployed disabled; no enablement or paid call authorized. Preserve all 16, including both the collector and preflight.
+- Owner approved and completed creation of a dedicated status-only runtime account. No new role grants or user-managed keys; zero function assignments. Project IAM inspection found zero direct candidate, broad principal, group or conditional bindings; global secret policy inspection found no candidate or potential indirect grant. Effective resource authorization remains unverified; failed Policy Troubleshooter requests are not denials. Regional secret inventory remains pending.
+- Cloud Shell operator account-specific get/getIamPolicy/actAs checks passed; actual Firebase deployment principal remains to be verified. No additional grant justified by current evidence.
+- Exact historical status source recovered into private verified backup; offline dependency installation, synthetic auth/response and target filter rehearsal passed. Actual isolated Linux runtime and executable single-target rollback, actual planner IAM/secret delta and production HTTP auth compatibility remain unverified.
+- Owner separately approved this implementation PR and automated offline tests only. This does not authorize merging, production deployment, secret access, role changes or live invocation. The earlier Stage 0 gate is still open; account creation was separately approved as an unused resource, not as evidence that Stage 0 passed.
+- This PR changes only the status runtime option in production source. Tests recognize the two explicitly scoped identities, assert 15 source exports, exercise the mocked shared entrypoint and preserve auth/response and quota guards. Test results must be recorded separately; mocked Firebase calls do not attest real SDK startup or effective access.
+- Release remains BLOCKED; paidProviderAllowed:false. No blanket deployment or change to legacy Compute grants. The budget is alert-only.
+
+Evidence: [account creation](https://github.com/GOZAO123/nba-betting-tracker/issues/1#issuecomment-7147406517), [IAM checkpoint](https://github.com/GOZAO123/nba-betting-tracker/issues/1#issuecomment-7147489777).
