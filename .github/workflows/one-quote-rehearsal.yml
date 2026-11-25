@@ -27,7 +27,7 @@ jobs:
           distribution: temurin
           java-version: '21'
       - name: Install Functions dependencies
-        run: npm install --prefix functions --no-audit --no-fund
+        run: npm ci --prefix functions --no-audit --no-fund
       - name: Run Firestore and Auth emulators
         env:
           GCLOUD_PROJECT: demo-nba-quote-rehearsal
