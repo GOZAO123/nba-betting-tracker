@@ -1,0 +1,131 @@
+name: Linux status rollback rehearsal
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/status-rollback-linux.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  rollback:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 996947d7195081c7bd0458a0b3f3df17b1417662
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install pinned dependencies
+        working-directory: functions
+        run: npm ci --no-audit --no-fund
+      - name: Rehearse status rollback with real SDKs
+        working-directory: functions
+        shell: bash
+        env:
+          GCLOUD_PROJECT: demo-nba-status-rollback
+          GOOGLE_CLOUD_PROJECT: demo-nba-status-rollback
+          FIREBASE_CONFIG: '{"projectId":"demo-nba-status-rollback"}'
+          FIRESTORE_EMULATOR_HOST: 127.0.0.1:8187
+          FIREBASE_AUTH_EMULATOR_HOST: 127.0.0.1:9197
+          ODDSPAPI_ONE_QUOTE_ENABLED: "false"
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = 996947d7195081c7bd0458a0b3f3df17b1417662
+          git diff --exit-code --stat
+          node --check index.js
+          node --test status-runtime-pilot.test.js
+          node <<'NODE'
+          const fs = require("node:fs");
+          const path = require("node:path");
+          const crypto = require("node:crypto");
+          const Module = require("node:module");
+          const assert = require("node:assert/strict");
+          const check = (condition, name) => {
+            if (!condition) throw new Error("FAIL: " + name);
+            console.log("PASS: " + name);
+          };
+          const dir = process.cwd();
+          const sourcePath = path.join(dir, "index.js");
+          const localRequire = Module.createRequire(sourcePath);
+          const files = ["index.js", "package.json", "package-lock.json"];
+          const hash = file => crypto.createHash("sha256")
+            .update(fs.readFileSync(path.join(dir, file))).digest("hex");
+          const before = files.map(hash);
+          const source = fs.readFileSync(sourcePath, "utf8");
+          const dedicated = 'serviceAccount: "nba-status-runtime@nba-betting-tracker-3979d.iam.gserviceaccount.com"';
+          const legacyAccount = "846190824224-compute@developer.gserviceaccount.com";
+          const legacy = 'serviceAccount: "' + legacyAccount + '"';
+          const start = source.indexOf("exports.oddsBackendStatus = onCall(");
+          const end = source.indexOf("\nexports.", start + 1);
+          const position = source.indexOf(dedicated);
+          const candidate = source.replace(dedicated, legacy);
+          check(start >= 0 && end > start && position > start && position < end &&
+            source.split(dedicated).length === 2 &&
+            candidate.replace(legacy, dedicated) === source,
+            "Only status runtime identity changes");
+          for (const name of ["GOOGLE_APPLICATION_CREDENTIALS", "ODDSPAPI_API_KEY",
+            "FIREBASE_TOKEN", "CLOUDSDK_AUTH_ACCESS_TOKEN", "GOOGLE_OAUTH_ACCESS_TOKEN",
+            "GOOGLE_GHA_CREDS_PATH", "CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE"]) {
+            delete process.env[name];
+          }
+          const effects = [];
+          const block = name => () => {
+            effects.push(name);
+            throw new Error("Blocked protected interface");
+          };
+          globalThis.fetch = block("fetch");
+          for (const name of ["node:http", "node:https"]) {
+            const transport = require(name);
+            transport.request = block(name + ".request");
+            transport.get = block(name + ".get");
+          }
+          require("node:net").Socket.prototype.connect = block("socket");
+          require("node:tls").connect = block("tls");
+          Object.defineProperty(localRequire("firebase-admin/firestore"), "getFirestore", {
+            configurable: true, value: block("Firestore")
+          });
+          async function main() {
+            check(process.platform === "linux" && process.versions.node.split(".")[0] === "22",
+              "Linux Node 22");
+            for (const [name, version] of [["firebase-admin","14.5.1"],["firebase-functions","7.4.0"]]) {
+              const pkg = JSON.parse(fs.readFileSync(path.join(dir,"node_modules",name,"package.json"),"utf8"));
+              check(pkg.version === version, name + " pinned version");
+            }
+            const m = new Module(sourcePath, module);
+            m.filename = sourcePath;
+            m.paths = Module._nodeModulePaths(dir);
+            m._compile(candidate, sourcePath);
+            const exports = m.exports;
+            check(Object.keys(exports).length === 15 && !Object.hasOwn(exports,"oddsPapiAccountPreflight"),
+              "Source inventory preserved");
+            const status = exports.oddsBackendStatus;
+            check(typeof status.run === "function" && status.__endpoint?.serviceAccountEmail === legacyAccount,
+              "Actual SDK rollback runtime metadata");
+            for (const request of [{data:{}},{data:{},auth:null}]) {
+              await assert.rejects(() => status.run(request), error => error.code === "unauthenticated");
+            }
+            console.log("PASS: Unauthenticated requests rejected");
+            const expected = {
+              ready: true, provider: "OddsPapi", oddsConnected: false,
+              message: "Authenticated Firebase backend is ready. OddsPapi connection test is available separately."
+            };
+            for (const verified of [false,true]) {
+              const response = await status.run({data:{},auth:{uid:"synthetic-linux-user",token:{email_verified:verified}}});
+              check(JSON.stringify(response) === JSON.stringify(expected), "Exact synthetic authenticated response");
+            }
+            check(effects.length === 0, "Zero guarded resource attempts");
+            check(files.every((file,i) => hash(file) === before[i]), "Source and lockfile unchanged");
+          }
+          main().catch(() => {
+            console.error("Linux rollback rehearsal failed; source contents suppressed.");
+            process.exitCode = 1;
+          });
+          NODE
+          git diff --exit-code --stat
