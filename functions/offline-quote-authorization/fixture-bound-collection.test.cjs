@@ -1,4 +1,5 @@
 'use strict';
+const {BUDGET_PATH}=require('../offline-identity-quota-firestore-reserve.js');
 const {test}=require('node:test');const assert=require('node:assert/strict');const {createHash}=require('node:crypto');
 const {makeCombinedAuthorization}=require('./combined-authorization.cjs');
 const {makeFixtureBoundCollection}=require('./fixture-bound-collection.cjs');
@@ -27,7 +28,7 @@ function setup(){
  const approval=makeScopeBoundApprovalSchema(normalizeOfflineQuoteScope).create(scope,review,NOW-5000,NOW+60000);assert.ok(approval);
  const docs=new Map([[ap,approval],[rootJ,head(e)],[ev,e],[bp,{schemaVersion:1,fixtureId,providerReference:pr,espnReference:er,providerDigest:packet.provider.snapshotDigest,espnDigest:packet.espn.digest,packetDigest:packet.packetDigest}],[pp,{...receipt,receivedAt:iso(-30000)}],[ep,{schemaVersion:1,source:'ESPN_NBA_SCOREBOARD',reference:er,capturedAt:iso(-30000),scoreboard}],...rp.map((p,i)=>[p,{schemaVersion:1,...pairs[Math.floor(i/2)],fixtureIds:[fixtureId]}])].map(([k,v])=>[k,structuredClone(v)]));
  const s={docs,reads:[],writes:[],attempts:0,clock:NOW,retry:false,fail:false,request:{auth:{uid:'synthetic-owner',token:{email_verified:true}},data:{}}};let queue=Promise.resolve();
- const db={doc:p=>({path:p,get(){throw Error('Direct reads forbidden');}}),runTransaction(fn){const job=queue.then(async()=>{for(let i=0;i<(s.retry?2:1);i++){s.attempts++;const pending=[];const tx={async get(ref){assert.equal(pending.length,0,'reads before writes');s.reads.push([s.attempts,ref.path]);return {exists:docs.has(ref.path),data:()=>structuredClone(docs.get(ref.path))};},update(ref,patch){assert.equal(ref.path,ap);assert.deepEqual(Object.keys(patch),['claimedAtMs']);pending.push([ref.path,patch]);}};const ok=await fn(tx);if(s.retry&&i===0)continue;if(s.fail)throw Error('Synthetic failed commit');for(const [p,v] of pending){docs.set(p,{...docs.get(p),...v});s.writes.push(p);}return ok;}});queue=job.catch(()=>{});return job;}};
+ const db={doc:p=>({path:p,get(){throw Error('Direct reads forbidden');}}),runTransaction(fn){const job=queue.then(async()=>{for(let i=0;i<(s.retry?2:1);i++){s.attempts++;const pending=[];const tx={async get(ref){assert.equal(pending.length,0,'reads before writes');s.reads.push([s.attempts,ref.path]);if(ref.path===BUDGET_PATH)await s.onReserve?.();return {exists:docs.has(ref.path),data:()=>structuredClone(docs.get(ref.path))};},update(ref,patch){assert.equal(ref.path,ap);assert.deepEqual(Object.keys(patch),['claimedAtMs']);pending.push([ref.path,patch]);},set(ref,value){assert.equal(ref.path,BUDGET_PATH);assert.equal(value.reserved,2);pending.push([ref.path,value]);}};const ok=await fn(tx);if(s.retry&&i===0)continue;if(s.fail)throw Error('Synthetic failed commit');for(const [p,v] of pending){docs.set(p,{...docs.get(p),...v});s.writes.push(p);}return ok;}});queue=job.catch(()=>{});return job;}};
  s.config={enabled:true,db,ownerUid:'synthetic-owner',approvalId,scope,normalizeOfflineQuoteScope,makeOfflineFixtureReviewJournal,makePacket,sanitizeScoreboard,now:()=>s.clock};s.run=()=>makeCombinedAuthorization(s.config)(s.request);return s;
 }
 
@@ -35,8 +36,8 @@ function downstream(){
  const s=setup();const trace=[];let calls=0;
  const odds=fixture();odds.fixtureId=fixtureId;odds.startTime=s.config.scope.startTime;
  for(const outcome of Object.values(odds.bookmakerOdds['betano.pt'].markets['91001'].outcomes))for(const p of Object.values(outcome.players))p.playerName=s.config.scope.playerName;
+ s.onReserve=async()=>{trace.push('reserve');assert.equal(s.docs.get(ap).claimedAtMs,NOW);};
  const config={...s.config,expectedFixtureId:fixtureId,resolveOfflineQuoteSelection,
-  async reserve(n){trace.push('reserve');assert.equal(n,2);assert.equal(s.docs.get(ap).claimedAtMs,NOW);},
   async fetchCatalogue(){trace.push('catalogue');return catalog();},async fetchOdds(){trace.push('odds');return [odds];},readPrivateEvidence:async()=>null,
   makeOfflineLinkedQuoteCollector(opts){calls++;return async()=>{await opts.reserve(2);await opts.fetchCatalogue();await opts.fetchOdds();trace.push('sink');return 'LINKED_UNREVIEWED';};}
  };return {s,trace,config,odds,calls:()=>calls,run:()=>makeFixtureBoundCollection(config)(s.request)};
@@ -44,7 +45,7 @@ function downstream(){
 test('valid selection reaches synthetic sink after committed permit and quota',async()=>{const x=downstream();assert.deepEqual(await x.run(),{status:'LINKED_UNREVIEWED'});assert.deepEqual(x.trace,['reserve','catalogue','odds','sink']);assert.equal(x.calls(),1);});
 for(const [name,mutate] of [['wrong expected fixture',x=>x.config.expectedFixtureId='different'],['wrong owner',x=>x.s.request.auth.uid='other'],['revoked or missing journal',x=>x.s.docs.delete(rootJ)],['failed commit',x=>x.s.fail=true],['disabled',x=>x.config.enabled=false]])test(name,async()=>{const x=downstream();mutate(x);assert.deepEqual(await x.run(),{status:'DENIED'});assert.deepEqual(x.trace,[]);assert.equal(x.calls(),0);});
 for(const [name,mutate] of [['substituted fixture',x=>x.odds.fixtureId='different'],['wrong participant',x=>x.odds.participant1Id='9999'],['wrong start',x=>x.odds.startTime=iso(10900000)],['wrong player',x=>{for(const o of Object.values(x.odds.bookmakerOdds['betano.pt'].markets['91001'].outcomes))for(const p of Object.values(o.players))p.playerName='Other';}],['ambiguous fixture',x=>x.config.fetchOdds=async()=>[x.odds,structuredClone(x.odds)]],['provider failure',x=>x.config.fetchOdds=async()=>{throw Error('synthetic');}]])test(name,async()=>{const x=downstream();mutate(x);assert.deepEqual(await x.run(),{status:'ATTEMPT_FAILED'});assert.equal(x.trace.includes('sink'),false);assert.equal(x.s.docs.get(ap).claimedAtMs,NOW);assert.deepEqual(await x.run(),{status:'DENIED'});});
-test('quota failure blocks both fetches',async()=>{const x=downstream();x.config.reserve=async()=>{throw Error('quota');};assert.deepEqual(await x.run(),{status:'ATTEMPT_FAILED'});assert.deepEqual(x.trace,[]);});
+test('quota failure blocks both fetches',async()=>{const x=downstream();x.s.onReserve=async()=>{throw Error('quota');};assert.deepEqual(await x.run(),{status:'ATTEMPT_FAILED'});assert.deepEqual(x.trace,[]);});
 test('replay never reaches collector again',async()=>{const x=downstream();assert.equal((await x.run()).status,'LINKED_UNREVIEWED');assert.equal((await x.run()).status,'DENIED');assert.equal(x.calls(),1);});
 
 test('overlapping reservation calls reach the quota adapter once', async () => {
@@ -52,7 +53,7 @@ test('overlapping reservation calls reach the quota adapter once', async () => {
  let completeReservation;
  const pendingReservation = new Promise(resolve => { completeReservation = resolve; });
  let reservationCalls = 0;
- x.config.reserve = () => { reservationCalls++; return pendingReservation; };
+ x.s.onReserve = () => { reservationCalls++; return pendingReservation; };
  x.config.makeOfflineLinkedQuoteCollector = opts => async () => {
   const first = opts.reserve(2);
   const second = opts.reserve(2);
@@ -78,7 +79,7 @@ test('lost claim acknowledgement denies collection even if the claim committed',
   const result = await db.runTransaction(work);
   if (loseAcknowledgement) {
    loseAcknowledgement = false;
-   assert.equal(result, true);
+   assert.deepEqual(result, {claimedAtMs:NOW,expiresAtMs:NOW+60000});
    throw Error('Synthetic lost commit acknowledgement');
   }
   return result;
@@ -88,4 +89,27 @@ test('lost claim acknowledgement denies collection even if the claim committed',
  assert.deepEqual(await x.run(), {status:'DENIED'});
  assert.equal(x.calls(), 0);
  assert.deepEqual(x.trace, []);
+});
+
+test('expiry while catalogue is in flight blocks odds without a refund',async()=>{
+ const x=downstream();
+ x.config.fetchCatalogue=async()=>{x.trace.push('catalogue');x.s.clock=NOW+60000;return catalog();};
+ assert.deepEqual(await x.run(),{status:'ATTEMPT_FAILED'});
+ assert.deepEqual(x.trace,['reserve','catalogue']);
+ assert.equal(x.s.docs.get(BUDGET_PATH).reserved,2);
+ assert.deepEqual(await x.run(),{status:'DENIED'});
+});
+
+test('claimed permit that expires before acknowledgement cannot reserve quota',async()=>{
+ const x=downstream();
+ const db=x.config.db;
+ x.config.db={...db,async runTransaction(work,options){
+  const result=await db.runTransaction(work,options);
+  x.s.clock=NOW+60000;
+  return result;
+ }};
+ assert.deepEqual(await x.run(),{status:'DENIED'});
+ assert.equal(x.s.docs.get(ap).claimedAtMs,NOW);
+ assert.equal(x.s.docs.has(BUDGET_PATH),false);
+ assert.deepEqual(x.trace,[]);
 });

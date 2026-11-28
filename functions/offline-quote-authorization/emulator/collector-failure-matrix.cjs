@@ -1,4 +1,5 @@
 "use strict";
+const {BUDGET_PATH}=require('../../offline-identity-quota-firestore-reserve.js');
 // Local demo emulator only; no provider transport or production entrypoint.
 const assert=require("node:assert/strict");
 const {createHash,randomUUID}=require("node:crypto");
@@ -41,7 +42,7 @@ async function main(){
  const {getAuth}=require("firebase-admin/auth");
  const {getFirestore}=require("firebase-admin/firestore");
  const app=initializeApp({projectId:PROJECT});const auth=getAuth(app);const db=getFirestore(app);
- const receipts=new Set();const users=[];let seeded=false;const s=setup();const paths=[...s.docs.keys()];
+ const receipts=new Set();const users=[];let seeded=false;const s=setup();const budget=db.doc(BUDGET_PATH);const counter=(reserved)=>({utcDay:iso(0).slice(0,10),reserved,limit:6,lastReservedAt:iso(0)});const paths=[...s.docs.keys(),BUDGET_PATH];
  const pass=label=>console.log("PASS: "+label);
  async function identity(role,verified){
   const uid="rehearsal-"+role+"-"+randomUUID(),email=uid+"@example.invalid",password=randomUUID()+"-Synthetic!";
@@ -57,7 +58,7 @@ async function main(){
  try{
   const owner=await identity("owner",true),other=await identity("other",true),unverified=await identity("unverified",false);pass("Verified emulator identities");
   // Atomic create-only seed: refuse any collision, never overwrite existing data.
-  const batch=db.batch();for(const [p,v] of s.docs){assert.equal(p.split("/").length%2,0,"Invalid synthetic document path");batch.create(db.doc(p),v);}await batch.commit();seeded=true;pass("Ten synthetic documents created");
+  const batch=db.batch();for(const [p,v] of s.docs){assert.equal(p.split("/").length%2,0,"Invalid synthetic document path");batch.create(db.doc(p),v);}batch.create(budget,counter(0));await batch.commit();seeded=true;pass("Ten synthetic authorization documents and one shared counter created");
   const config={enabled:true,expectedFixtureId:fixtureId,db,ownerUid:owner.auth.uid,approvalId,scope:s.scope,normalizeOfflineQuoteScope,makeOfflineFixtureReviewJournal,makePacket,sanitizeScoreboard,now:()=>NOW};
   const run=makeFixtureBoundAuthorization(config);
   const j=makeTransactionJournalReader({db,makeOfflineFixtureReviewJournal});
@@ -81,11 +82,11 @@ async function main(){
   const QUOTE=/^_internal\/quoteEvidence\/providerObservations\/[a-f0-9]{64}$/;
   const safe=p=>TEAM.test(p)||QUOTE.test(p);
   const trace=[]; let failure=null; let scenario="";
-  const guarded={doc:p=>{assert.ok(s.docs.has(p)||safe(p),'Unexpected path');return db.doc(p);},runTransaction:async fn=>{
+  const guarded={doc:p=>{assert.ok(s.docs.has(p)||safe(p)||p===BUDGET_PATH,'Unexpected path');return db.doc(p);},runTransaction:async fn=>{
    let committed=[];
    const result=await db.runTransaction(async tx=>{
-    const pending=[];const read=new Set();
-    const out=await fn({async get(ref){assert.ok(s.docs.has(ref.path)||safe(ref.path));read.add(ref.path);return tx.get(ref);},update(ref,patch){assert.equal(ref.path,ap);assert.ok(read.has(ap));assert.deepEqual(Object.keys(patch),['claimedAtMs']);tx.update(ref,patch);pending.push(['claim',ref.path]);},create(ref,value){assert.ok(safe(ref.path));assert.ok(read.has(ref.path));tx.create(ref,value);pending.push([TEAM.test(ref.path)?'team-create':'quote-create',ref.path]);}});
+    const pending=[];const read=new Set();let budgetBefore;
+    const out=await fn({async get(ref){assert.ok(s.docs.has(ref.path)||safe(ref.path)||ref.path===BUDGET_PATH);read.add(ref.path);if(ref.path===BUDGET_PATH){trace.push('reserve');assert.equal(await claimed(),NOW);const snapshot=await tx.get(ref);budgetBefore=snapshot.data().reserved;return snapshot;}return tx.get(ref);},update(ref,patch){assert.equal(ref.path,ap);assert.ok(read.has(ap));assert.deepEqual(Object.keys(patch),['claimedAtMs']);tx.update(ref,patch);pending.push(['claim',ref.path]);},set(ref,value){assert.equal(ref.path,BUDGET_PATH);assert.equal(value.reserved,budgetBefore+2);tx.set(ref,value);},create(ref,value){assert.ok(safe(ref.path));assert.ok(read.has(ref.path));tx.create(ref,value);pending.push([TEAM.test(ref.path)?'team-create':'quote-create',ref.path]);}});
     if(pending.some(([kind])=>kind===failure))throw Error('Intentional synthetic transaction abort');
     committed=pending;return out;
    });
@@ -94,19 +95,19 @@ async function main(){
   const odds=fixture();odds.fixtureId=fixtureId;odds.startTime=s.scope.startTime;
   for(const o of Object.values(odds.bookmakerOdds['betano.pt'].markets['91001'].outcomes))for(const p of Object.values(o.players)){p.playerName=s.scope.playerName;p.changedAt=iso(-120000);}
   const cfg={...config,db:guarded,resolveOfflineQuoteSelection,makeOfflineLinkedQuoteCollector,
-   async reserve(n){assert.equal(n,2);assert.equal(await claimed(),NOW);trace.push('reserve');if(scenario==='quota')throw Error('Synthetic quota exhausted');},
    async fetchCatalogue(){trace.push('catalogue');if(scenario==='catalogue-error')throw Error('Synthetic catalogue failure');return scenario==='invalid-catalogue'?[]:catalog();},
    async fetchOdds(){trace.push('odds');if(scenario==='odds-error')throw Error('Synthetic odds failure');const f=structuredClone(odds);if(scenario==='fixture-mismatch')f.fixtureId='synthetic-wrong-fixture';if(scenario==='missing-player')for(const o of Object.values(f.bookmakerOdds['betano.pt'].markets['91001'].outcomes))o.players={};return [f];},
    async readPrivateEvidence(p){assert.ok(safe(p));assert.ok(receipts.has(p));trace.push(QUOTE.test(p)?'quote-read':'team-read');if(scenario==='linkage-error')throw Error('Synthetic linkage read failure');return (await db.doc(p).get()).data();}
   };
   const collect=makeFixtureBoundCollection(cfg);
   async function check(name,mode,expected,expectedTrace,created,consumed=true,abort=null){
-   await db.doc(ap).set(s.docs.get(ap));trace.length=0;scenario=mode;failure=abort;
+   await db.doc(ap).set(s.docs.get(ap));await budget.set(counter(mode==='quota'?5:0));trace.length=0;scenario=mode;failure=abort;
    if(mode==='expired')await db.doc(ap).update({expiresAtMs:NOW});
    const before=receipts.size;
    const result=await collect(owner);
    console.log('CASE '+JSON.stringify({name,status:result.status,trace,consumed:(await claimed())===NOW,newReceipts:receipts.size-before}));
    assert.deepEqual(result,{status:expected},name);assert.deepEqual(trace,expectedTrace,name);
+   assert.equal((await budget.get()).data().reserved,mode==='quota'?5:consumed?2:0,name);
    assert.equal(await claimed(),consumed?NOW:null,name);assert.equal(receipts.size-before,created,name);
    if(consumed){const prior=[...trace];assert.deepEqual(await collect(owner),{status:'DENIED'});assert.deepEqual(trace,prior);}
    pass(name);

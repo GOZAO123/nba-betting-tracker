@@ -1,11 +1,12 @@
-# Step 52D.53F offline quote authorization rehearsal
+# Offline quote authorization and shared quota rehearsal
 
 The factories in `functions/offline-quote-authorization` are disconnected from
 the Firebase entry point. The tests reuse the repository's quote normalizer,
 Firestore review journal, evidence readers and linked quote collector. The
-rehearsal supplies synthetic approvals, source records, catalogue and odds,
-and a simulated two-slot reservation. The production one-quote flag stays
-false. The existing shared quota remains the only production quota authority.
+rehearsal supplies synthetic approvals, source records, catalogue and odds.
+The one-slot broker and two-slot collector share the repository Firestore
+adapter and its six-slot UTC-day counter in the demo project. The production
+one-quote flag stays false.
 
 ## Run locally
 
@@ -43,7 +44,7 @@ The launcher copies the repository rules to a fresh temporary directory and runs
 `demo-nba-quote-rehearsal`. It uses an isolated CLI home and keeps diagnostic
 logs in that directory. The runner checks the project, exact loopback
 addresses, disabled flag and service inventory before loading the SDK. The
-five suites run sequentially with synthetic accounts, create-only seeds and
+six suites run sequentially with synthetic accounts, create-only seeds and
 targeted cleanup. Check each suite's cleanup line and the emulator shutdown
 messages. The runner does not import or export emulator data.
 
@@ -56,8 +57,12 @@ The transaction suites use actual Auth emulator ID tokens and verify the
 decoded project, UID and email verification claim. The Firestore rules
 rehearsal uses client REST requests for the permissions assertions. The
 corrected v2 end-to-end rehearsal verifies private receipt creation,
-fixture matching, and status-only linkage with the existing collector.
+fixture matching, and status-only linkage with the existing collector. It
+also checks same-permit and distinct-permit concurrency and verifies the stored
+counter across a pre-commit abort and synthetic lost acknowledgements.
+The dedicated shared-budget suite covers the six-slot limit, mixed callers,
+counter validation, UTC rollover, and transaction retries.
 
-Release requires separate review of actual shared quota integration, genuine
+Release requires review of any production shared quota integration, genuine
 provider evidence, independent ESPN evidence, global mapping completeness,
 production IAM and recovery, and explicit owner authorization.

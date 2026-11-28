@@ -4,7 +4,7 @@
 const {makeScopeBoundApprovalSchema}=require('./scope-bound-approval.cjs');
 const ROOT='_internal/oneQuoteCollection/scopeBoundApprovals/';
 const fields=['participant1Id','participant2Id','startTime','playerName','family','line'];
-function makeAtomicClaim({enabled=false,ownerUid,approvalId,scope,normalizeOfflineQuoteScope,db,loadVerifiedReviewInTransaction,now=Date.now}={}) {
+function makeAtomicClaim({enabled=false,ownerUid,approvalId,scope,normalizeOfflineQuoteScope,db,loadVerifiedReviewInTransaction,now=Date.now,includeClaimWindow=false}={}) {
  const deny=()=>Object.freeze({status:'DENIED'});
  if(enabled!==true)return async()=>deny();
  if(typeof ownerUid!=='string'||!ownerUid||typeof approvalId!=='string'||!/^[a-f0-9]{32}$/.test(approvalId)||typeof db?.doc!=='function'||typeof db?.runTransaction!=='function'||typeof loadVerifiedReviewInTransaction!=='function'||typeof now!=='function')throw TypeError('Invalid trusted configuration');
@@ -16,7 +16,9 @@ function makeAtomicClaim({enabled=false,ownerUid,approvalId,scope,normalizeOffli
   try {
    if(request?.auth?.uid!==ownerUid||request.auth.token?.email_verified!==true||!request.data||Object.getPrototypeOf(request.data)!==Object.prototype||Reflect.ownKeys(request.data).length!==0)return deny();
    const ref=db.doc(ROOT+approvalId);
+   let prepared;
    const result=await db.runTransaction(async tx=>{
+    prepared=undefined;
     const record=(await tx.get(ref)).data();
     if(!record||typeof record.fixtureId!=='string'||!/^[A-Za-z0-9._:-]{1,120}$/.test(record.fixtureId)||record.claimedAtMs!==null)return false;
     // The injected loader is not itself proof of genuine source origin or completeness.
@@ -24,9 +26,13 @@ function makeAtomicClaim({enabled=false,ownerUid,approvalId,scope,normalizeOffli
     const tick=now();
     if(!schema.matches(record,pinned,review,tick))return false;
     tx.update(ref,{claimedAtMs:tick});
-    return true;
+    prepared=Object.freeze({claimedAtMs:tick,expiresAtMs:record.expiresAtMs});
+    return prepared;
    });
-   return result===true?Object.freeze({status:'CLAIMED'}):deny();
+   if(!prepared||result!==prepared)return deny();
+   const tick=now();
+   if(!Number.isSafeInteger(tick)||tick<result.claimedAtMs||tick>=result.expiresAtMs)return deny();
+   return Object.freeze(includeClaimWindow?{status:'CLAIMED',window:result}:{status:'CLAIMED'});
   } catch{return deny();}
  };
 }

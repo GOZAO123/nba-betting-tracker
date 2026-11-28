@@ -1,4 +1,5 @@
 'use strict';
+const {BUDGET_PATH}=require('../offline-identity-quota-firestore-reserve.js');
 const {test}=require('node:test');const assert=require('node:assert/strict');const {createHash}=require('node:crypto');
 const {makeCombinedAuthorization}=require('./combined-authorization.cjs');
 const {makeFixtureBoundCollection}=require('./fixture-bound-collection.cjs');
@@ -39,16 +40,16 @@ function actual(){
  const s=setup(),trace=[],violations=[]; const original=s.config.db; let queue=Promise.resolve();
  const safe=(p)=>TEAM.test(p)||QUOTE.test(p);
  const db={doc:original.doc,runTransaction(fn){const job=queue.then(async()=>{
-  const pending=[],read=new Set(); const tx={async get(ref){if(pending.length)throw Error('Read after write');read.add(ref.path);return {exists:s.docs.has(ref.path),data:()=>structuredClone(s.docs.get(ref.path))};},
+  const pending=[],read=new Set(); const tx={async get(ref){if(pending.length)throw Error('Read after write');read.add(ref.path);if(ref.path===BUDGET_PATH){trace.push('reserve');assert.equal(s.docs.get(ap).claimedAtMs,NOW);if(s.quotaFail)throw Error('Synthetic quota denial');}return {exists:s.docs.has(ref.path),data:()=>structuredClone(s.docs.get(ref.path))};},
   update(ref,patch){if(ref.path!==ap||!read.has(ap)||Object.keys(patch).join()!=='claimedAtMs'){violations.push('update');throw Error('Unexpected update');}pending.push(['update',ref.path,patch]);},
+  set(ref,value){assert.equal(ref.path,BUDGET_PATH);assert.ok(read.has(BUDGET_PATH));assert.equal(value.reserved,(s.docs.get(BUDGET_PATH)?.reserved??0)+2);pending.push(['quota',ref.path,value]);},
   create(ref,value){if(!safe(ref.path)||!read.has(ref.path)||s.docs.has(ref.path)){violations.push('create');throw Error('Unexpected create');}pending.push(['create',ref.path,structuredClone(value)]);}};
   const result=await fn(tx); if(s.fail||pending.some(([kind,p])=>kind==='create'&&((s.failTeam&&TEAM.test(p))||(s.failQuote&&QUOTE.test(p)))))throw Error('Synthetic commit failure');
-  for(const [kind,p,v] of pending){s.docs.set(p,kind==='update'?{...s.docs.get(p),...v}:v);s.writes.push(p);trace.push(kind==='update'?'claim':TEAM.test(p)?'team-create':'quote-create');}return result;
+  for(const [kind,p,v] of pending){s.docs.set(p,kind==='update'?{...s.docs.get(p),...v}:v);s.writes.push(p);if(kind!=='quota')trace.push(kind==='update'?'claim':TEAM.test(p)?'team-create':'quote-create');}return result;
  });queue=job.catch(()=>{});return job;}};
  const odds=fixture(); odds.fixtureId=fixtureId;odds.startTime=s.config.scope.startTime;
  for(const o of Object.values(odds.bookmakerOdds['betano.pt'].markets['91001'].outcomes))for(const p of Object.values(o.players)){p.playerName=s.config.scope.playerName;p.changedAt=iso(-120000);}
  const config={...s.config,db,expectedFixtureId:fixtureId,resolveOfflineQuoteSelection,makeOfflineLinkedQuoteCollector,
- async reserve(n){trace.push('reserve');assert.equal(n,2);assert.equal(s.docs.get(ap).claimedAtMs,NOW);if(s.quotaFail)throw Error('Synthetic quota denial');},
  async fetchCatalogue(){trace.push('catalogue');if(s.catFail)throw Error('Synthetic catalogue failure');return catalog();},
  async fetchOdds(){trace.push('odds');if(s.oddsFail)throw Error('Synthetic odds failure');return [odds];},
  async readPrivateEvidence(p){if(!safe(p)){violations.push('read');throw Error('Unexpected private read');}trace.push(QUOTE.test(p)?'quote-read':'team-read');const v=structuredClone(s.docs.get(p));if(s.tamperLink&&QUOTE.test(p)&&v)v.quote.digest='0'.repeat(64);return v;}

@@ -11,7 +11,8 @@ const rehearsals = [
   'advanced-transaction-rehearsal.cjs',
   'end-to-end-emulator-rehearsal-v2.cjs',
   'collector-failure-matrix.cjs',
-  'firestore-rules-rehearsal.cjs'
+  'firestore-rules-rehearsal.cjs',
+  'shared-budget-rehearsal.cjs'
 ];
 
 for (const rehearsal of rehearsals) {

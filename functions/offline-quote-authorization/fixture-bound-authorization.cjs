@@ -6,7 +6,7 @@ const {makeTransactionJournalReader}=require('./transaction-journal-reader.cjs')
 const {makeTransactionSourceReader}=require('./transaction-source-reader.cjs');
 const {readRegistry}=require('./transaction-registry-reader.cjs');
 const MIN=60000;
-function makeFixtureBoundAuthorization({enabled=false,expectedFixtureId,db,ownerUid,approvalId,scope,normalizeOfflineQuoteScope,makeOfflineFixtureReviewJournal,makePacket,sanitizeScoreboard,now=Date.now}={}){
+function makeFixtureBoundAuthorization({enabled=false,expectedFixtureId,db,ownerUid,approvalId,scope,normalizeOfflineQuoteScope,makeOfflineFixtureReviewJournal,makePacket,sanitizeScoreboard,now=Date.now,includeClaimWindow=false}={}){
  if(enabled!==true)return async()=>Object.freeze({status:'DENIED'});
  if(typeof expectedFixtureId!=='string'||!/^[A-Za-z0-9._:-]{1,120}$/.test(expectedFixtureId)||['.','..'].includes(expectedFixtureId))throw TypeError('Expected fixture required');
  if(typeof db?.doc!=='function'||typeof db?.runTransaction!=='function'||typeof now!=='function')throw TypeError('Trusted dependencies required');
@@ -14,7 +14,7 @@ function makeFixtureBoundAuthorization({enabled=false,expectedFixtureId,db,owner
  const checkedDb={doc(path){const ref=db.doc(path);if(ref?.path!==path)throw Error('Reference mismatch');return ref;},runTransaction(fn){return db.runTransaction(fn);}};
  const journal=makeTransactionJournalReader({db:checkedDb,makeOfflineFixtureReviewJournal});
  const source=makeTransactionSourceReader({db:checkedDb,makePacket,sanitizeScoreboard});
- return makeAtomicClaim({enabled:true,ownerUid,approvalId,scope,normalizeOfflineQuoteScope,db:checkedDb,now,
+ return makeAtomicClaim({enabled:true,ownerUid,approvalId,scope,normalizeOfflineQuoteScope,db:checkedDb,now,includeClaimWindow,
   async loadVerifiedReviewInTransaction(tx,fixtureId){
    if(fixtureId!==expectedFixtureId)return null;
    const j=await journal(tx,fixtureId);
